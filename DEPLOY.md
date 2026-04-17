@@ -15,8 +15,8 @@ Un Function App Node 20+ avec :
 ## Étape 1 — Cloner et installer
 
 ```bash
-git clone https://github.com/GroupePerenne/Mila_agent.git
-cd Mila_agent
+git clone https://github.com/GroupePerenne/Prosperenne_agent.git
+cd Prosperenne_agent
 npm install
 ```
 
@@ -68,7 +68,7 @@ Reporter les IDs dans `PIPEDRIVE_STAGE_*` dans les variables d'environnement.
 
 Le formulaire de qualification (`forms/qualification.html`) doit être accessible publiquement. Deux options :
 
-1. **GitHub Pages** (gratuit) — Settings → Pages → source `main` branch, répertoire `/forms`. URL : `https://groupeperenne.github.io/Mila_agent/forms/qualification.html`
+1. **GitHub Pages** (gratuit) — Settings → Pages → source `main` branch, répertoire `/forms`. URL : `https://groupeperenne.github.io/Prosperenne_agent/forms/qualification.html`
 2. **Azure Static Web App** — meilleure performance + domaine custom, quelques minutes à configurer.
 
 Une fois en ligne, mettre à jour `PUBLIC_FORMS_BASE_URL` dans les variables d'environnement.

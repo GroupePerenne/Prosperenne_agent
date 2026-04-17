@@ -14,9 +14,9 @@ const INK = '#1a1714';
 const MUTED = '#7a756f';
 const TINT = '#FFF2EB';
 
-const AVATAR_DAVID = 'https://raw.githubusercontent.com/GroupePerenne/Mila_agent/main/agents/david/avatar.jpeg';
-const AVATAR_MARTIN = 'https://raw.githubusercontent.com/GroupePerenne/Mila_agent/main/agents/martin/avatar.jpeg';
-const AVATAR_MILA = 'https://raw.githubusercontent.com/GroupePerenne/Mila_agent/main/agents/mila/avatar.jpeg';
+const AVATAR_DAVID = 'https://raw.githubusercontent.com/GroupePerenne/Prosperenne_agent/main/agents/david/avatar.jpeg';
+const AVATAR_MARTIN = 'https://raw.githubusercontent.com/GroupePerenne/Prosperenne_agent/main/agents/martin/avatar.jpeg';
+const AVATAR_MILA = 'https://raw.githubusercontent.com/GroupePerenne/Prosperenne_agent/main/agents/mila/avatar.jpeg';
 
 // ─── Mail d'onboarding envoyé par David au consultant ─────────────────────
 function onboardingEmailHtml({ consultantPrenom, formUrl, choixNiveauBase }) {

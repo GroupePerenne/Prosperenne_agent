@@ -18,7 +18,7 @@ const { onboardingEmailHtml } = require('../../shared/templates');
  * @param {string} consultant.email
  */
 async function sendOnboardingEmail({ consultant }) {
-  const formBase = process.env.PUBLIC_FORMS_BASE_URL || 'https://groupeperenne.github.io/Mila_agent/forms';
+  const formBase = process.env.PUBLIC_FORMS_BASE_URL || 'https://groupeperenne.github.io/Prosperenne_agent/forms';
   const formUrl = `${formBase}/qualification.html?` + new URLSearchParams({
     nom: `${consultant.prenom} ${consultant.nom || ''}`.trim(),
     email: consultant.email,

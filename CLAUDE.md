@@ -6,9 +6,10 @@
 
 ## 1. Identité du projet
 
-**Nom** : Mila_agent (nom historique — devient progressivement "Équipe commerciale IA OSEYS")
+**Nom technique** : `Prosperenne_agent` (anciennement `Mila_agent`)
+**Nom commercial** : Prospérenne
 **Owner** : Paul Rudler (paul.rudler@oseys.fr) — Président d'OSEYS GROUPE
-**GitHub** : https://github.com/GroupePerenne/Mila_agent
+**GitHub** : https://github.com/GroupePerenne/Prosperenne_agent
 **Business** : OSEYS est un réseau de consultants en développement commercial. Le projet construit une équipe commerciale IA (3 agents) déployable pour les consultants du réseau, puis commercialisable à d'autres réseaux à terme.
 
 ### Les trois agents
@@ -84,7 +85,7 @@ az login --tenant 70f9e20f-964f-4925-8dc2-b72d62384629
 Installation des deps du projet :
 
 ```bash
-cd ~/Downloads/Mila_agent
+cd ~/Downloads/Prosperenne_agent
 npm install
 ```
 
@@ -122,7 +123,7 @@ Si ces clés ne sont pas encore dans le Function App, il faut les ajouter :
 | `PIPEDRIVE_STAGE_NEW/CONTACTED/REPLIED/CLOSED_LOST` | Créer le pipeline "OSEYS Prospection" dans Pipedrive, relever les IDs |
 | `ANTHROPIC_API_KEY` | console.anthropic.com — créer une clé dédiée à ce projet si elle n'existe pas |
 | `QUEUE_NAME_RELANCES` | `mila-relances` (statique) |
-| `PUBLIC_FORMS_BASE_URL` | `https://groupeperenne.github.io/Mila_agent/forms` (une fois GitHub Pages activé) |
+| `PUBLIC_FORMS_BASE_URL` | `https://groupeperenne.github.io/Prosperenne_agent/forms` (une fois GitHub Pages activé) |
 | `FUNCTION_APP_HOST` | `oseys-mail-sender-c8cveseah3g8a9gs.francecentral-01.azurewebsites.net` |
 | `CHOIXNIVEAU_FUNC_CODE` | Sera généré après le 1er déploiement de `choixNiveau` |
 
@@ -400,7 +401,7 @@ Dans Settings du repo > Pages :
 - Source : `Deploy from a branch`
 - Branch : `main` / `(root)` ou `/forms`
 
-URL résultante : `https://groupeperenne.github.io/Mila_agent/forms/qualification.html`
+URL résultante : `https://groupeperenne.github.io/Prosperenne_agent/forms/qualification.html`
 
 Mettre à jour `PUBLIC_FORMS_BASE_URL` dans les env Azure une fois l'URL live.
 

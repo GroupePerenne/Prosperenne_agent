@@ -1,3 +1,5 @@
+> Nom commercial : **Prospérenne**. Nom technique interne : `Prosperenne_agent`.
+
 # OSEYS — Équipe commerciale IA
 
 Trois agents commerciaux déployés pour le réseau OSEYS : **David** (manager), **Martin** et **Mila** (prospecteurs).
@@ -45,7 +47,7 @@ Même rôle que Martin, profil féminin. Ton chaleureux et conversationnel. Test
 ## Arborescence
 
 ```
-Mila_agent/
+Prosperenne_agent/
 ├── README.md                        Ce fichier
 ├── ARCHITECTURE.md                  Détail de l'orchestration
 ├── DEPLOY.md                        Procédure de déploiement Azure
