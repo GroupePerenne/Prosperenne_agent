@@ -21,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const { listUnreadMessages, markAsRead, sendMail } = require('../../shared/graph-mail');
 const { callClaude, parseJson } = require('../../shared/anthropic');
+const { davidSignatureHtml } = require('../../shared/templates');
 const { purgeByDealId } = require('../../shared/queue');
 const martin = require('../martin/worker');
 const mila = require('../mila/worker');
@@ -379,7 +380,7 @@ function wrapHtml(text) {
     .split('\n\n')
     .map((p) => `<p style="margin:0 0 14px;line-height:1.6;color:#1a1714">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
-  return `<div style="font-family:Arial,sans-serif;color:#1a1714">${paragraphs}</div>`;
+  return `<div style="font-family:Arial,sans-serif;color:#1a1714">${paragraphs}${davidSignatureHtml()}</div>`;
 }
 
 function escapeHtml(s) {
