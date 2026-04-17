@@ -159,6 +159,21 @@
   }
   .success.show { display: block; }
   footer { text-align: center; font-size: 12px; color: var(--oseys-muted); margin-top: 2rem; }
+
+  .zone-link {
+    background: none; border: none; padding: 0;
+    font-family: inherit; font-size: 13px; font-weight: 500;
+    color: var(--oseys-orange); text-decoration: underline;
+    cursor: pointer;
+  }
+  .zone-link:hover { color: var(--oseys-orange-dark); }
+  .zone-radios { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+  .zone-radios label {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 14px; font-weight: 400; margin-bottom: 0; cursor: pointer;
+  }
+  .zone-radios input[type="radio"] { accent-color: var(--oseys-orange); cursor: pointer; }
+  #f_zone_custom { margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -311,15 +326,28 @@
           <label for="f_effectif">Tranche d'effectif préférée</label>
           <select id="f_effectif" name="effectif">
             <option value="5-10">5 à 10 salariés</option>
-            <option value="10-20">10 à 20 salariés</option>
-            <option value="20-40" selected>20 à 40 salariés — sweet spot</option>
+            <option value="10-20" selected>10 à 20 salariés — sweet spot</option>
+            <option value="20-40">20 à 40 salariés</option>
             <option value="40-75">40 à 75 salariés</option>
             <option value="any">Toutes tailles</option>
           </select>
         </div>
         <div class="field">
-          <label for="f_zone">Zone géographique</label>
-          <input type="text" id="f_zone" name="zone" placeholder="France entière, PACA, Île-de-France...">
+          <label>Zone géographique de prospection</label>
+          <div id="zone-collapsed">
+            <p class="hint">Par défaut, on cible autour de ton adresse professionnelle.</p>
+            <button type="button" id="zone-edit-btn" class="zone-link">Modifier la zone</button>
+          </div>
+          <div id="zone-expanded" hidden>
+            <div class="zone-radios">
+              <label><input type="radio" name="zone_choice" value="adresse" checked> Autour de mon adresse professionnelle</label>
+              <label><input type="radio" name="zone_choice" value="region"> Ma région entière</label>
+              <label><input type="radio" name="zone_choice" value="france"> France entière</label>
+              <label><input type="radio" name="zone_choice" value="custom"> Zone spécifique</label>
+            </div>
+            <input type="text" id="f_zone_custom" placeholder="Ex : Nord, Sud-Est, département 13, 100km autour de Lyon..." hidden>
+          </div>
+          <input type="hidden" id="f_zone" name="zone" value="default">
         </div>
       </div>
     </div>
@@ -406,11 +434,10 @@
   function applyUrlParams() {
     const params = new URLSearchParams(window.location.search);
 
-    // Champs texte simples
+    // Champs texte simples (zone est géré séparément via restoreZoneFromValue)
     const textFields = {
       nom: 'f_nom', email: 'f_email', entreprise: 'f_entreprise',
-      telephone: 'f_telephone', ville: 'f_ville', linkedin: 'f_linkedin',
-      zone: 'f_zone'
+      telephone: 'f_telephone', ville: 'f_ville', linkedin: 'f_linkedin'
     };
     for (const [param, inputId] of Object.entries(textFields)) {
       const val = params.get(param);
@@ -450,6 +477,28 @@
       });
       syncSecteurs();
     }
+
+    // Zone : accepte adresse/region/france ou une chaîne libre (= custom)
+    const zone = params.get('zone');
+    if (zone) restoreZoneFromValue(zone);
+  }
+
+  // Restaure l'état du composant zone depuis une valeur sérialisée
+  // ('default' → replié ; 'adresse'/'region'/'france' → expand + radio ; autre → custom text)
+  function restoreZoneFromValue(val) {
+    if (!val || val === 'default') return;
+    const preset = ['adresse', 'region', 'france'].includes(val);
+    document.getElementById('zone-collapsed').hidden = true;
+    document.getElementById('zone-expanded').hidden = false;
+    const radioVal = preset ? val : 'custom';
+    const radio = document.querySelector(`input[name="zone_choice"][value="${radioVal}"]`);
+    if (radio) radio.checked = true;
+    if (!preset) {
+      const customInput = document.getElementById('f_zone_custom');
+      customInput.hidden = false;
+      customInput.value = val;
+    }
+    document.getElementById('f_zone').value = val;
   }
 
   function applyTagParam(val, group, inputId) {
@@ -482,7 +531,43 @@
       document.querySelectorAll('[data-choice]').forEach(c => c.classList.remove('selected'));
       card.classList.add('selected');
       document.getElementById('f_prospecteur').value = card.dataset.choice;
+      updateProgress();
     });
+  });
+
+  // ─── Zone géographique (override optionnel, replié par défaut) ──────────
+  const zoneEditBtn = document.getElementById('zone-edit-btn');
+  const zoneCollapsed = document.getElementById('zone-collapsed');
+  const zoneExpanded = document.getElementById('zone-expanded');
+  const zoneCustomInput = document.getElementById('f_zone_custom');
+  const zoneHidden = document.getElementById('f_zone');
+
+  function expandZone() {
+    zoneCollapsed.hidden = true;
+    zoneExpanded.hidden = false;
+  }
+  function syncZone() {
+    const checked = document.querySelector('input[name="zone_choice"]:checked');
+    if (!checked) { zoneHidden.value = 'default'; return; }
+    if (checked.value === 'custom') {
+      zoneCustomInput.hidden = false;
+      zoneHidden.value = zoneCustomInput.value.trim();
+    } else {
+      zoneCustomInput.hidden = true;
+      zoneHidden.value = checked.value;
+    }
+    zoneHidden.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  zoneEditBtn.addEventListener('click', expandZone);
+  document.querySelectorAll('input[name="zone_choice"]').forEach(r =>
+    r.addEventListener('change', syncZone)
+  );
+  zoneCustomInput.addEventListener('input', () => {
+    const checked = document.querySelector('input[name="zone_choice"]:checked');
+    if (checked && checked.value === 'custom') {
+      zoneHidden.value = zoneCustomInput.value.trim();
+      zoneHidden.dispatchEvent(new Event('input', { bubbles: true }));
+    }
   });
 
   // ─── Tag groups ──────────────────────────────────────────────────────────
@@ -507,16 +592,20 @@
   });
 
   // ─── Progress bar ────────────────────────────────────────────────────────
+  // On compte chaque champ individuellement : visibles (text/email/tel/textarea/select)
+  // + cachés synchronisés par les tags/choice (prospecteur, secteurs, registre, vouv).
+  const PROGRESS_FIELD_IDS = [
+    'f_nom', 'f_email', 'f_entreprise', 'f_telephone', 'f_ville', 'f_linkedin',
+    'f_prospecteur', 'f_offre', 'f_secteurs', 'f_effectif', 'f_zone',
+    'f_registre', 'f_vouv', 'f_exemple',
+  ];
   function updateProgress() {
-    const sections = document.querySelectorAll('[data-section]');
     let filled = 0;
-    sections.forEach(s => {
-      const inputs = s.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], textarea, select');
-      const hasFilled = [...inputs].some(i => i.value.trim().length > 0);
-      const hasSelectedTag = s.querySelector('.tag.selected, .choice.selected');
-      if (hasFilled || hasSelectedTag) filled++;
-    });
-    const pct = Math.round((filled / sections.length) * 100);
+    for (const id of PROGRESS_FIELD_IDS) {
+      const el = document.getElementById(id);
+      if (el && String(el.value || '').trim().length > 0) filled++;
+    }
+    const pct = Math.round((filled / PROGRESS_FIELD_IDS.length) * 100);
     document.getElementById('progress').style.width = pct + '%';
   }
   document.querySelectorAll('input, textarea, select').forEach(el => el.addEventListener('input', updateProgress));
@@ -542,6 +631,7 @@
         });
         syncSecteurs();
       }
+      if (data.zone) restoreZoneFromValue(data.zone);
       updateProgress();
     } catch (e) { console.warn('Draft load failed', e); }
   }
