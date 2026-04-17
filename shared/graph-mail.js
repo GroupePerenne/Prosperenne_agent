@@ -123,4 +123,4 @@ async function markAsRead({ mailbox, messageId }) {
   return true;
 }
 
-module.exports = { sendMail, listUnreadMessages, markAsRead };
+module.exports = { sendMail, listUnreadMessages, markAsRead, getToken };

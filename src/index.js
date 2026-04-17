@@ -6,3 +6,4 @@ require('../functions/runSequence');
 require('../functions/trackOpen');
 require('../functions/scheduler');
 require('../functions/davidInbox');
+require('../functions/avatarProxy');

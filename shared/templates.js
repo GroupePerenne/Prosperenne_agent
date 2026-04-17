@@ -14,9 +14,13 @@ const INK = '#1a1714';
 const MUTED = '#7a756f';
 const TINT = '#FFF2EB';
 
-const AVATAR_DAVID = 'https://raw.githubusercontent.com/GroupePerenne/Prosperenne_agent/main/agents/david/avatar.jpeg';
-const AVATAR_MARTIN = 'https://raw.githubusercontent.com/GroupePerenne/Prosperenne_agent/main/agents/martin/avatar.jpeg';
-const AVATAR_MILA = 'https://raw.githubusercontent.com/GroupePerenne/Prosperenne_agent/main/agents/mila/avatar.jpeg';
+// Les avatars sont servis par la Function App via /api/avatarProxy (proxy Graph
+// vers la photo M365 de david@/martin@/mila@, avec fallback SVG placeholder).
+// On évalue l'URL au runtime pour ne pas figer FUNCTION_APP_URL au require time.
+function avatarUrl(user) {
+  const base = process.env.FUNCTION_APP_URL || 'http://localhost:7071';
+  return `${base}/api/avatarProxy?user=${user}`;
+}
 
 // ─── Mail d'onboarding envoyé par David au consultant ─────────────────────
 function onboardingEmailHtml({ consultantPrenom, formUrl, choixNiveauBase }) {
@@ -31,7 +35,7 @@ function onboardingEmailHtml({ consultantPrenom, formUrl, choixNiveauBase }) {
 
   <tr><td style="padding-bottom:24px">
     <table cellpadding="0" cellspacing="0" border="0"><tr>
-      <td style="padding-right:14px"><img src="${AVATAR_DAVID}" width="56" height="56" alt="David" style="border-radius:50%;display:block"/></td>
+      <td style="padding-right:14px"><img src="${avatarUrl('david')}" width="56" height="56" alt="David" style="border-radius:50%;display:block"/></td>
       <td style="vertical-align:middle"><div style="font-size:16px;font-weight:600">David</div><div style="font-size:12px;color:${MUTED}">Responsable commercial — OSEYS</div></td>
     </tr></table>
   </td></tr>
@@ -54,8 +58,8 @@ function onboardingEmailHtml({ consultantPrenom, formUrl, choixNiveauBase }) {
   <tr><td style="padding-top:28px">
     <div style="font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:${MUTED};margin-bottom:12px">2. Qui prospecte ?</div>
     <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
-      ${prospecteurCard('martin', 'Martin', AVATAR_MARTIN, 'Ton direct et chaleureux')}
-      ${prospecteurCard('mila', 'Mila', AVATAR_MILA, 'Ton ouvert et conversationnel')}
+      ${prospecteurCard('martin', 'Martin', avatarUrl('martin'), 'Ton direct et chaleureux')}
+      ${prospecteurCard('mila', 'Mila', avatarUrl('mila'), 'Ton ouvert et conversationnel')}
       ${prospecteurCard('both', 'Les deux', null, 'A/B test par secteur — recommandé')}
     </tr></table>
     <p style="font-size:12px;color:${MUTED};margin-top:14px">Tu pourras me dire ça dans le formulaire juste après, ou directement en répondant à ce mail.</p>
@@ -92,7 +96,7 @@ function prospecteurCard(key, nom, avatar, desc) {
     ? `<img src="${avatar}" width="40" height="40" style="border-radius:50%;display:block;margin:0 auto 6px"/>`
     : `<div style="width:40px;height:40px;background:${TINT};color:${ORANGE_DARK};border-radius:50%;display:block;margin:0 auto 6px;line-height:40px;text-align:center;font-size:18px">👥</div>`;
   return `<td width="33%" style="padding:4px;vertical-align:top">
-    <div style="border:1.5px solid #E2DDD8;border-radius:10px;padding:14px 8px;text-align:center;background:${CREAM}">
+    <div style="border:1.5px solid #E2DDD8;border-radius:10px;padding:14px 8px;text-align:center;background:${CREAM};min-height:130px;display:flex;flex-direction:column;justify-content:center">
       ${avatarHtml}
       <div style="font-size:13px;font-weight:600">${nom}</div>
       <div style="font-size:11px;color:${MUTED};margin-top:4px;line-height:1.4">${desc}</div>

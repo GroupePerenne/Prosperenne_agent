@@ -38,8 +38,9 @@ function buildTrackingPixel({ identity, dealId, personId, day }) {
 
 // ─── Rendu du corps HTML avec signature + pixel ───────────────────────────
 function renderEmailHtml({ identity, consultant, corps, dealId, personId, day }) {
+  const avatarBase = process.env.FUNCTION_APP_URL || 'http://localhost:7071';
   const signatureHtml = identity.signature_html
-    .replace(/\{\{avatar_url\}\}/g, identity.avatar_url)
+    .replace(/\{\{avatar_url\}\}/g, `${avatarBase}/api/avatarProxy?user=${identity.avatar_user}`)
     .replace(/\{\{consultant_nom\}\}/g, consultant.nom);
 
   const bodyHtml = corps
