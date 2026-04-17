@@ -1,19 +1,27 @@
 /**
- * Azure Queue Storage — file d'attente des relances J3/J7/J14.
+ * Azure Queue Storage — file d'attente des touches différées de séquence.
  *
- * Principe : quand Martin/Mila envoient J0, ils poussent 3 messages dans la
- * file avec des `visibilityTimeout` de 3d, 7d, 14d (en secondes).
- * Le scheduler (Azure Function timer trigger) consomme la file toutes les
- * X minutes et fire les envois dont l'échéance est passée.
+ * Principe : quand Martin/Mila bootstrappent une séquence, ils poussent les
+ * touches J+4 / J+10 / J+18 / J+28 dans la file. Chaque message porte un
+ * `targetDate` (date d'envoi effective, jour ouvré à 9h Paris) + le contenu
+ * pré-généré. Le scheduler (timer trigger toutes les 15 min) consomme la
+ * file et traite les messages dus.
  *
- * Avantage sur une solution "base de données + cron" : Azure gère la
- * visibilité et la durabilité. On ne rate jamais un envoi, on ne double
- * jamais un envoi.
+ * Limite Azure Queue Storage : visibilityTimeout max 7 jours. Les échéances
+ * plus lointaines (J+10, J+18, J+28) sont gérées par re-queue : si un message
+ * devient visible alors que son targetDate est encore dans le futur, le
+ * scheduler le re-push avec la visibility restante (via rescheduleIfNotDue)
+ * au lieu de le traiter.
+ *
+ * La queue garantit at-least-once. Les contenus sont pré-générés au J0 pour
+ * ne jamais refaire un appel LLM à l'échéance (cohérence du discours sur
+ * toute la séquence, coût contenu).
  */
 
 const { QueueServiceClient } = require('@azure/storage-queue');
 
 const QUEUE_NAME = () => process.env.QUEUE_NAME_RELANCES || 'mila-relances';
+const MAX_VISIBILITY_SECONDS = 7 * 24 * 3600 - 60; // 7 jours - 1 min de buffer
 
 let _client = null;
 function client() {
@@ -30,39 +38,82 @@ async function ensureQueue() {
 }
 
 /**
- * Programme une relance.
+ * Programme une touche différée de séquence.
  * @param {Object} job
- * @param {string} job.agent       — "martin" ou "mila"
- * @param {string} job.day         — "J3" | "J7" | "J14"
- * @param {number} job.offsetDays  — délai depuis maintenant (3, 7, 14)
- * @param {Object} job.lead        — profil lead (prenom, email, entreprise, secteur, ville, contexte)
- * @param {Object} job.consultant  — { id, nom, email, offre, ton, tutoiement }
- * @param {number} [job.dealId]    — id Pipedrive
- * @param {number} [job.personId]  — id Pipedrive
+ * @param {string}        job.agent              — "martin" ou "mila"
+ * @param {string}        job.day                — "J+4" | "J+10" | "J+18" | "J+28"
+ * @param {string}        job.targetDate         — ISO datetime UTC (heure d'envoi cible)
+ * @param {Object}        job.lead               — profil lead
+ * @param {Object}        job.consultant         — { id, nom, email, offre, ton, tutoiement }
+ * @param {number}        [job.dealId]           — id Pipedrive
+ * @param {number}        [job.personId]         — id Pipedrive
+ * @param {Object}        job.preGeneratedStep   — { jour, objet, corps }
  */
 async function scheduleRelance(job) {
+  if (!job.targetDate) throw new Error('scheduleRelance: job.targetDate requis');
   await ensureQueue();
+  const targetTime = new Date(job.targetDate).getTime();
+  const secondsUntil = Math.max(1, Math.floor((targetTime - Date.now()) / 1000));
+  const visibilitySeconds = Math.min(secondsUntil, MAX_VISIBILITY_SECONDS);
+  const ttlSeconds = Math.max(secondsUntil + 86_400 * 7, 86_400 * 60); // TTL généreux
   const payload = Buffer.from(JSON.stringify(job)).toString('base64');
-  const visibilitySeconds = Math.floor(job.offsetDays * 86_400);
-  const ttlSeconds = Math.max(visibilitySeconds + 86_400 * 7, 86_400 * 30); // ne pas expirer avant l'échéance + buffer
   return client().sendMessage(payload, {
     visibilityTimeout: visibilitySeconds,
     messageTimeToLive: ttlSeconds,
   });
 }
 
-/** Récupère les messages dus (consommation par le scheduler) */
+/** Récupère les messages visibles (consommation par le scheduler) */
 async function receiveDueRelances(maxMessages = 16) {
   await ensureQueue();
   const { receivedMessageItems } = await client().receiveMessages({
     numberOfMessages: Math.min(maxMessages, 32),
-    visibilityTimeout: 120, // on a 2 min pour traiter avant qu'un autre worker ne reprenne
+    visibilityTimeout: 120, // 2 min pour traiter avant qu'un autre worker ne reprenne
   });
   return receivedMessageItems.map((m) => ({
     messageId: m.messageId,
     popReceipt: m.popReceipt,
     body: JSON.parse(Buffer.from(m.messageText, 'base64').toString('utf8')),
   }));
+}
+
+/**
+ * Si le job n'est pas encore dû (targetDate > now), le re-push avec la
+ * visibility restante et supprime l'ancien message. Retourne `true` si
+ * re-scheduled (donc à ignorer pour ce tick), `false` si dû (à traiter).
+ */
+async function rescheduleIfNotDue(job, { messageId, popReceipt }) {
+  const targetTime = new Date(job.targetDate).getTime();
+  if (targetTime <= Date.now()) return false;
+  await scheduleRelance(job);
+  await deleteRelance({ messageId, popReceipt });
+  return true;
+}
+
+/**
+ * Purge les messages de la queue qui matchent un dealId donné.
+ * Utilisé par stopSequence() quand un prospect répond : on ne lui envoie
+ * plus les touches restantes. Best-effort (on itère jusqu'à 10 passes).
+ */
+async function purgeByDealId(dealId) {
+  if (!dealId) return { purged: 0 };
+  await ensureQueue();
+  let purged = 0;
+  for (let pass = 0; pass < 10; pass++) {
+    const { receivedMessageItems } = await client().receiveMessages({
+      numberOfMessages: 32,
+      visibilityTimeout: 30,
+    });
+    if (!receivedMessageItems.length) break;
+    for (const m of receivedMessageItems) {
+      const body = JSON.parse(Buffer.from(m.messageText, 'base64').toString('utf8'));
+      if (body.dealId === dealId) {
+        await client().deleteMessage(m.messageId, m.popReceipt);
+        purged++;
+      }
+    }
+  }
+  return { purged };
 }
 
 /** Supprime un message une fois traité avec succès */
@@ -74,5 +125,8 @@ module.exports = {
   scheduleRelance,
   receiveDueRelances,
   deleteRelance,
+  rescheduleIfNotDue,
+  purgeByDealId,
   ensureQueue,
+  MAX_VISIBILITY_SECONDS,
 };

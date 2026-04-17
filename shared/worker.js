@@ -14,6 +14,7 @@ const fs = require('fs');
 const { sendMail } = require('./graph-mail');
 const { generateSequence, SCHEDULE } = require('./sequence');
 const { scheduleRelance } = require('./queue');
+const { nextBusinessDayAt, addBusinessDays } = require('./holidays');
 const pipedrive = require('./pipedrive');
 
 // ─── Chargement des identités ─────────────────────────────────────────────
@@ -65,15 +66,14 @@ function escapeHtml(s) {
   );
 }
 
-// ─── Bootstrap d'une séquence : génère les 4 messages, envoie J0,
-//     programme J3/J7/J14 dans la queue ─────────────────────────────────────
+// ─── Bootstrap d'une séquence : génère les 5 messages, envoie J0 (ou le
+//     schedule si hors créneau ouvré), programme J+4/J+10/J+18/J+28 ──────────
 async function bootstrapSequence({ agent, consultant, lead, dealId, personId }) {
   const identity = loadIdentity(agent);
 
-  // 1. Génération des 4 messages via Claude
+  // 1. Génération des 5 messages via Claude
   const adjustedConsultant = {
     ...consultant,
-    // injection subtile du ton de l'agent si le consultant n'a pas sur-spécifié
     ton: consultant.ton || identity.ton_ajustements.registre_par_defaut,
   };
   const steps = await generateSequence({
@@ -82,53 +82,58 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId }) 
     lead,
   });
 
-  // 2. Envoi J0 immédiat
+  // 2. Détermine le slot J0 (maintenant si on est dans le créneau ouvré
+  // 9h-11h Paris, sinon prochain créneau ouvré à 9h Paris)
+  const now = new Date();
+  const j0Slot = nextBusinessDayAt(now);
+  const j0IsImmediate = j0Slot.getTime() - now.getTime() < 60_000; // < 1 min = on considère immédiat
+
+  const results = { scheduled: [], sent: [] };
+
+  // 3. J0 : envoi direct si dans le créneau, sinon push en queue
   const j0 = steps[0];
-  const html = renderEmailHtml({
-    identity,
-    consultant: adjustedConsultant,
-    corps: j0.corps,
-    dealId,
-    personId,
-    day: 'J0',
-  });
-
-  await sendMail({
-    from: identity.email,
-    to: lead.email,
-    subject: j0.objet,
-    html,
-    replyTo: process.env.DAVID_EMAIL, // les réponses arrivent chez David, pas chez Martin/Mila
-  });
-
-  // 3. Log Pipedrive (via David, qui a le token)
-  if (dealId || personId) {
-    await pipedrive.logEmailSent({
-      dealId, personId,
-      sender: identity.prenom,
-      day: 'J0',
-      subject: j0.objet,
-      bodyPreview: j0.corps.slice(0, 200),
+  if (j0IsImmediate) {
+    const html = renderEmailHtml({
+      identity, consultant: adjustedConsultant, corps: j0.corps, dealId, personId, day: 'J0',
     });
+    await sendMail({
+      from: identity.email,
+      to: lead.email,
+      subject: j0.objet,
+      html,
+      replyTo: process.env.DAVID_EMAIL,
+    });
+    if (dealId || personId) {
+      await pipedrive.logEmailSent({
+        dealId, personId, sender: identity.prenom, day: 'J0',
+        subject: j0.objet, bodyPreview: j0.corps.slice(0, 200),
+      });
+    }
+    results.sent.push('J0');
+  } else {
+    await scheduleRelance({
+      agent, day: 'J0',
+      targetDate: j0Slot.toISOString(),
+      consultant: adjustedConsultant, lead, dealId, personId,
+      preGeneratedStep: { jour: 'J0', objet: j0.objet, corps: j0.corps },
+    });
+    results.scheduled.push('J0');
   }
 
-  // 4. Programmer J3 / J7 / J14 dans la queue
+  // 4. J+4, J+10, J+18, J+28 — tous poussés dans la queue, dates relatives à j0Slot
   for (let i = 1; i < steps.length; i++) {
     const s = steps[i];
+    const targetDate = addBusinessDays(j0Slot, s.offsetBusinessDays);
     await scheduleRelance({
-      agent,
-      day: s.jour,
-      offsetDays: s.offsetDays,
-      consultant: adjustedConsultant,
-      lead,
-      dealId,
-      personId,
-      // on passe aussi le contenu déjà généré pour ne pas re-générer à l'échéance
+      agent, day: s.jour,
+      targetDate: targetDate.toISOString(),
+      consultant: adjustedConsultant, lead, dealId, personId,
       preGeneratedStep: { jour: s.jour, objet: s.objet, corps: s.corps },
     });
+    results.scheduled.push(s.jour);
   }
 
-  return { sent: 'J0', scheduled: steps.slice(1).map((s) => s.jour) };
+  return results;
 }
 
 // ─── Envoi d'un step programmé (consommé par le scheduler) ──────────────────
