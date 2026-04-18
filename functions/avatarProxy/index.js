@@ -14,6 +14,8 @@
  * polluer Application Insights.
  */
 
+const path = require('path');
+const fs = require('fs');
 const { app } = require('@azure/functions');
 const { getToken } = require('../../shared/graph-mail');
 
@@ -21,6 +23,13 @@ const USERS = {
   david: () => process.env.DAVID_EMAIL,
   martin: () => process.env.MARTIN_EMAIL,
   mila: () => process.env.MILA_EMAIL,
+};
+
+// Variantes d'avatar servies depuis le repo local plutôt que Graph M365.
+// Utilisé pour des poses contextuelles (ex: David faisant coucou à
+// l'onboarding) qu'on ne veut pas mettre en photo officielle M365.
+const LOCAL_VARIANTS = {
+  'david:waving': path.join(__dirname, '..', '..', 'agents', 'david', 'avatar_waving.jpeg'),
 };
 
 const CACHE_HEADERS = { 'Cache-Control': 'public, max-age=3600' };
@@ -42,10 +51,30 @@ app.http('avatarProxy', {
   authLevel: 'anonymous',
   handler: async (request, context) => {
     const user = (request.query.get('user') || '').toLowerCase();
+    const variant = (request.query.get('variant') || '').toLowerCase();
     const emailResolver = USERS[user];
     if (!emailResolver) {
       return { status: 400, jsonBody: { error: 'user must be one of david, martin, mila' } };
     }
+
+    // Variante locale : on court-circuite Graph et on sert un fichier du repo
+    if (variant) {
+      const localPath = LOCAL_VARIANTS[`${user}:${variant}`];
+      if (localPath) {
+        try {
+          const buf = fs.readFileSync(localPath);
+          return {
+            status: 200,
+            headers: { ...CACHE_HEADERS, 'Content-Type': 'image/jpeg' },
+            body: buf,
+          };
+        } catch (err) {
+          context.warn(`avatarProxy: local variant ${user}:${variant} missing (${err.message}), falling back to M365 photo`);
+          // fallthrough : on tentera la photo M365 standard
+        }
+      }
+    }
+
     const email = emailResolver();
     if (!email) {
       context.warn(`avatarProxy: email env not set for user=${user}`);

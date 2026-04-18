@@ -1,0 +1,1403 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stratégie Groupe Pérenne — Document vivant</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --oseys-orange: #F39561;
+    --oseys-orange-dark: #D47646;
+    --oseys-cream: #F7F5F2;
+    --oseys-ink: #1a1714;
+    --oseys-muted: #7a756f;
+    --oseys-border: #E2DDD8;
+    --oseys-tint: #FFF2EB;
+
+    /* Couleurs des statuts */
+    --status-valide-bg: #E8F5E9;
+    --status-valide-fg: #2E7D32;
+    --status-valide-border: #A5D6A7;
+
+    --status-propose-bg: var(--oseys-tint);
+    --status-propose-fg: var(--oseys-orange-dark);
+    --status-propose-border: var(--oseys-orange);
+
+    --status-reflechir-bg: #FFF8E1;
+    --status-reflechir-fg: #A67600;
+    --status-reflechir-border: #FFE082;
+
+    --status-hypothese-bg: #EDE7F6;
+    --status-hypothese-fg: #5E35B1;
+    --status-hypothese-border: #B39DDB;
+
+    --status-encours-bg: #E1F5FE;
+    --status-encours-fg: #01579B;
+    --status-encours-border: #81D4FA;
+
+    --status-externe-bg: #F5F5F5;
+    --status-externe-fg: #616161;
+    --status-externe-border: #BDBDBD;
+  }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--oseys-cream);
+    color: var(--oseys-ink);
+    min-height: 100vh;
+    font-weight: 300;
+    line-height: 1.65;
+  }
+
+  /* ─── Layout général ─── */
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  @media (max-width: 960px) {
+    .layout { grid-template-columns: 1fr; }
+    .nav { display: none; }
+  }
+
+  /* ─── Navigation latérale ─── */
+  .nav {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2.5rem 1.5rem 2rem;
+    border-right: 1px solid var(--oseys-border);
+    background: var(--oseys-cream);
+  }
+  .nav-logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+    margin-bottom: 4px;
+  }
+  .nav-logo span { color: var(--oseys-orange); }
+  .nav-subtitle {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--oseys-muted);
+    margin-bottom: 2rem;
+  }
+  .nav-section {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--oseys-muted);
+    font-weight: 500;
+    margin: 1.5rem 0 0.5rem;
+  }
+  .nav-link {
+    display: block;
+    padding: 7px 10px;
+    font-size: 13px;
+    color: var(--oseys-ink);
+    text-decoration: none;
+    border-radius: 6px;
+    margin-bottom: 2px;
+    transition: all 0.15s;
+    cursor: pointer;
+  }
+  .nav-link:hover {
+    background: var(--oseys-tint);
+    color: var(--oseys-orange-dark);
+  }
+  .nav-link.active {
+    background: var(--oseys-orange);
+    color: white;
+    font-weight: 500;
+  }
+
+  /* ─── Contenu principal ─── */
+  .main {
+    padding: 2.5rem 3rem 4rem;
+    max-width: 900px;
+  }
+  @media (max-width: 640px) {
+    .main { padding: 2rem 1.25rem 3rem; }
+  }
+
+  /* ─── En-tête ─── */
+  .doc-header {
+    margin-bottom: 2.5rem;
+    padding-bottom: 2rem;
+    border-bottom: 1px solid var(--oseys-border);
+  }
+  .doc-kicker {
+    display: inline-block;
+    padding: 4px 12px;
+    background: var(--oseys-tint);
+    color: var(--oseys-orange-dark);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border-radius: 100px;
+    margin-bottom: 1rem;
+  }
+  .doc-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    font-size: 40px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.75rem;
+  }
+  @media (max-width: 640px) {
+    .doc-title { font-size: 30px; }
+  }
+  .doc-meta {
+    font-size: 13px;
+    color: var(--oseys-muted);
+  }
+  .doc-meta strong { color: var(--oseys-ink); font-weight: 500; }
+
+  /* ─── Sections H2 principales ─── */
+  .section-h2 {
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    font-size: 28px;
+    letter-spacing: -0.01em;
+    margin: 3rem 0 1.25rem;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+  }
+  .section-h2-num {
+    width: 36px; height: 36px; flex-shrink: 0;
+    background: var(--oseys-orange);
+    color: white;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 14px;
+    font-family: 'DM Sans', sans-serif;
+  }
+
+  .section-h3 {
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    font-size: 19px;
+    letter-spacing: -0.005em;
+    margin: 1.75rem 0 0.75rem;
+    color: var(--oseys-ink);
+  }
+
+  .section-h4 {
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    margin: 1.25rem 0 0.5rem;
+    color: var(--oseys-ink);
+  }
+
+  /* ─── Cards ─── */
+  .card {
+    background: white;
+    border: 1px solid var(--oseys-border);
+    border-radius: 16px;
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 1rem;
+  }
+  .card-accent {
+    background: var(--oseys-tint);
+    border-left: 3px solid var(--oseys-orange);
+    padding: 14px 18px;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1.55;
+    margin: 1rem 0;
+  }
+  .card-accent strong { font-weight: 600; color: var(--oseys-orange-dark); }
+
+  /* ─── Paragraphes ─── */
+  p { margin-bottom: 0.9rem; font-size: 15px; }
+  p:last-child { margin-bottom: 0; }
+  strong { font-weight: 500; color: var(--oseys-ink); }
+  em { color: var(--oseys-muted); font-style: normal; font-weight: 400; }
+
+  /* ─── Listes ─── */
+  ul, ol {
+    margin: 0.75rem 0 1rem 1.5rem;
+    font-size: 15px;
+  }
+  li { margin-bottom: 0.35rem; }
+  li::marker { color: var(--oseys-orange); }
+
+  /* ─── Pastilles de statut ─── */
+  .status {
+    display: inline-block;
+    padding: 2px 10px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-radius: 100px;
+    margin-left: 6px;
+    vertical-align: middle;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .status-valide { background: var(--status-valide-bg); color: var(--status-valide-fg); border-color: var(--status-valide-border); }
+  .status-propose { background: var(--status-propose-bg); color: var(--status-propose-fg); border-color: var(--status-propose-border); }
+  .status-reflechir { background: var(--status-reflechir-bg); color: var(--status-reflechir-fg); border-color: var(--status-reflechir-border); }
+  .status-hypothese { background: var(--status-hypothese-bg); color: var(--status-hypothese-fg); border-color: var(--status-hypothese-border); }
+  .status-encours { background: var(--status-encours-bg); color: var(--status-encours-fg); border-color: var(--status-encours-border); }
+  .status-externe { background: var(--status-externe-bg); color: var(--status-externe-fg); border-color: var(--status-externe-border); }
+
+  /* ─── Tableaux ─── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 14px;
+    background: white;
+    border: 1px solid var(--oseys-border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th {
+    text-align: left;
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--oseys-orange-dark);
+    background: var(--oseys-tint);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--oseys-border);
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--oseys-border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  table code {
+    background: var(--oseys-cream);
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+
+  /* ─── Code blocks ─── */
+  pre {
+    background: var(--oseys-ink);
+    color: #E8E4DE;
+    padding: 1.25rem 1.5rem;
+    border-radius: 10px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.55;
+    margin: 1rem 0;
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  }
+  code {
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    font-size: 13px;
+    background: var(--oseys-cream);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+
+  /* ─── Légende des statuts ─── */
+  .legend {
+    background: white;
+    border: 1px solid var(--oseys-border);
+    border-radius: 16px;
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 2rem;
+  }
+  .legend-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--oseys-muted);
+    margin-bottom: 1rem;
+  }
+  .legend-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+  }
+  .legend-item {
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .legend-item .status { margin-left: 0; }
+
+  /* ─── Checklist ─── */
+  .checklist { list-style: none; margin-left: 0; }
+  .checklist li {
+    padding: 8px 0 8px 28px;
+    position: relative;
+    font-size: 14px;
+    border-bottom: 1px solid var(--oseys-border);
+  }
+  .checklist li:last-child { border-bottom: none; }
+  .checklist li::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 12px;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--oseys-border);
+    border-radius: 4px;
+  }
+
+  /* ─── Ancres ─── */
+  .anchor {
+    scroll-margin-top: 1rem;
+  }
+
+  /* ─── Footer ─── */
+  .doc-footer {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--oseys-border);
+    font-size: 13px;
+    color: var(--oseys-muted);
+    text-align: center;
+  }
+
+  /* ─── Timeline ─── */
+  .timeline {
+    position: relative;
+    margin: 1.25rem 0 1.25rem 0.5rem;
+    padding-left: 1.5rem;
+    border-left: 2px solid var(--oseys-border);
+  }
+  .timeline-item {
+    position: relative;
+    padding-bottom: 1.25rem;
+  }
+  .timeline-item:last-child { padding-bottom: 0; }
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -1.94rem; top: 4px;
+    width: 12px; height: 12px;
+    background: var(--oseys-orange);
+    border: 3px solid var(--oseys-cream);
+    border-radius: 50%;
+  }
+  .timeline-when {
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--oseys-orange-dark);
+    margin-bottom: 3px;
+  }
+  .timeline-content { font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- ═══════════ NAVIGATION LATÉRALE ═══════════ -->
+  <nav class="nav">
+    <div class="nav-logo">P<span>É</span>RENNE</div>
+    <div class="nav-subtitle">Document de stratégie</div>
+
+    <div class="nav-section">Sommaire</div>
+    <a class="nav-link" href="#vision">1 — Vision</a>
+    <a class="nav-link" href="#structure">2 — Structure sociétale</a>
+    <a class="nav-link" href="#gamme">3 — Gamme de produits</a>
+    <a class="nav-link" href="#prosperenne">4 — Prospérenne — détail</a>
+    <a class="nav-link" href="#architecture">5 — Architecture technique</a>
+    <a class="nav-link" href="#roadmap">6 — Roadmap</a>
+    <a class="nav-link" href="#decisions">7 — Décisions en attente</a>
+    <a class="nav-link" href="#risques">8 — Risques</a>
+    <a class="nav-link" href="#narrative">9 — Narrative de marque</a>
+    <a class="nav-link" href="#actions">10 — Actions immédiates</a>
+
+    <div class="nav-section">Ressources</div>
+    <a class="nav-link" href="#legende">Légende des statuts</a>
+  </nav>
+
+  <!-- ═══════════ CONTENU PRINCIPAL ═══════════ -->
+  <main class="main">
+
+    <!-- Header du document -->
+    <header class="doc-header">
+      <div class="doc-kicker">Document vivant · V2</div>
+      <h1 class="doc-title">Stratégie Groupe Pérenne</h1>
+      <p class="doc-meta">
+        Dernière révision : <strong>17 avril 2026</strong> · Auteur : <strong>Paul Rudler</strong> (avec Claude, Anthropic)
+      </p>
+    </header>
+
+    <!-- ─── Légende des statuts ─── -->
+    <div class="legend anchor" id="legende">
+      <div class="legend-title">Légende des statuts</div>
+      <div class="legend-grid">
+        <div class="legend-item"><span class="status status-valide">Validé</span> Décision actée</div>
+        <div class="legend-item"><span class="status status-propose">Proposé</span> Attend validation Paul</div>
+        <div class="legend-item"><span class="status status-reflechir">À réfléchir</span> Piste ouverte</div>
+        <div class="legend-item"><span class="status status-hypothese">Hypothèse</span> À valider empiriquement</div>
+        <div class="legend-item"><span class="status status-encours">En cours</span> En implémentation</div>
+        <div class="legend-item"><span class="status status-externe">Attente externe</span> Bloqué par un tiers</div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 1 — VISION                          -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="vision"><span class="section-h2-num">1</span>Vision Groupe Pérenne</h2>
+
+    <h3 class="section-h3">1.1 La transformation en cours <span class="status status-valide">Validé</span></h3>
+
+    <div class="card">
+      <p>OSEYS (réseau historique de consultants en développement commercial pour dirigeants de TPE/PME) devient dans les prochains jours <strong>Groupe Pérenne</strong>, qui se structure en holding avec plusieurs activités distinctes :</p>
+      <ul>
+        <li><strong>L'activité historique</strong> : le réseau de consultants humains, qui conservera la marque OSEYS (identité, notoriété existante, pas de rupture client)</li>
+        <li><strong>Un volet tech/outil</strong> : PilotagePro, logiciel professionnel en cours de construction avec Constantin</li>
+        <li><strong>Un volet IA commercial</strong> : une gamme d'agents IA, avec Prospérenne en tête de gondole</li>
+      </ul>
+    </div>
+
+    <h3 class="section-h3">1.2 La thèse globale <span class="status status-valide">Validé</span></h3>
+
+    <p>Les TPE et PME françaises (5 à 75 salariés) n'ont ni les moyens ni la culture pour déployer des outils IA complexes seules. Elles achètent du service, de l'accompagnement, de la simplicité. Groupe Pérenne se positionne comme le partenaire qui livre <strong>des agents IA sous forme de service clé en main</strong>, avec un manager humain derrière chaque déploiement. Pas de SaaS self-service qui laisse le client se débrouiller ; de l'agent-as-a-service, installé et opérationnel.</p>
+
+    <div class="card-accent">
+      L'expertise terrain acquise par OSEYS depuis plusieurs années auprès des dirigeants de PME est le <strong>carburant qui nourrit chaque agent</strong> : nos agents savent parler à cette cible parce que nous la connaissons.
+    </div>
+
+    <h3 class="section-h3">1.3 Les trois portes d'entrée du Groupe</h3>
+
+    <p>Groupe Pérenne peut aborder un client par trois angles complémentaires :</p>
+
+    <table>
+      <thead><tr><th>Angle</th><th>Produit</th><th>Public cible</th><th>Promesse</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Conseil humain</strong></td><td>OSEYS (réseau consultants)</td><td>Dirigeants PME</td><td>Accompagnement stratégique humain, approche long terme</td></tr>
+        <tr><td><strong>Outil métier</strong></td><td>PilotagePro</td><td>PME qui veulent structurer leur pilotage</td><td>Logiciel de pilotage d'activité</td></tr>
+        <tr><td><strong>Agents IA</strong></td><td>Prospérenne, puis gamme PérennIA</td><td>PME / réseaux de PME</td><td>Équipes virtuelles IA qui exécutent des fonctions</td></tr>
+      </tbody>
+    </table>
+
+    <p>Ces trois portes s'enrichissent mutuellement : un client OSEYS peut basculer sur Prospérenne pour sa prospection, un utilisateur de PilotagePro peut avoir besoin d'un Responsable Technique IA, etc.</p>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 2 — STRUCTURE SOCIÉTALE             -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="structure"><span class="section-h2-num">2</span>Structure sociétale cible</h2>
+
+    <h3 class="section-h3">2.1 Arborescence recommandée <span class="status status-propose">Proposé</span></h3>
+
+    <p><em>À valider avec avocat fiscaliste.</em></p>
+
+<pre><code>Groupe Pérenne (holding — ex-OSEYS)
+│
+├── OSEYS (marque commerciale du réseau de consultants humains)
+│   └── Activité historique : accompagnement des dirigeants PME
+│
+├── PilotagePro (entité/branche à définir)
+│   └── Outil métier construit avec Constantin
+│
+├── Agents internes Groupe Pérenne (branche, pas filiale)
+│   ├── David + Martin + Mila (équipe commerciale IA interne)
+│   ├── Responsable Technique (futur — branché PilotagePro)
+│   ├── Contrôleur de gestion (futur)
+│   └── Assistante de direction (futur)
+│
+└── PérennIA (filiale à créer)
+    └── Holding tech/IA, R&D des agents, infrastructure plateforme
+    │
+    ├── Prospérenne (filiale ou branche)
+    │   └── Agence de prospection IA
+    │   └── Alicia + Martin + Mila + Mika (futur)
+    │
+    ├── [Nom à définir] — agence de création web
+    │
+    └── [Nom à définir] — agence de communication</code></pre>
+
+    <h3 class="section-h3">2.2 Logique du découpage <span class="status status-propose">Proposé</span></h3>
+
+    <h4 class="section-h4">Pourquoi PérennIA en filiale et non branche</h4>
+    <ul>
+      <li>Indépendance juridique et réputationnelle : si une filiale commerciale se prend une mise en cause, elle n'entraîne pas Groupe Pérenne</li>
+      <li>PérennIA devient <strong>l'entité R&D/tech</strong> qui investit dans les agents templates, l'infrastructure multi-tenant, la plateforme. C'est elle qui pourra lever des fonds ou être revendue indépendamment à terme</li>
+      <li>Chaque agence commerciale peut avoir son pricing, son branding, son identité visuelle sans forcer une cohérence artificielle</li>
+    </ul>
+
+    <h4 class="section-h4">Pourquoi les agents internes en branche et non filiale</h4>
+    <ul>
+      <li>Ils servent Groupe Pérenne en propre, pas de clients externes</li>
+      <li>Pas de risque juridique ou commercial à isoler</li>
+      <li>Moins de frais de structure</li>
+    </ul>
+
+    <h4 class="section-h4">Alternative plus légère <span class="status status-reflechir">À réfléchir</span></h4>
+    <p>Au démarrage, seule Prospérenne devient filiale. Les futures agences commerciales restent en branche tant qu'elles ne dépassent pas un seuil de CA. On filialise au cas par cas. Plus pragmatique, moins de frais.</p>
+
+    <h3 class="section-h3">2.3 Décisions à valider avec un avocat fiscaliste <span class="status status-externe">Attente externe</span></h3>
+
+    <ul>
+      <li>Forme juridique de PérennIA (SAS vs SARL)</li>
+      <li>Modalités de détention (100% Groupe Pérenne ou ouverture au capital ?)</li>
+      <li>Conventions intra-groupe (management fees, prestations entre entités)</li>
+      <li>Traitement fiscal de la propriété intellectuelle des agents</li>
+      <li>Articulation juridique PilotagePro (filiale ? produit ?)</li>
+      <li>Timing de création PérennIA (avant ou après premier client commercial Prospérenne ?)</li>
+    </ul>
+
+    <h3 class="section-h3">2.4 Timeline juridique</h3>
+
+    <div class="timeline">
+      <div class="timeline-item">
+        <div class="timeline-when">T+0 (quelques jours) <span class="status status-encours">En cours</span></div>
+        <div class="timeline-content">OSEYS devient Groupe Pérenne (renommage juridique)</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-when">T+0 à T+2 mois <span class="status status-propose">Proposé</span></div>
+        <div class="timeline-content">Lancement commercial Prospérenne, en branche ou via filiale dédiée (à arbitrer avec l'avocat)</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-when">T+2 à T+6 mois <span class="status status-propose">Proposé</span></div>
+        <div class="timeline-content">Création de PérennIA en filiale de Groupe Pérenne, bascule éventuelle de Prospérenne sous PérennIA</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-when">T+6 à T+12 mois <span class="status status-propose">Proposé</span></div>
+        <div class="timeline-content">Ajout des agents Community Manager et Créateur de sites, arbitrage entité commerciale par offre</div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 3 — GAMME DE PRODUITS               -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="gamme"><span class="section-h2-num">3</span>Gamme de produits et services</h2>
+
+    <h3 class="section-h3">3.1 OSEYS — réseau de consultants <span class="status status-valide">Validé</span></h3>
+
+    <div class="card">
+      <p><strong>Offre.</strong> Accompagnement humain des dirigeants de PME par des consultants indépendants membres du réseau. Approche long terme, sur mesure, relationnelle.</p>
+      <p><strong>Positionnement.</strong> La porte d'entrée "humaine" du Groupe. OSEYS conserve sa marque, sa notoriété, son positionnement. Aucune rupture pour les clients et consultants existants.</p>
+      <p><strong>Évolution à prévoir.</strong> Les consultants OSEYS vont progressivement bénéficier des agents internes (David + Martin + Mila en prospection, puis Responsable Technique, Contrôleur de gestion, etc.) pour démultiplier leur capacité d'action. <em>OSEYS devient le réseau des consultants augmentés par l'IA.</em></p>
+    </div>
+
+    <h3 class="section-h3">3.2 PilotagePro — outil métier <span class="status status-encours">En cours</span></h3>
+
+    <div class="card">
+      <p><strong>Statut.</strong> En construction par Constantin, pas encore d'API disponible.</p>
+      <p><strong>Positionnement supposé.</strong> Logiciel de pilotage d'activité pour PME, accompagnant les consultants OSEYS dans leurs missions.</p>
+      <p><strong>Points à clarifier avec Constantin</strong> <span class="status status-reflechir">À réfléchir</span></p>
+      <ul>
+        <li>Vendu à l'externe ou exclusivement réservé aux clients du réseau OSEYS ?</li>
+        <li>Modèle économique (abonnement ? licence ? inclus dans l'offre OSEYS ?)</li>
+        <li>Interaction avec les futurs agents IA (le Responsable Technique se branche sur PilotagePro)</li>
+        <li>Statut juridique (filiale, produit, branche ?)</li>
+      </ul>
+    </div>
+
+    <h3 class="section-h3">3.3 Prospérenne — agence de prospection IA <span class="status status-valide">Validé</span></h3>
+
+    <p>Lancement en cours. Détail complet en section 4.</p>
+
+    <p><strong>Équipe Prospérenne</strong> <span class="status status-valide">Validé</span></p>
+    <table>
+      <thead><tr><th>Agent</th><th>Rôle</th><th>Profil</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Alicia</strong></td><td>Responsable commerciale — interface exclusive avec le client</td><td>Féminin</td></tr>
+        <tr><td><strong>Martin</strong></td><td>Prospecteur (partagé avec l'équipe interne)</td><td>Masculin</td></tr>
+        <tr><td><strong>Mila</strong></td><td>Prospectrice (partagée avec l'équipe interne)</td><td>Féminin</td></tr>
+        <tr><td><strong>Mika</strong></td><td>Community manager <span class="status status-reflechir">À réfléchir</span></td><td>À définir</td></tr>
+      </tbody>
+    </table>
+
+    <h3 class="section-h3">3.4 Agents internes Groupe Pérenne</h3>
+
+    <h4 class="section-h4">3.4.1 Équipe commerciale interne — David + Martin + Mila <span class="status status-valide">Validé</span></h4>
+
+    <p><strong>Statut.</strong> Pilote en cours avec Morgane et Johnny (consultants OSEYS).</p>
+
+    <p><strong>Différences de config vs Prospérenne</strong></p>
+    <ul>
+      <li><strong>Public</strong> : consultants OSEYS (Morgane, Johnny, futurs membres) et non clients externes payants</li>
+      <li><strong>Base de leads</strong> : sélection curatée par Constantin, restreinte, qualitative</li>
+      <li><strong>Ton</strong> : familier, tutoiement, culture OSEYS assumée</li>
+      <li><strong>Règles métier</strong> : cible "vente d'heures", sweet spot 10-20 salariés, exclusions comptables/avocats</li>
+      <li><strong>Facturation</strong> : coût interne absorbé, pas de billing</li>
+    </ul>
+
+    <div class="card-accent">
+      Cette version sert à <strong>valider le produit</strong> (uptime, qualité des messages, performance, taux de RDV) avant commercialisation externe. Durée pilote estimée : 2-3 mois avec Morgane et Johnny.
+    </div>
+
+    <h4 class="section-h4">3.4.2 Agents internes futurs <span class="status status-reflechir">À réfléchir</span></h4>
+    <ul>
+      <li><strong>Responsable Technique</strong> — branché PilotagePro, déployé quand PilotagePro aura une API stable</li>
+      <li><strong>Contrôleur de gestion</strong> — alertes et recommandations financières</li>
+      <li><strong>Assistante de direction</strong> — agenda, tâches, synthèse de mails</li>
+    </ul>
+
+    <h3 class="section-h3">3.5 Casting agents — règle de nommage <span class="status status-valide">Validé</span></h3>
+
+    <p><strong>Contrainte.</strong> Respecter la logique <strong>voyelles dominantes A-I ou I-A</strong> (IA caché dans le prénom).</p>
+
+    <table>
+      <thead><tr><th>Prénom</th><th>Voyelles</th><th>Rôle</th></tr></thead>
+      <tbody>
+        <tr><td>David</td><td>A-I</td><td>Manager interne</td></tr>
+        <tr><td>Alicia</td><td>A-I-I-A</td><td>Manager Prospérenne</td></tr>
+        <tr><td>Martin</td><td>A-I</td><td>Prospecteur</td></tr>
+        <tr><td>Mila</td><td>I-A</td><td>Prospectrice</td></tr>
+        <tr><td>Mika</td><td>I-A</td><td>Community manager (futur)</td></tr>
+        <tr><td>Alix</td><td>A-I</td><td><em>Réservé pour futur poste</em></td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Liste en réserve :</strong> Milan, Nina, Lina, Naïs, Mathis, Ida, Ira.</p>
+
+    <h3 class="section-h3">3.6 Futures agences commerciales PérennIA <span class="status status-reflechir">À réfléchir</span></h3>
+
+    <ol>
+      <li><strong>Mika</strong> — community manager Prospérenne (ou agence de com séparée, préférence utilisateur : séparée)</li>
+      <li><strong>Créateur de sites web</strong> — filiale PérennIA dédiée, complémentaire à Mika</li>
+      <li><strong>Responsable Technique</strong> — agent interne d'abord, commercial potentiel si PilotagePro scale</li>
+      <li><strong>Contrôleur de gestion</strong>, <strong>Assistante de direction</strong> — restent vraisemblablement internes</li>
+    </ol>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 4 — PROSPÉRENNE DÉTAIL              -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="prosperenne"><span class="section-h2-num">4</span>Prospérenne — détail stratégique</h2>
+
+    <p>Cette section est le cœur opérationnel du document. Elle détaille le produit commercial phare du Groupe Pérenne.</p>
+
+    <h3 class="section-h3">4.1 Positionnement et promesse <span class="status status-valide">Validé</span></h3>
+
+    <div class="card-accent">
+      <strong>Promesse client.</strong> "Vous n'avez plus à prospecter. Notre équipe commerciale IA s'en charge pour vous, en votre nom, et vous livre des RDV ou des leads qualifiés."
+    </div>
+
+    <p><strong>Différenciation vs concurrents</strong> (Lemlist, Waalaxy, La Growth Machine, agences de prospection classiques) :</p>
+    <ul>
+      <li><strong>Équipe humaine incarnée</strong> (Alicia + Martin + Mila), pas un chatbot ou un outil</li>
+      <li><strong>Facilité d'implémentation maximale</strong> — zéro setup technique côté client (cf. 4.3)</li>
+      <li><strong>Modèle tarifaire à paliers de performance automatique</strong> (cf. 4.6) — disruptif sur le marché français</li>
+      <li><strong>Compatible avec le CRM du client</strong>, pas de forçage vers un outil spécifique (cf. 4.4)</li>
+    </ul>
+
+    <h3 class="section-h3">4.2 Les trois modes de distribution <span class="status status-valide">Validé</span></h3>
+
+    <table>
+      <thead><tr><th>Mode</th><th>Description</th><th>Implication client</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Fantôme</strong></td>
+          <td>Alicia prospecte en ton nom, invisible. Tu reçois les retours quand ça matche.</td>
+          <td>Zéro. Client invisible pendant la prospection</td>
+        </tr>
+        <tr>
+          <td><strong>Duo</strong></td>
+          <td>Alicia est ton assistante, tu es en copie. Tu valides avant envoi.</td>
+          <td>Faible. Le client valide les messages</td>
+        </tr>
+        <tr>
+          <td><strong>Autonome</strong></td>
+          <td>Alicia prospecte et fixe les RDV directement dans ton agenda.</td>
+          <td>Modérée. Le client gère les RDV lui-même</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 class="section-h3">4.3 Mode fantôme — stratégie d'implémentation simplifiée</h3>
+
+    <div class="card-accent">
+      <strong>Priorité stratégique.</strong> Le mode fantôme est la promesse la plus forte de Prospérenne : le prospect reçoit un mail qui semble venir du dirigeant lui-même, alors qu'Alicia a tout rédigé et tout géré.
+    </div>
+
+    <h4 class="section-h4">4.3.1 Option A — Envoi depuis une adresse Prospérenne au nom du client <span class="status status-propose">Proposé</span></h4>
+
+    <div class="card">
+      <p><strong>Technique.</strong> Prospérenne dispose d'une infrastructure mail (domaines dédiés, warm-up). Chaque mail part de <code>prospection+paul-rudler@prosperenne-outgoing.fr</code> avec <code>Reply-To: paul.rudler@entreprise.fr</code> et une signature qui affiche le dirigeant comme expéditeur apparent.</p>
+      <p><strong>Avantages.</strong> Zéro technique côté client. Protection délivrabilité (si une adresse se fait flaguer, ça n'impacte pas la boîte du client). Centralisation. Pas d'OAuth demandé au client.</p>
+      <p><strong>Inconvénients.</strong> Le prospect peut repérer l'artifice dans les headers. Délivrabilité potentiellement moins bonne que depuis l'adresse native. Le "from" n'est pas strictement l'adresse du client.</p>
+    </div>
+
+    <h4 class="section-h4">4.3.2 Option B — Envoi direct depuis la boîte mail du client <span class="status status-propose">Proposé</span></h4>
+
+    <div class="card">
+      <p><strong>Technique.</strong> Le client donne à Prospérenne un accès OAuth limité (permission Send uniquement) à sa boîte Microsoft 365 ou Google Workspace. Alicia envoie depuis l'adresse native du client.</p>
+      <p><strong>Avantages.</strong> Délivrabilité maximale (SPF/DKIM/DMARC du domaine). Authenticité totale (aucune trace de Prospérenne dans les headers). Les réponses arrivent dans la boîte du client (et chez Alicia en parallèle).</p>
+      <p><strong>Inconvénients.</strong> Friction OAuth à l'onboarding. Complexité multi-provider. Dépendance aux quotas du fournisseur. Si Alicia envoie mal, ça pollue la réputation du domaine du client.</p>
+    </div>
+
+    <h4 class="section-h4">4.3.3 Option C — Hybride progressive <span class="status status-propose">Proposé — reco Claude</span></h4>
+
+    <div class="card-accent">
+      <strong>Principe.</strong> Commencer en Option A (domaine Prospérenne au nom du client) pour la simplicité maximale, et upgrader vers Option B pour les clients qui veulent la délivrabilité maximale.
+    </div>
+
+    <p><strong>Déclencheurs de bascule :</strong></p>
+    <ul>
+      <li>Client signe pour 6+ mois et monte en palier 3 ou plafond</li>
+      <li>Le client veut "avoir les mails sous les yeux"</li>
+      <li>Prospect premium pour lequel la délivrabilité est critique</li>
+    </ul>
+
+    <h4 class="section-h4">4.3.4 Cadre légal du mode fantôme en France <span class="status status-hypothese">Hypothèse</span></h4>
+
+    <p><em>À faire valider par un avocat.</em></p>
+
+    <p>En B2B français, la prospection par mail nominatif (<code>j.dupont@entreprise.fr</code>) est autorisée sous régime d'<strong>opt-out</strong>, à trois conditions :</p>
+    <ol>
+      <li>Le message doit concerner l'activité professionnelle du destinataire (lien avec son métier)</li>
+      <li>Le destinataire doit être informé clairement de l'identité de l'expéditeur et de la finalité commerciale</li>
+      <li>Un moyen simple et gratuit de s'opposer doit être fourni</li>
+    </ol>
+
+    <p><strong>Implications pour le mode fantôme</strong></p>
+    <ul>
+      <li>L'identité affichée doit être celle d'une <strong>personne réelle qui assume juridiquement</strong> la prospection. Alicia en tant qu'IA ne peut pas être l'émetteur</li>
+      <li>Le footer du mail doit mentionner la source des données, le droit d'opposition, et éventuellement la présence d'un outil de prospection</li>
+      <li>L'AI Act européen pourrait imposer de signaler un message généré par IA (à vérifier)</li>
+    </ul>
+
+    <div class="card-accent">
+      <strong>Clause contractuelle à intégrer dans les CGS :</strong> le client reconnaît qu'il est l'émetteur juridique des mails envoyés par Alicia en son nom, et assume les obligations CNIL/RGPD associées. Prospérenne s'engage en contrepartie à respecter strictement les règles de prospection B2B française.
+    </div>
+
+    <h4 class="section-h4">4.3.5 Facilité d'implémentation — critère clé de succès <span class="status status-valide">Validé</span></h4>
+
+    <p><strong>Objectif</strong> : qu'un client puisse s'inscrire à Prospérenne et voir Alicia opérationnelle en <strong>moins de 30 minutes</strong>.</p>
+
+    <p><strong>Parcours client idéal cible</strong></p>
+    <ol>
+      <li>Le client arrive sur prosperenne.fr, choisit son mode et son offre</li>
+      <li>Signature en ligne (Docusign ou équivalent)</li>
+      <li>Remplissage d'un formulaire de brief (5 min max)</li>
+      <li>Choix CRM et connexion OAuth en 1 clic</li>
+      <li>Mode fantôme : choix Option A (domaine Prospérenne) ou Option B (OAuth boîte mail)</li>
+      <li>Validation finale, Alicia lance la prospection dans les 24h ouvrées</li>
+    </ol>
+
+    <div class="card-accent">
+      <strong>Principe clé.</strong> Chaque étape doit pouvoir être faite par un dirigeant de PME sans intervention technique. Si une étape nécessite de "contacter votre IT", elle est mal conçue.
+    </div>
+
+    <h3 class="section-h3">4.4 Stratégie multi-CRM <span class="status status-propose">Proposé — priorité stratégique</span></h3>
+
+    <div class="card-accent">
+      <strong>Principe directeur.</strong> Prospérenne ne doit jamais forcer un client à utiliser un CRM spécifique. Le client utilise son CRM existant, Prospérenne s'y branche.
+    </div>
+
+    <h4 class="section-h4">4.4.1 Panorama des CRM à supporter</h4>
+
+    <table>
+      <thead><tr><th>Priorité</th><th>CRM</th><th>Pourquoi</th></tr></thead>
+      <tbody>
+        <tr><td><strong>1</strong></td><td>HubSpot</td><td>Leader PME, excellent en marketing automation, API complète</td></tr>
+        <tr><td><strong>1</strong></td><td>Pipedrive</td><td>Leader PME orienté vente, déjà intégré pour le pilote interne</td></tr>
+        <tr><td><strong>1</strong></td><td>Salesforce</td><td>Standard entreprise, dominant en volume</td></tr>
+        <tr><td><strong>2</strong></td><td>Axonaut</td><td>Champion TPE français, RGPD natif, tout-en-un</td></tr>
+        <tr><td><strong>2</strong></td><td>Sellsy</td><td>PME françaises, CRM + facturation + trésorerie</td></tr>
+        <tr><td><strong>2</strong></td><td>NoCRM</td><td>Ultra-simple, ciblé commerciaux terrain</td></tr>
+        <tr><td><strong>2</strong></td><td>Brevo</td><td>Français, fort en marketing automation, CRM gratuit</td></tr>
+        <tr><td><strong>3</strong></td><td>Zoho, Monday, Dynamics 365</td><td>À intégrer selon demande client</td></tr>
+        <tr><td><strong>4</strong></td><td>Pas de CRM / Excel</td><td>Prospérenne propose son propre dashboard comme solution</td></tr>
+      </tbody>
+    </table>
+
+    <h4 class="section-h4">4.4.2 Architecture d'intégration multi-CRM <span class="status status-propose">Proposé — Tranche 8</span></h4>
+
+    <p><strong>Pattern adapter.</strong> Chaque CRM est supporté via un adapter qui implémente une interface commune. Le code core d'Alicia ne connaît que l'interface, pas l'implémentation.</p>
+
+<pre><code>/shared/adapters/crm/
+  interface.js                ← Contrat commun
+  pipedrive.js                ← Existant
+  hubspot.js                  ← À développer
+  salesforce.js               ← À développer
+  axonaut.js                  ← À développer
+  sellsy.js                   ← À développer
+  nocrm.js                    ← À développer
+  brevo.js                    ← À développer
+  native.js                   ← Dashboard Prospérenne natif</code></pre>
+
+    <p>Chaque tenant (chaque client Prospérenne) déclare dans sa config quel adapter utiliser.</p>
+
+    <h4 class="section-h4">4.4.3 Onboarding CRM en 1 clic <span class="status status-propose">Proposé</span></h4>
+
+    <ol>
+      <li>Sur le dashboard, le client clique "Connecter mon CRM"</li>
+      <li>Liste des CRM supportés avec logos</li>
+      <li>Clic sur son CRM → redirection OAuth</li>
+      <li>Validation des permissions demandées</li>
+      <li>Retour sur Prospérenne, Alicia confirme "connexion réussie"</li>
+    </ol>
+
+    <h4 class="section-h4">4.4.4 Cas particulier : client sans CRM <span class="status status-propose">Proposé</span></h4>
+
+    <p>Si le client n'a pas de CRM, Prospérenne lui propose :</p>
+    <ul>
+      <li><strong>Option A</strong> : utiliser le dashboard Prospérenne comme mini-CRM</li>
+      <li><strong>Option B</strong> : création guidée d'un compte Pipedrive ou HubSpot</li>
+      <li><strong>Option C</strong> : migrer vers l'offre CRM Prospérenne (cf. 4.5)</li>
+    </ul>
+
+    <h3 class="section-h3">4.5 Dashboard Prospérenne et offre CRM future <span class="status status-reflechir">À réfléchir</span></h3>
+
+    <h4 class="section-h4">4.5.1 Le dashboard Prospérenne <span class="status status-propose">Proposé — Phase 1-2</span></h4>
+
+    <p>Chaque client accède à un dashboard web (<code>prosperenne.fr/dashboard/[token]</code>) qui centralise :</p>
+    <ul>
+      <li>Les leads envoyés en séquence</li>
+      <li>Les RDV fixés</li>
+      <li>La facturation en direct (sur la base des paliers)</li>
+      <li>Les actions en attente du client</li>
+      <li>Les statistiques cumulées</li>
+    </ul>
+
+    <div class="card-accent">
+      Ce dashboard est <strong>un argument de vente majeur</strong> : transparence totale, pas de surprise de facturation, visibilité temps réel.
+    </div>
+
+    <h4 class="section-h4">4.5.2 Évolution vers une offre CRM Prospérenne <span class="status status-reflechir">À réfléchir</span></h4>
+
+    <p><strong>Observation stratégique.</strong> Le dashboard contient déjà les briques fondamentales d'un CRM léger (contacts, deals, stages, activités, reporting). Pour les clients sans CRM, il peut <strong>devenir leur CRM</strong>.</p>
+
+    <p><strong>Proposition.</strong> Après stabilisation du produit Prospérenne (6-12 mois), enrichir le dashboard pour en faire une offre CRM complète, proposée en standalone ou couplée à l'offre de prospection.</p>
+
+    <p><strong>Positionnement envisagé</strong></p>
+    <ul>
+      <li>CRM ultra-simple pour dirigeants qui n'ont pas besoin de HubSpot ou Pipedrive</li>
+      <li>Intégration native avec Alicia (la prospection est dedans)</li>
+      <li>Positionnement prix agressif : inclus dans l'offre Prospérenne à partir d'un palier, ou ~20-40 €/user/mois en standalone</li>
+      <li>Valeur ajoutée : le CRM est "vivant", alimenté par Alicia</li>
+    </ul>
+
+    <p><strong>Questions ouvertes</strong></p>
+    <ul>
+      <li>Offre Prospérenne ou offre PérennIA séparée ?</li>
+      <li>Nom commercial ? (<em>Pérenne CRM, Prospérenne CRM, autre ?</em>)</li>
+      <li>Timing : Phase 3 ou plus tôt si la demande émerge ?</li>
+    </ul>
+
+    <h3 class="section-h3">4.6 Modèle économique Prospérenne <span class="status status-valide">Validé</span></h3>
+
+    <h4 class="section-h4">4.6.1 Principe fondateur — tarification disruptive à la performance</h4>
+
+    <p>Prospérenne refuse le modèle classique du forfait mensuel fixe. À la place : un <strong>modèle à tranches de performance automatiques</strong> qui aligne strictement le prix payé sur la valeur livrée.</p>
+
+    <div class="card-accent">
+      <strong>Pitch commercial.</strong> "Les autres vous font signer un forfait fixe et espèrent que ça marche. Nous, on vous fait payer exactement ce qu'on produit. Si on ne produit rien, vous payez juste les coûts techniques. Si on explose tout, vous avez un plafond qui vous protège. C'est le seul modèle au marché aligné à 100% sur vos résultats."
+    </div>
+
+    <h4 class="section-h4">4.6.2 Les deux offres</h4>
+
+    <p><strong>Offre RDV fixés (premium)</strong> — Alicia prospecte, qualifie et fixe le RDV directement dans l'agenda du client.</p>
+
+    <table>
+      <thead><tr><th>Palier</th><th>RDV qualifiés / mois</th><th>Prix mensuel</th></tr></thead>
+      <tbody>
+        <tr><td>Plancher</td><td>0-1 RDV</td><td><strong>490 €</strong></td></tr>
+        <tr><td>Palier 1</td><td>2-3 RDV</td><td><strong>890 €</strong></td></tr>
+        <tr><td>Palier 2</td><td>4-6 RDV</td><td><strong>1 390 €</strong></td></tr>
+        <tr><td>Palier 3</td><td>7-10 RDV</td><td><strong>1 890 €</strong></td></tr>
+        <tr><td>Plafond</td><td>11+ RDV</td><td><strong>2 390 €</strong></td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Offre Leads qualifiés (alternative)</strong> — Alicia identifie les prospects intéressés et les transmet au client qui prend la main.</p>
+
+    <table>
+      <thead><tr><th>Palier</th><th>Leads qualifiés / mois</th><th>Prix mensuel</th></tr></thead>
+      <tbody>
+        <tr><td>Plancher</td><td>0-2 leads</td><td><strong>290 €</strong></td></tr>
+        <tr><td>Palier 1</td><td>3-5 leads</td><td><strong>490 €</strong></td></tr>
+        <tr><td>Palier 2</td><td>6-10 leads</td><td><strong>790 €</strong></td></tr>
+        <tr><td>Palier 3</td><td>11-18 leads</td><td><strong>1 190 €</strong></td></tr>
+        <tr><td>Plafond</td><td>19+ leads</td><td><strong>1 590 €</strong></td></tr>
+      </tbody>
+    </table>
+
+    <h4 class="section-h4">4.6.3 Définitions contractuelles</h4>
+
+    <p><strong>RDV qualifié effectif</strong> (facturable offre 1) — <strong>toutes</strong> les conditions :</p>
+    <ul>
+      <li>RDV honoré (pas un no-show)</li>
+      <li>Décideur éligible selon grille définie avec le client</li>
+      <li>Conversation de 20 minutes minimum</li>
+      <li>Client a confirmé ou n'a pas contesté dans le délai</li>
+    </ul>
+
+    <p><strong>Lead qualifié</strong> (facturable offre 2) — prospect qui a manifesté un intérêt concret :</p>
+    <ul>
+      <li>Réponse positive à un message d'Alicia</li>
+      <li>Question de fond signalant un intérêt réel</li>
+      <li>Demande explicite de RDV gérée par le client</li>
+    </ul>
+
+    <p><strong>Non facturable</strong> (dans les deux offres) : OOO, réponses négatives, bounces, absence de réponse.</p>
+
+    <h3 class="section-h3">4.7 Mécanisme de vérification — la boucle du prospect <span class="status status-valide">Validé</span></h3>
+
+    <div class="card-accent">
+      Le verrou qui rend le modèle fiable. <strong>La menace d'une relance du prospect force le client à déclarer honnêtement l'issue.</strong> Le client n'a aucun intérêt à mentir : s'il déclare faussement "no-show", le prospect reçoit un mail de relance d'Alicia et le client perd la face.
+    </div>
+
+    <h4 class="section-h4">Workflow offre RDV fixés</h4>
+    <ol>
+      <li>RDV créé via Bookings → deal au stage "RDV fixé"</li>
+      <li>H+24 après l'horaire prévu → mail au client avec 3 boutons 1-clic : <em>Tenu / No-show / Reporté</em></li>
+      <li>Si "No-show" → Alicia relance le prospect gentiment</li>
+      <li>Si pas de réponse H+48 → rappel automatique</li>
+      <li>Silence 5 jours → RDV considéré tenu (opt-in tacite), facturation activée</li>
+      <li>Fallback : activité manuelle sur le deal → facturation activée</li>
+    </ol>
+
+    <h4 class="section-h4">Workflow offre Leads qualifiés</h4>
+    <ol>
+      <li>Lead identifié → transmission au client</li>
+      <li>H+48 → 3 boutons : <em>Pris en main / Pas intéressant / Plus tard</em></li>
+      <li>Si "Pas intéressant" → Alicia recontacte gentiment le prospect</li>
+      <li>Silence 5 jours → lead considéré pris en main, facturation activée</li>
+    </ol>
+
+    <h4 class="section-h4">Les 7 couches de sécurité</h4>
+
+    <table>
+      <thead><tr><th>Couche</th><th>Mécanisme</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Détection Bookings + stage CRM automatique</td></tr>
+        <tr><td>2</td><td>Relance H+24 client avec bouton 1-clic</td></tr>
+        <tr><td>3</td><td><strong>Menace de relance du prospect</strong> si no-show déclaré</td></tr>
+        <tr><td>4</td><td>Détection d'activité manuelle sur le deal</td></tr>
+        <tr><td>5</td><td>Dashboard client temps réel</td></tr>
+        <tr><td>6</td><td>Audit trimestriel contradictoire</td></tr>
+        <tr><td>7</td><td>Clause contractuelle opt-in tacite à J+5</td></tr>
+      </tbody>
+    </table>
+
+    <h3 class="section-h3">4.8 Clauses contractuelles clés <span class="status status-externe">Attente externe — avocat</span></h3>
+
+    <div class="card">
+      <ul>
+        <li>"Un RDV ou un lead est considéré livré si le client confirme explicitement, ou reste silencieux 5 jours après la relance H+48."</li>
+        <li>"Contestation par mail à direction@prosperenne.fr dans les 5 jours suivant la relance H+48, avec motif."</li>
+        <li>"Audit trimestriel : 7 jours pour contester. Passé ce délai, la facturation est figée."</li>
+        <li>"En cas d'abus caractérisé, Prospérenne se réserve le droit de résilier le contrat."</li>
+        <li>"Le client reconnaît être l'émetteur juridique des mails envoyés par Alicia en son nom et assume les obligations CNIL/RGPD associées." <em>(mode fantôme)</em></li>
+        <li>"Prospérenne agit en qualité de mandataire commercial pour le compte du client."</li>
+      </ul>
+    </div>
+
+    <h3 class="section-h3">4.9 Levier d'upsell naturel <span class="status status-propose">Proposé</span></h3>
+
+    <p>Pour les clients sur l'offre Leads qui restent 3 mois consécutifs au plafond (19+ leads/mois), Prospérenne propose automatiquement de passer à l'offre RDV. Logique : un client qui génère beaucoup de leads mais ne les transforme pas bien gagnerait à ce qu'Alicia fixe les RDV à sa place.</p>
+
+    <h3 class="section-h3">4.10 Coûts marginaux par client actif <span class="status status-hypothese">Hypothèse</span></h3>
+
+    <ul>
+      <li>API Anthropic : ~5 à 15 €/mois selon volume</li>
+      <li>API Pipedrive (ou autre CRM) : inclus dans licence tenant</li>
+      <li>Stockage Azure : négligeable</li>
+      <li>Licence Microsoft 365 Alicia + Martin + Mila : ~20 €/mois (mutualisée)</li>
+    </ul>
+
+    <p><strong>Marge brute estimée</strong> : supérieure à 90% à partir de 5 clients actifs.</p>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 5 — ARCHITECTURE TECHNIQUE          -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="architecture"><span class="section-h2-num">5</span>Architecture technique cible</h2>
+
+    <h3 class="section-h3">5.1 Principes directeurs <span class="status status-valide">Validé</span></h3>
+
+    <h4 class="section-h4">Principe 1 — Un agent est un template, pas une instance</h4>
+    <p>Le code générique d'un agent est mutualisé. Une instance = un template + une configuration spécifique (tenant). David et Alicia partagent le même template <code>manager-commercial</code>. Ce qui les distingue, c'est leur configuration.</p>
+
+    <h4 class="section-h4">Principe 2 — Les règles métier vivent dans une config, pas dans le code</h4>
+    <p>"Sweet spot 10-20, exclure les comptables" est actuellement dans les prompts. Pour vendre Prospérenne à un client avec un ICP différent, ces règles doivent être externalisées dans un <code>business-rules.json</code> par tenant.</p>
+
+    <h4 class="section-h4">Principe 3 — Les intégrations externes sont des adapters interchangeables</h4>
+    <p>Pipedrive aujourd'hui, HubSpot demain, Axonaut pour un autre. Chaque intégration est derrière une interface commune, et le choix est dans la config du tenant.</p>
+
+    <h3 class="section-h3">5.2 Structure de dossiers cible <span class="status status-propose">Proposé — Tranche 8</span></h3>
+
+<pre><code>/agents-templates/                 ← Code générique (partagé)
+  manager-commercial/              ← Template "David" / "Alicia"
+  prospecteur/                     ← Template "Martin" / "Mila"
+  community-manager/               ← Template "Mika" (futur)
+  createur-sites/                  ← (futur)
+  responsable-technique/           ← (futur)
+
+/tenants/
+  groupe-perenne/                  ← Usage interne OSEYS
+    config.json                    ← Règles métier OSEYS
+    agents/
+      david/identity.json
+      martin/identity.json
+      mila/identity.json
+    integrations/
+      crm: "pipedrive"
+      mail: "microsoft-graph"
+      calendar: "microsoft-bookings"
+
+  prosperenne/                     ← Agence commerciale externe
+    config.json                    ← Config Prospérenne par défaut
+    agents/
+      alicia/identity.json
+      martin/identity.json
+      mila/identity.json
+      mika/identity.json           ← Futur
+    clients/                       ← Configs par client commercial
+      client-abc/
+        config.json                ← Règles spécifiques client
+        integrations/
+          crm: "hubspot"
+          mail: "option-a"         ← Mode fantôme, domaine Prospérenne
+      client-xyz/
+        config.json
+        integrations/
+          crm: "axonaut"
+          mail: "option-b"         ← Mode fantôme, OAuth boîte client</code></pre>
+
+    <h3 class="section-h3">5.3 Adapters d'intégration <span class="status status-propose">Proposé — Tranche 8</span></h3>
+
+<pre><code>/shared/adapters/
+  crm/
+    interface.js                   ← Contrat commun
+    pipedrive.js                   ← Existant
+    hubspot.js                     ← Phase 1 (priorité)
+    salesforce.js                  ← Phase 2
+    axonaut.js                     ← Phase 2 (priorité FR)
+    sellsy.js                      ← Phase 2 (priorité FR)
+    nocrm.js                       ← Phase 3
+    brevo.js                       ← Phase 3
+    zoho.js                        ← À la demande
+    native.js                      ← Dashboard Prospérenne
+
+  mail/
+    interface.js
+    microsoft-graph.js             ← Existant
+    google-workspace.js            ← À développer
+    prosperenne-domain.js          ← Mode fantôme Option A
+    oauth-relay.js                 ← Mode fantôme Option B
+
+  calendar/
+    interface.js
+    microsoft-bookings.js          ← Existant
+    google-calendar.js             ← À développer
+    calendly.js                    ← À la demande
+
+  leads-source/
+    interface.js
+    oseys-base.js                  ← Interne (Constantin)
+    national-tpe-pme.js            ← Prospérenne commerciale
+    client-provided.js             ← Futur</code></pre>
+
+    <h3 class="section-h3">5.4 Cette refacto est planifiée en Tranche 8 <span class="status status-valide">Validé</span></h3>
+
+    <div class="card-accent">
+      Elle interviendra <strong>après</strong> validation du pilote interne Morgane/Johnny, <strong>avant</strong> commercialisation Prospérenne. Timing estimé : 1 à 2 semaines de développement focalisé.
+    </div>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 6 — ROADMAP                         -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="roadmap"><span class="section-h2-num">6</span>Roadmap produit</h2>
+
+    <h3 class="section-h3">Phase 0 — Pilote interne Groupe Pérenne <span class="status status-encours">En cours</span></h3>
+
+    <div class="card">
+      <p><strong>Statut.</strong> Vague 1 de développement bouclée (code prêt, pas déployé).</p>
+      <p><strong>Restant</strong></p>
+      <ul>
+        <li>Paul : transmettre les Smart BCC Pipedrive (Morgane, Johnny)</li>
+        <li>Paul : valider la base de leads livrée par Constantin</li>
+        <li>Déploiement prod Azure (Tranche 7)</li>
+        <li>Lancement pilote avec Morgane et Johnny</li>
+        <li>Période d'observation : 4 à 8 semaines</li>
+      </ul>
+      <p><strong>Critères de succès</strong> <span class="status status-hypothese">Hypothèse</span></p>
+      <ul>
+        <li>Les 2 consultants utilisent David chaque semaine</li>
+        <li>Taux d'ouverture &gt; 35%, taux de réponse &gt; 8%</li>
+        <li>Au moins 3 RDV fixés via Bookings</li>
+        <li>Aucune plainte prospect, feedback positif consultants</li>
+      </ul>
+    </div>
+
+    <h3 class="section-h3">Phase 1 — Architecture scalable (Tranche 8) <span class="status status-propose">Proposé</span></h3>
+
+    <div class="card">
+      <p><strong>Déclencheur.</strong> Pilote interne validé, décision de commercialiser Prospérenne actée.</p>
+      <p><strong>Contenu</strong></p>
+      <ul>
+        <li>Refacto multi-tenant</li>
+        <li>Externalisation des règles métier OSEYS en config</li>
+        <li>Adapters CRM : HubSpot, Axonaut en priorité après Pipedrive</li>
+        <li>Adapters mail : Option A + Option B pour le mode fantôme</li>
+        <li>Création de l'instance <code>prosperenne</code> vide, prête pour Alicia</li>
+        <li>Développement v1 du dashboard Prospérenne</li>
+      </ul>
+      <p><strong>Durée estimée</strong> : 2 à 3 semaines.</p>
+    </div>
+
+    <h3 class="section-h3">Phase 2 — Lancement commercial Prospérenne <span class="status status-propose">Proposé</span></h3>
+
+    <div class="card">
+      <p><strong>Prérequis</strong></p>
+      <ul>
+        <li>Architecture scalable en place</li>
+        <li>Structure juridique Prospérenne actée</li>
+        <li>Alicia opérationnelle (photo, identité, prompts)</li>
+        <li>Base de leads nationale TPE/PME opérationnelle</li>
+        <li>Page commerciale prosperenne.fr en ligne</li>
+        <li>CGS rédigées, conformité RGPD vérifiée</li>
+        <li>Adapters CRM au minimum : Pipedrive + HubSpot + Axonaut</li>
+      </ul>
+      <p><strong>Cible primaire</strong> <span class="status status-hypothese">Hypothèse</span> : 10 premiers clients en pilote commercial (6 premiers mois).</p>
+    </div>
+
+    <h3 class="section-h3">Phase 3 — Extension de gamme <span class="status status-propose">Proposé</span></h3>
+
+    <div class="card">
+      <p><strong>Déclencheur.</strong> Prospérenne rentable avec ≥ 20 clients actifs.</p>
+      <p><strong>Contenu</strong></p>
+      <ul>
+        <li>Lancement de Mika (community manager) comme option ou agence dédiée</li>
+        <li>Lancement de l'agence Créateur de sites (filiale PérennIA)</li>
+        <li>Premiers agents internes (Contrôleur de gestion, Assistante de direction)</li>
+        <li>Extension des adapters CRM (Salesforce, Sellsy, NoCRM, Brevo, Zoho)</li>
+        <li><strong>Possiblement</strong> : lancement de l'offre CRM Prospérenne</li>
+      </ul>
+    </div>
+
+    <h3 class="section-h3">Phase 4 — Plateforme et scale <span class="status status-reflechir">À réfléchir</span></h3>
+
+    <p><strong>Vision à 18-24 mois</strong></p>
+    <ul>
+      <li>Plateforme self-service pour certains agents</li>
+      <li>Ouverture API pour intégrations tierces</li>
+      <li>Possible internationalisation (Belgique, Suisse, Québec)</li>
+      <li>Levée de fonds potentielle sur PérennIA</li>
+    </ul>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 7 — DÉCISIONS EN ATTENTE            -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="decisions"><span class="section-h2-num">7</span>Décisions en attente</h2>
+
+    <h3 class="section-h3">7.1 Structurelles <span class="status status-externe">Attente externe — avocat</span></h3>
+
+    <ul class="checklist">
+      <li>Forme juridique de PérennIA (SAS vs SARL)</li>
+      <li>Prospérenne en filiale vs branche</li>
+      <li>Timing création PérennIA (avant ou après premier client ?)</li>
+      <li>Détention du capital de PérennIA</li>
+      <li>Statut juridique de PilotagePro</li>
+      <li>Arbitrage agence de com : intégrée à Prospérenne ou filiale séparée ?</li>
+    </ul>
+
+    <h3 class="section-h3">7.2 Produit</h3>
+
+    <ul class="checklist">
+      <li>Mode fantôme — Option A, B, ou hybride C ? <em>(reco Claude : C)</em></li>
+      <li>Tarification — validation empirique sur les premiers clients</li>
+      <li>SLA explicites : "si aucun RDV qualifié au mois 3, rupture + remboursement" ?</li>
+      <li>Nom commercial et branding de l'agence créateur de sites</li>
+      <li>Nom commercial agence com (si séparée)</li>
+      <li>Photo et identité d'Alicia à générer</li>
+      <li>Boîte mail alicia@oseys.fr</li>
+      <li>Dashboard Prospérenne — spec détaillée à faire en Phase 1</li>
+      <li>Offre CRM Prospérenne — timing et nom commercial</li>
+      <li>Pricing agence de com future</li>
+    </ul>
+
+    <h3 class="section-h3">7.3 Technique</h3>
+
+    <ul class="checklist">
+      <li>Tranche 8 architecture multi-tenant — planifiée</li>
+      <li>Adapter base de leads (attente livraison Constantin)</li>
+      <li>API PilotagePro (attente Constantin)</li>
+      <li>Mécanisme "boucle du prospect" — Azure Functions à développer</li>
+      <li>Webhook Bookings → CRM générique (multi-provider)</li>
+      <li>Adapters CRM : HubSpot, Axonaut, Sellsy en priorité</li>
+      <li>Adapters mail : Option A + Option B</li>
+      <li>Warm-up des boîtes d'envoi avant scale</li>
+      <li>Monitoring et alerting Application Insights</li>
+    </ul>
+
+    <h3 class="section-h3">7.4 Conformité et juridique <span class="status status-externe">Attente externe — avocat</span></h3>
+
+    <ul class="checklist">
+      <li>Conformité RGPD prospection à froid</li>
+      <li>CGS Prospérenne (mode fantôme + boucle du prospect + mandataire)</li>
+      <li>Politique de confidentialité</li>
+      <li>Mentions AI Act (signalement IA)</li>
+      <li>Clause de facturation à la performance sécurisée</li>
+      <li>Articulation juridique mode fantôme (émetteur du mail)</li>
+    </ul>
+
+    <h3 class="section-h3">7.5 Commercial et marketing <span class="status status-reflechir">À réfléchir</span></h3>
+
+    <ul class="checklist">
+      <li>Canaux d'acquisition Prospérenne (direct, réseaux, franchises ?)</li>
+      <li>Site prosperenne.fr et branding</li>
+      <li>Premier pitch deck Prospérenne</li>
+      <li>Process de démo et conversion premiers clients</li>
+    </ul>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 8 — RISQUES                         -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="risques"><span class="section-h2-num">8</span>Risques identifiés</h2>
+
+    <h3 class="section-h3">8.1 Produit</h3>
+
+    <div class="card">
+      <ul>
+        <li><strong>Délivrabilité</strong> : si les boîtes d'envoi se font flaguer, tout s'effondre. Warm-up obligatoire.</li>
+        <li><strong>Qualité des leads</strong> : si la base Constantin ou la base nationale est médiocre, impact direct.</li>
+        <li><strong>Prompt drift</strong> : les messages peuvent dériver. Audit qualité régulier.</li>
+        <li><strong>Contournement de la facturation</strong> : un client malhonnête pourrait déclarer "no-show". La menace de relance du prospect + détection d'activité manuelle dissuadent, mais surveillance trimestrielle requise.</li>
+        <li><strong>Mode fantôme et délivrabilité</strong> : Option A peut moins performer qu'Option B. À valider empiriquement.</li>
+      </ul>
+    </div>
+
+    <h3 class="section-h3">8.2 Juridique</h3>
+
+    <div class="card">
+      <ul>
+        <li><strong>RGPD prospection à froid</strong> : cadre strict. Analyse juridique obligatoire.</li>
+        <li><strong>Mode fantôme et responsabilité</strong> : "qui est juridiquement l'émetteur" est crucial. À cadrer en CGS.</li>
+        <li><strong>AI Act</strong> : obligations de signalement à vérifier.</li>
+        <li><strong>Détournement d'usage client</strong> : harcèlement, phishing. Clause + détection.</li>
+        <li><strong>Clauses de facturation à la performance</strong> : doivent être parfaitement cadrées.</li>
+      </ul>
+    </div>
+
+    <h3 class="section-h3">8.3 Commercial</h3>
+
+    <div class="card">
+      <ul>
+        <li><strong>Concurrence multiple</strong> : Lemlist, Waalaxy, La Growth Machine, + agences classiques (Captain Prospect, Oliverlist, ReCom). Différenciation via équipe humaine IA + modèle tarifaire + multi-CRM + mode fantôme simplifié.</li>
+        <li><strong>Dépendance Anthropic</strong> : si les tarifs API explosent. Mitigation via hybride Sonnet + Haiku, évaluation Mistral.</li>
+        <li><strong>Plafond trop bas</strong> : 2 390 €/mois, un gros client à 30 RDV/mois paye 80 €/RDV. Vérifier tenue de la qualité à ce volume.</li>
+        <li><strong>Concurrence avec partenaires CRM</strong> : si l'offre CRM Prospérenne prend, conflit potentiel avec HubSpot, Pipedrive, Axonaut.</li>
+      </ul>
+    </div>
+
+    <h3 class="section-h3">8.4 Organisationnel</h3>
+
+    <div class="card">
+      <ul>
+        <li><strong>Dépendance à Paul</strong> : tout le projet repose sur toi seul. Recruter ou s'associer avec un profil tech dès 5+ clients Prospérenne.</li>
+        <li><strong>Mélange des marques</strong> : OSEYS, Groupe Pérenne, Prospérenne, PérennIA, PilotagePro à gérer en parallèle. Discipline narrative obligatoire.</li>
+        <li><strong>Charge de travail Constantin</strong> : PilotagePro + base de leads + potentielles API agents. Monitorer.</li>
+      </ul>
+    </div>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 9 — NARRATIVE DE MARQUE             -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="narrative"><span class="section-h2-num">9</span>Narrative de marque</h2>
+
+    <h3 class="section-h3">9.1 Positionnements distincts <span class="status status-valide">Validé dans l'intention</span></h3>
+
+    <table>
+      <thead><tr><th>Entité</th><th>Positionnement</th><th>Audience</th><th>Ton</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Groupe Pérenne</strong></td><td>Holding, solidité, institutionnalité</td><td>Partenaires, institutionnels, investisseurs</td><td>Sobre, institutionnel</td></tr>
+        <tr><td><strong>OSEYS</strong></td><td>Réseau de consultants humains</td><td>Consultants, leurs clients</td><td>Terrain, familier, expert</td></tr>
+        <tr><td><strong>PilotagePro</strong></td><td>Outil métier de pilotage PME</td><td>Utilisateurs du réseau puis externe</td><td>Technique, rassurant, précis</td></tr>
+        <tr><td><strong>PérennIA</strong></td><td>Tech IA appliquée à la PME française</td><td>Clients agences, presse, investisseurs</td><td>Moderne, crédible, français</td></tr>
+        <tr><td><strong>Prospérenne</strong></td><td>Agence de prospection IA</td><td>Dirigeants TPE/PME</td><td>Direct, efficace, chaleureux</td></tr>
+      </tbody>
+    </table>
+
+    <h3 class="section-h3">9.2 Règle de communication <span class="status status-propose">Proposé</span></h3>
+
+    <ul>
+      <li><strong>Prospérenne</strong> en surface : pitch commercial, landing, supports. Ne mentionne pas PérennIA en premier plan.</li>
+      <li><strong>OSEYS</strong> reste invisible côté Prospérenne (séparation stricte des marques).</li>
+      <li><strong>PérennIA</strong> visible côté institutionnel : "la holding d'agents IA Pérenne".</li>
+      <li><strong>Groupe Pérenne</strong> sur les documents juridiques, contrats, partenariats institutionnels.</li>
+      <li><strong>PilotagePro</strong> a sa propre narrative (à définir avec Constantin).</li>
+    </ul>
+
+    <h3 class="section-h3">9.3 Logos et chartes graphiques <span class="status status-reflechir">À réfléchir</span></h3>
+
+    <ul>
+      <li>Groupe Pérenne : charte à créer, inspirée de la transition OSEYS → Pérenne</li>
+      <li>PérennIA : charte dédiée "tech + sérieux", différente de Groupe Pérenne</li>
+      <li>Prospérenne : charte commerciale chaleureuse (couleurs chaudes type orange OSEYS ?) — à challenger</li>
+      <li><em>Cohérence graphique entre Groupe Pérenne / PérennIA / Prospérenne (famille visible) sans uniformité forcée</em></li>
+    </ul>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- SECTION 10 — ACTIONS IMMÉDIATES             -->
+    <!-- ═══════════════════════════════════════════ -->
+    <h2 class="section-h2 anchor" id="actions"><span class="section-h2-num">10</span>Prochaines actions immédiates</h2>
+
+    <ol>
+      <li><span class="status status-externe">Attente externe</span> Paul : récupérer les 2 Smart BCC Pipedrive (Morgane, Johnny)</li>
+      <li><span class="status status-externe">Attente externe</span> Paul : valider la base de leads avec Claude quand Constantin livre</li>
+      <li><span class="status status-reflechir">À planifier</span> Paul : RDV avec avocat fiscaliste (structure + clauses tarifaires + RGPD + mode fantôme)</li>
+      <li><span class="status status-propose">Planifié</span> Paul + Claude : déployer en prod (Tranche 7) après validation base de leads</li>
+      <li><span class="status status-propose">Planifié</span> Paul + Claude : lancer pilote Morgane puis Johnny, observer 4 à 8 semaines</li>
+      <li><span class="status status-propose">Planifié</span> Paul + Claude : si pilote validé, enchaîner Tranche 8 architecture scalable</li>
+      <li><span class="status status-propose">Planifié</span> Préparation commercialisation Prospérenne (site, CGS, tarifs, adapters CRM)</li>
+    </ol>
+
+    <!-- Footer -->
+    <footer class="doc-footer">
+      Ce document est vivant. Chaque décision structurante prise doit être consignée ici.<br>
+      <strong>Fin de v2 — 17 avril 2026</strong>
+    </footer>
+
+  </main>
+</div>
+
+<script>
+  // Navigation active au scroll
+  const sections = document.querySelectorAll('.anchor');
+  const navLinks = document.querySelectorAll('.nav-link');
+
+  function setActiveNav() {
+    const scrollPos = window.scrollY + 100;
+    let current = '';
+    sections.forEach(sec => {
+      if (scrollPos >= sec.offsetTop) current = sec.id;
+    });
+    navLinks.forEach(link => {
+      link.classList.toggle('active', link.getAttribute('href') === '#' + current);
+    });
+  }
+  window.addEventListener('scroll', setActiveNav);
+  setActiveNav();
+
+  // Scroll smooth
+  navLinks.forEach(link => {
+    link.addEventListener('click', e => {
+      const href = link.getAttribute('href');
+      if (href.startsWith('#')) {
+        e.preventDefault();
+        const el = document.querySelector(href);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  });
+</script>
+
+</body>
+</html>
