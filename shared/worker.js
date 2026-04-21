@@ -106,6 +106,97 @@ function warnLog(context, message) {
   else if (typeof context.log === 'function') context.log(message);
 }
 
+// ─── Item 2 — Escalation match flou (même org, autre person) ───────────────
+/**
+ * Prévient le consultant owner du deal existant qu'on renonce à prospecter
+ * ce lead pour éviter un doublon de contact côté client.
+ *
+ * Résolution de l'owner (ordre de préférence) :
+ *   1. deal.user_id.email (si embedded dans la réponse Pipedrive)
+ *   2. pipedrive.getUserEmail(deal.user_id.id)
+ *   3. Fallback direction@oseys.fr (env ESCALATION_EMAIL) si non résolvable
+ *
+ * Best effort : toute erreur de sendMail est swallow + warn log.
+ * deps injectable pour tests (sendMail, pipedriveMod).
+ */
+async function sendFuzzyMatchEscalation({ fuzzyDeal, lead, context, deps = {} }) {
+  const sendMailImpl = deps.sendMail || sendMail;
+  const pipedriveMod = deps.pipedriveMod || pipedrive;
+
+  try {
+    const davidEmail = process.env.DAVID_EMAIL;
+    const direction = process.env.ESCALATION_EMAIL || 'direction@oseys.fr';
+    const domain = process.env.PIPEDRIVE_COMPANY_DOMAIN || 'oseys';
+    const dealLink = `https://${domain}.pipedrive.com/deal/${fuzzyDeal.id}`;
+
+    let ownerEmail = (fuzzyDeal.user_id && fuzzyDeal.user_id.email) || null;
+    if (!ownerEmail && fuzzyDeal.user_id && fuzzyDeal.user_id.id) {
+      try {
+        ownerEmail = await pipedriveMod.getUserEmail(fuzzyDeal.user_id.id);
+      } catch {
+        ownerEmail = null;
+      }
+    }
+
+    const ownerFullName = (fuzzyDeal.user_id && fuzzyDeal.user_id.name) || '';
+    const ownerPrenom = ownerFullName.split(/\s+/)[0] || '';
+
+    if (ownerEmail) {
+      await sendMailImpl({
+        from: davidEmail,
+        to: ownerEmail,
+        subject: `[David] Prospect déjà en suivi : ${lead.entreprise || ''}`,
+        html: renderFuzzyMatchEmailHtml({ ownerPrenom, lead, dealLink }),
+      });
+      return { sent: true, to: ownerEmail };
+    }
+
+    // Owner non résolvable → escalade à direction
+    await sendMailImpl({
+      from: davidEmail,
+      to: direction,
+      subject: `[David] Escalation non attribuable : ${lead.entreprise || ''}`,
+      html: renderUnattributableEmailHtml({ lead, dealLink }),
+    });
+    return { sent: true, to: direction, unattributable: true };
+  } catch (err) {
+    warnLog(context, `[dedup] escalation email failed: ${err.message}`);
+    return { sent: false, error: err.message };
+  }
+}
+
+function renderFuzzyMatchEmailHtml({ ownerPrenom, lead, dealLink }) {
+  const greet = ownerPrenom || 'équipe';
+  const prospectName = `${lead.prenom || ''} ${lead.nom || ''}`.trim();
+  return `<p>Bonjour ${escapeHtml(greet)},</p>
+
+<p>Un de tes prospects actuellement en suivi dans ton pipeline apparaît aussi dans la base qu'on voulait contacter via David :</p>
+
+<ul>
+  <li><strong>Prospect :</strong> ${escapeHtml(prospectName)} — ${escapeHtml(lead.entreprise || '')}</li>
+  <li><strong>Email :</strong> ${escapeHtml(lead.email || '')}</li>
+  <li><strong>Ton deal en cours :</strong> <a href="${escapeHtml(dealLink)}">${escapeHtml(dealLink)}</a></li>
+</ul>
+
+<p>Pour éviter tout doublon, David ne lancera aucune séquence sur ce prospect. Si tu veux qu'on passe le suivi à David (parce que tu n'as plus d'action prévue), il suffit de nous le dire.</p>
+
+<p>--<br>David (agent IA Prospérenne)</p>`;
+}
+
+function renderUnattributableEmailHtml({ lead, dealLink }) {
+  const prospectName = `${lead.prenom || ''} ${lead.nom || ''}`.trim();
+  return `<p>Un prospect apparaît dans la base à prospecter mais est déjà suivi dans un pipeline Pipedrive dont le propriétaire ne peut pas être résolu (user_id orphelin ou désactivé).</p>
+
+<ul>
+  <li><strong>Prospect :</strong> ${escapeHtml(prospectName)} — ${escapeHtml(lead.entreprise || '')} (${escapeHtml(lead.email || '')})</li>
+  <li><strong>Deal existant :</strong> <a href="${escapeHtml(dealLink)}">${escapeHtml(dealLink)}</a></li>
+</ul>
+
+<p>Intervention humaine requise : décider si on transfère le suivi à David ou si on laisse au consultant propriétaire.</p>
+
+<p>--<br>David (agent IA Prospérenne)</p>`;
+}
+
 // ─── Bootstrap d'une séquence : check leads existants, génère les 5 messages,
 //     envoie J0 (ou le schedule si hors créneau), programme J+4/J+10/J+18/J+28
 async function bootstrapSequence({ agent, consultant, lead, dealId, personId, orgId, context, mem0: mem0Override }) {
@@ -114,8 +205,8 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
   // 0. Filtrage leads existants : si le prospect est déjà dans un deal actif
   // d'un autre pipeline Pipedrive, on skippe.
   // - Match clair (même person_id) → skip silencieux, pas d'envoi
-  // - Match flou (même org_id mais person_id différent) → skip + flag pour
-  //   escalation ultérieure au consultant owner (Tranche 4 implémente le mail)
+  // - Match flou (même org_id mais person_id différent) → skip + mail
+  //   d'escalation au consultant owner du deal existant (best effort).
   if (personId || orgId) {
     try {
       const existing = await pipedrive.findExistingDealsAcrossAllPipes({ personId, orgId });
@@ -126,7 +217,8 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
         }
         const fuzzyMatch = orgId ? existing.find((d) => d.org_id?.value === orgId) : null;
         if (fuzzyMatch) {
-          return { skipped: true, reason: 'existing_deal_fuzzy', matchDealId: fuzzyMatch.id, matchPipeline: fuzzyMatch.pipeline_id, needsEscalation: true };
+          await sendFuzzyMatchEscalation({ fuzzyDeal: fuzzyMatch, lead, context });
+          return { skipped: true, reason: 'existing_deal_fuzzy', matchDealId: fuzzyMatch.id, matchPipeline: fuzzyMatch.pipeline_id, needsEscalation: true, escalationSent: true };
         }
       }
     } catch (err) {
@@ -246,4 +338,5 @@ module.exports = {
   bootstrapSequence,
   sendScheduledStep,
   resolveMem0Enrichments,
+  sendFuzzyMatchEscalation,
 };

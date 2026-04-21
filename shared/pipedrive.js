@@ -104,11 +104,19 @@ async function updatePersonField(personId, fieldKey, value) {
   });
 }
 
-/** Liste les deals actifs d'une personne dans le pipeline Prospérenne */
-async function findOpenDealsForPersonInOurPipe(personId) {
+/**
+ * Liste les deals d'une personne dans le pipeline Prospérenne.
+ * Par défaut : uniquement les deals ouverts (comportement historique).
+ * Avec { includeClosed: true } : tous les deals non supprimés (pour lecture
+ * des champs de cooldown retry_available_after / opt_out_until qui sont
+ * portés sur des deals déjà fermés).
+ */
+async function findOpenDealsForPersonInOurPipe(personId, { includeClosed = false } = {}) {
   if (!personId) return [];
   const ourPipe = Number(process.env.PIPEDRIVE_PIPELINE_ID);
-  const data = await call('/deals', { query: { person_id: personId, status: 'open', limit: 100 } });
+  const query = { person_id: personId, limit: 100 };
+  if (!includeClosed) query.status = 'open';
+  const data = await call('/deals', { query });
   return Array.isArray(data) ? data.filter((d) => d.pipeline_id === ourPipe) : [];
 }
 

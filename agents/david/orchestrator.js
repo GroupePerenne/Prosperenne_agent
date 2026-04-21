@@ -428,12 +428,32 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
     try {
       const org = await ensureOrg(lead);
       const person = await ensurePerson(lead, org.id);
-      const deal = await pipedrive.createDeal({
-        title: `${consultant.nom} → ${lead.entreprise}`,
-        personId: person.id,
-        orgId: org.id,
-        agent: agentKey,
+
+      // Item 3 — Cooldown / opt-out : lecture des deals fermés pour vérifier
+      // si ce prospect est sous opt-out permanent ou en cooldown 180j.
+      const cooldown = await checkLeadCooldown(person.id, { context });
+      if (cooldown.skip) {
+        results.push({
+          lead: lead.email,
+          agent: agentKey,
+          skipped: true,
+          reason: cooldown.reason,
+          until: cooldown.until,
+        });
+        continue;
+      }
+
+      // Item 1 — Dédup intra-pipe : si un deal ouvert existe déjà pour cette
+      // personne dans le pipeline Prospérenne, on le réutilise plutôt que
+      // d'en créer un second. On ne relance PAS bootstrapSequence (qui
+      // générerait une nouvelle séquence = doublon d'envoi).
+      const { deal, reused } = await resolveOrCreateDeal({
+        consultant, lead, agentKey, person, org, context,
       });
+      if (reused) {
+        results.push({ lead: lead.email, agent: agentKey, dealId: deal.id, reused: true });
+        continue;
+      }
 
       const result = await agent.bootstrapSequence({
         consultant,
@@ -449,6 +469,38 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
     }
   }
   return results;
+}
+
+function pickMostRecent(deals) {
+  return deals.slice().sort((a, b) => {
+    const ta = a.update_time || a.add_time || '';
+    const tb = b.update_time || b.add_time || '';
+    return tb.localeCompare(ta);
+  })[0];
+}
+
+/**
+ * Item 1 — Dédup intra-pipe : réutilise un deal ouvert existant pour ce
+ * prospect dans le pipe Prospérenne, sinon en crée un nouveau. pipedriveMod
+ * injectable pour tests.
+ */
+async function resolveOrCreateDeal({ consultant, lead, agentKey, person, org, context, pipedriveMod = pipedrive }) {
+  const existing = await pipedriveMod.findOpenDealsForPersonInOurPipe(person.id);
+  if (existing && existing.length > 0) {
+    if (existing.length > 1) {
+      warnLog(context, `[dedup] ${existing.length} open deals for person ${person.id} — taking most recent`);
+    }
+    const reused = pickMostRecent(existing);
+    infoLog(context, `[dedup] skipping createDeal: existing open deal ${reused.id} for person ${person.id}`);
+    return { deal: reused, reused: true };
+  }
+  const deal = await pipedriveMod.createDeal({
+    title: `${consultant.nom} → ${lead.entreprise}`,
+    personId: person.id,
+    orgId: org.id,
+    agent: agentKey,
+  });
+  return { deal, reused: false };
 }
 
 async function ensureOrg(lead) {
@@ -539,6 +591,72 @@ function warnLog(context, message) {
   else if (typeof context.log === 'function') context.log(message);
 }
 
+function infoLog(context, message) {
+  if (!context) return;
+  if (typeof context.info === 'function') context.info(message);
+  else if (typeof context.log === 'function') context.log(message);
+}
+
+// ─── Item 3 — Cooldown / opt-out ────────────────────────────────────────────
+/**
+ * Lit les deals (ouverts ET fermés) du prospect dans le pipe Prospérenne
+ * pour vérifier s'il est sous opt-out permanent ou en cooldown 180j.
+ *
+ * Règles :
+ *   - opt_out_until > today sur N'IMPORTE QUEL deal → skip permanent
+ *     (prioritaire sur cooldown, d'où le scan de tous les deals).
+ *   - retry_available_after > today sur le deal le plus récent → cooldown.
+ *   - Env vars PIPEDRIVE_FIELD_OPT_OUT_UNTIL / PIPEDRIVE_FIELD_RETRY_AVAILABLE_AFTER
+ *     non configurées → pas de skip (feature off).
+ *
+ * Retourne { skip: false } ou { skip: true, reason, until, lastAgent? }.
+ */
+async function checkLeadCooldown(personId, { context, pipedriveMod = pipedrive } = {}) {
+  if (!personId) return { skip: false };
+  const optOutKey = process.env.PIPEDRIVE_FIELD_OPT_OUT_UNTIL;
+  const retryKey = process.env.PIPEDRIVE_FIELD_RETRY_AVAILABLE_AFTER;
+  const lastAgentKey = process.env.PIPEDRIVE_FIELD_LAST_AGENT_ATTEMPTED;
+  if (!optOutKey && !retryKey) return { skip: false };
+
+  let deals;
+  try {
+    deals = await pipedriveMod.findOpenDealsForPersonInOurPipe(personId, { includeClosed: true });
+  } catch (err) {
+    warnLog(context, `[dedup] cooldown check failed for person ${personId}: ${err.message}`);
+    return { skip: false };
+  }
+  if (!deals || deals.length === 0) return { skip: false };
+
+  const todayISO = new Date().toISOString().slice(0, 10);
+
+  // 1. Opt-out permanent : scan de tous les deals — l'opt-out est "sticky"
+  //    même s'il n'est porté que par un ancien deal.
+  if (optOutKey) {
+    for (const deal of deals) {
+      const v = deal[optOutKey];
+      if (!v) continue;
+      const optOutUntil = String(v).slice(0, 10);
+      if (optOutUntil > todayISO) {
+        infoLog(context, `[dedup] skipping permanent opt-out: person ${personId} until ${optOutUntil}`);
+        return { skip: true, reason: 'opt_out', until: optOutUntil };
+      }
+    }
+  }
+
+  // 2. Cooldown : lecture sur le deal le plus récent uniquement.
+  const mostRecent = pickMostRecent(deals);
+  if (retryKey && mostRecent && mostRecent[retryKey]) {
+    const retryUntil = String(mostRecent[retryKey]).slice(0, 10);
+    if (retryUntil > todayISO) {
+      const lastAgent = (lastAgentKey && mostRecent[lastAgentKey]) || 'unknown';
+      infoLog(context, `[dedup] skipping cooldown: person ${personId} until ${retryUntil}, last_agent=${lastAgent}`);
+      return { skip: true, reason: 'cooldown', until: retryUntil, lastAgent };
+    }
+  }
+
+  return { skip: false };
+}
+
 module.exports = {
   handleInboxPoll,
   launchSequenceForConsultant,
@@ -550,4 +668,7 @@ module.exports = {
   persistInboundProspect,
   resolveSirenForOrg,
   findDealContext,
+  checkLeadCooldown,
+  pickMostRecent,
+  resolveOrCreateDeal,
 };
