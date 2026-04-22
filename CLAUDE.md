@@ -398,7 +398,7 @@ Attendu : mail d'onboarding avec les 3 boutons niveau + cartes Martin/Mila/both 
 ```bash
 # Sert forms/ sur un port local
 npx serve forms -p 8080
-# Puis ouvre http://localhost:8080/qualification.html?nom=Paul+Rudler&email=paul.rudler@oseys.fr&entreprise=OSEYS+GROUPE
+# Puis ouvre http://localhost:8080/formulaire-oseys.html?nom=Paul+Rudler&email=paul.rudler@oseys.fr&entreprise=OSEYS+GROUPE
 ```
 
 Vérifie visuellement :
@@ -493,7 +493,7 @@ Dans Settings du repo > Pages :
 - Source : `Deploy from a branch`
 - Branch : `main` / `(root)` ou `/forms`
 
-URL résultante : `https://groupeperenne.github.io/Prosperenne_agent/forms/qualification.html`
+URL résultante : `https://groupeperenne.github.io/Prosperenne_agent/forms/formulaire-oseys.html`
 
 Mettre à jour `PUBLIC_FORMS_BASE_URL` dans les env Azure une fois l'URL live.
 

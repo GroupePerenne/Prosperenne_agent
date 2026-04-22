@@ -92,7 +92,7 @@ Prosperenne_agent/
 │   └── davidInbox/                  Timer 5min  — lit la boîte David et route
 │
 └── forms/
-    └── qualification.html           Formulaire consultant (pré-remplissage URL)
+    └── formulaire-oseys.html           Formulaire consultant (pré-remplissage URL)
 ```
 
 ---
@@ -126,7 +126,7 @@ Prosperenne_agent/
 |---|----------|----------|------|
 | 1 | **Repo GitHub structuré** | README, ARCHITECTURE, DEPLOY, tout le reste | ✅ |
 | 2 | **Pipedrive** (token David) | `shared/pipedrive.js` + env `PIPEDRIVE_TOKEN` | ✅ |
-| 3 | **Formulaire pré-remplissage URL** | `forms/qualification.html` | ✅ |
+| 3 | **Formulaire pré-remplissage URL** | `forms/formulaire-oseys.html` | ✅ |
 | 4 | **Séquence J0/J3/J7/J14** | `shared/sequence.js` + queue + scheduler | ✅ |
 
 ---
