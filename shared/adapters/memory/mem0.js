@@ -253,17 +253,28 @@ class Mem0Adapter {
 
 function normaliseLogger(logger) {
   if (!logger) return noopLogger();
+  // On wrappe chaque méthode dans une closure qui invoke dynamiquement.
+  // Rationale : le SDK @azure/functions v4 utilise des private fields (#field) 
+  // sur son InvocationContext.log. Un .bind() perd l'accès à ces fields quand 
+  // la méthode est appelée depuis une autre closure (cas Mem0 singleton réutilisé
+  // entre invocations). Un wrapper avec fallback console.log sur erreur évite 
+  // tout crash silencieux.
+  const safe = (fn, fallback) => (...args) => {
+    if (!fn) return fallback(...args);
+    try { return fn(...args); } 
+    catch (e) { return fallback(...args); }
+  };
   if (typeof logger === 'function') {
     return {
-      info: (...a) => logger(...a),
-      warn: (...a) => (logger.warn ? logger.warn(...a) : logger(...a)),
-      error: (...a) => (logger.error ? logger.error(...a) : logger(...a))
+      info: safe(logger, console.log),
+      warn: safe(logger.warn || logger, console.warn),
+      error: safe(logger.error || logger, console.error)
     };
   }
   return {
-    info: logger.info ? logger.info.bind(logger) : () => {},
-    warn: logger.warn ? logger.warn.bind(logger) : (logger.info ? logger.info.bind(logger) : () => {}),
-    error: logger.error ? logger.error.bind(logger) : (logger.warn ? logger.warn.bind(logger) : () => {})
+    info: safe(logger.info, console.log),
+    warn: safe(logger.warn || logger.info, console.warn),
+    error: safe(logger.error || logger.warn || logger.info, console.error)
   };
 }
 
