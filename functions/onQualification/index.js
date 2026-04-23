@@ -162,22 +162,25 @@ module.exports = {
 // ─── Lead Selector — fire-and-forget après Promise.all ─────────────────────
 
 /**
- * Déclenche le Lead Selector + lance la séquence Martin/Mila si batch OK.
- * Si batch insuffisant ou erreur : envoie un mail d'élargissement au consultant
- * signé David. Toujours fire-and-forget — aucune exception ne remonte.
+ * Déclenche le pipeline complet (sélection candidates + enrichment exhauster +
+ * lancement séquence) en fire-and-forget après la réponse HTTP au consultant.
+ *
+ * Mis à jour Jalon 3 : consomme `enrichBatchForConsultant` au lieu de
+ * l'ancien `selectLeadsForConsultant`. Le mail "base à affiner" est
+ * construit par `buildInsufficientBatchMail` (migré dans enrichBatch
+ * conformément au point Paul #1 Jalon 3).
  *
  * Inhibé via env LEAD_SELECTOR_DISABLED=1 (utile pour tests/staging).
  */
 function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
   if (process.env.LEAD_SELECTOR_DISABLED === '1') return;
 
-  // Lazy-require pour éviter de charger leadSelector / orchestrator à
-  // l'import (et ne pas casser les tests qui n'instancient pas tous les modules).
-  let selectLeadsForConsultant;
+  let enrichBatchForConsultant;
+  let buildInsufficientBatchMail;
   let launchSequenceForConsultant;
   let sendMailLazy;
   try {
-    ({ selectLeadsForConsultant } = require('../../shared/leadSelector'));
+    ({ enrichBatchForConsultant, buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch'));
     ({ launchSequenceForConsultant } = require('../../agents/david/orchestrator'));
     ({ sendMail: sendMailLazy } = require('../../shared/graph-mail'));
   } catch (err) {
@@ -188,29 +191,31 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
   }
 
   // La promise n'est volontairement pas await depuis le handler HTTP.
-  // try/catch interne pour swallow toute erreur.
   const startedAt = Date.now();
   const logInfo = (msg, payload) => {
     if (!context) return;
     if (context.log && typeof context.log.info === 'function') context.log.info(msg, payload);
     else if (typeof context.log === 'function') context.log(msg, payload);
   };
-  // Log START : paire avec END pour détecter les kills silencieux runtime
-  // Azure Functions. Dans Application Insights : comparer le count de
-  // `leadSelector.trigger.start` vs `leadSelector.trigger.end` ; un écart
-  // signifie que le runtime a tué la closure avant la fin → basculer sur
-  // queue trigger (cf. SPEC §9.2).
   logInfo('leadSelector.trigger.start', { brief_id: briefId, consultantId });
   (async () => {
     try {
-      const result = await selectLeadsForConsultant({ brief, context });
+      const beneficiaryId = `oseys-${String(consultantId || '').split('@')[0] || 'unknown'}`;
+      const result = await enrichBatchForConsultant({
+        brief,
+        beneficiaryId,
+        briefId,
+        consultantId,
+        context,
+      });
+
       if (context && typeof context.log === 'function') {
         context.log(
           `[leadSelector] brief_id=${briefId} status=${result.status} returned=${result.meta && result.meta.returned}`,
         );
       }
 
-      if (result.status === 'ok' || result.status === 'insufficient') {
+      if (result.status === 'ok') {
         const consultant = {
           nom: brief.nom,
           email: brief.email,
@@ -231,13 +236,35 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
             `[leadSelector] sequence launched for brief_id=${briefId}, ok=${ok}/${seqResults.length}`,
           );
         }
+      } else if (result.status === 'insufficient') {
+        // Partielle : on lance tout de même la séquence sur les leads
+        // disponibles ET on envoie le mail "base à affiner" en parallèle.
+        const consultant = {
+          nom: brief.nom,
+          email: brief.email,
+          offre: brief.offre,
+          ton: brief.registre,
+          tutoiement: brief.vouvoiement === 'tu',
+        };
+        const briefForSeq = { prospecteur: brief.prospecteur || 'both' };
+        await Promise.all([
+          launchSequenceForConsultant({
+            consultant, brief: briefForSeq, leads: result.leads, context,
+          }),
+          sendMailLazy({
+            from: process.env.DAVID_EMAIL,
+            to: brief.email,
+            subject: 'Lead Selector — base à affiner',
+            html: buildInsufficientBatchMail(brief, result),
+          }),
+        ]);
       } else {
-        // empty / error → David informe le consultant
+        // empty / error → mail d'élargissement seul
         await sendMailLazy({
           from: process.env.DAVID_EMAIL,
           to: brief.email,
           subject: 'Lead Selector — base à affiner',
-          html: buildInsufficientBriefMail(brief, result),
+          html: buildInsufficientBatchMail(brief, result),
         });
       }
       logInfo('leadSelector.trigger.end', {
