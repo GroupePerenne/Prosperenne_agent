@@ -236,19 +236,20 @@ function buildContexte(entity, dirigeant) {
 /**
  * Convertit une entité LeadBase en lead au format launchSequenceForConsultant.
  * V1 stricte : pas d'email exploitable → null (le caller filtre).
+ *
+ * Jalon 3 extension (Path additif b') : ajout du `siren` dans le DTO pour
+ * que les consommateurs aval (lead-exhauster notamment) puissent appeler
+ * l'API de résolution d'email à partir du SIREN. Extension non-breaking :
+ * les tests existants qui ne lisent pas ce champ restent verts.
  */
 function extractLeadFromEntity(entity) {
   if (!entity) return null;
-  let firstDirigeant = null;
-  try {
-    const dirs = JSON.parse(entity.dirigeants || '[]');
-    if (Array.isArray(dirs) && dirs.length > 0) firstDirigeant = dirs[0];
-  } catch {
-    firstDirigeant = null;
-  }
+  const parsed = parseFirstDirigeant(entity);
+  const firstDirigeant = parsed.dirigeant;
   const email = firstDirigeant && firstDirigeant.email ? String(firstDirigeant.email).trim() : null;
   if (!email) return null;
   return {
+    siren: String(entity.siren || ''),
     prenom: ((firstDirigeant && (firstDirigeant.prenoms || firstDirigeant.prenom)) || '').trim(),
     nom: ((firstDirigeant && firstDirigeant.nom) || '').trim(),
     entreprise: entity.nom || '',
@@ -257,6 +258,72 @@ function extractLeadFromEntity(entity) {
     ville: entity.ville || '',
     contexte: buildContexte(entity, firstDirigeant),
   };
+}
+
+/**
+ * Extrait un "candidate" d'une entité LeadBase — sans exiger d'email.
+ * Utilisé par `selectCandidatesForConsultant` pour alimenter leadExhauster,
+ * qui résoudra l'email en aval via ses propres sources (patterns, scraping,
+ * Dropcontact cascade).
+ *
+ * Format candidate :
+ *   {
+ *     siren, firstName, lastName, companyName,
+ *     ville, codeNaf, trancheEffectif,
+ *     latitude, longitude,
+ *     inseeRole,  // "Président", "Gérant" selon INSEE (si renseigné)
+ *     contexte,
+ *     // email éventuellement présent dans l'entité (facultatif, servira
+ *     // d'indice pour la cache LeadContacts)
+ *     hintedEmail,
+ *   }
+ *
+ * Retourne null si entité invalide OU si aucun dirigeant identifiable
+ * (pas de prénom ni nom ni raison sociale exploitable). Dans ce dernier
+ * cas, exhauster ne pourrait pas faire son travail non plus.
+ */
+function extractCandidateFromEntity(entity) {
+  if (!entity || !entity.siren) return null;
+  const parsed = parseFirstDirigeant(entity);
+  const firstDirigeant = parsed.dirigeant;
+
+  const firstName = ((firstDirigeant && (firstDirigeant.prenoms || firstDirigeant.prenom)) || '').trim();
+  const lastName = ((firstDirigeant && firstDirigeant.nom) || '').trim();
+  const companyName = entity.nom || '';
+
+  // Au minimum : nom d'entreprise + (firstName OU lastName) pour permettre
+  // la résolution exhauster. Sinon on skip silencieusement.
+  if (!companyName || (!firstName && !lastName)) return null;
+
+  const hintedEmail = firstDirigeant && firstDirigeant.email
+    ? String(firstDirigeant.email).trim()
+    : null;
+
+  return {
+    siren: String(entity.siren),
+    firstName,
+    lastName,
+    companyName,
+    ville: entity.ville || '',
+    codeNaf: entity.codeNaf || '',
+    trancheEffectif: entity.trancheEffectif || '',
+    latitude: entity.latitude || null,
+    longitude: entity.longitude || null,
+    inseeRole: ((firstDirigeant && (firstDirigeant.fonction || firstDirigeant.role)) || '').trim(),
+    contexte: buildContexte(entity, firstDirigeant),
+    hintedEmail,
+  };
+}
+
+function parseFirstDirigeant(entity) {
+  let dirigeant = null;
+  try {
+    const dirs = JSON.parse(entity.dirigeants || '[]');
+    if (Array.isArray(dirs) && dirs.length > 0) dirigeant = dirs[0];
+  } catch {
+    dirigeant = null;
+  }
+  return { dirigeant };
 }
 
 // ─── Géocodage du center pour le tri distance ───────────────────────────────
@@ -451,6 +518,172 @@ async function selectLeadsForConsultant(params = {}) {
   }
 }
 
+// ─── selectCandidatesForConsultant (Path additif Jalon 3) ──────────────────
+
+const DEFAULT_CANDIDATE_MULTIPLIER = Number(process.env.LEAD_SELECTOR_CANDIDATE_MULTIPLIER || 3);
+
+/**
+ * Variante "candidates" de `selectLeadsForConsultant` — extension autorisée
+ * du scope SPEC §5 validée par Paul (Path additif b').
+ *
+ * Diff vs `selectLeadsForConsultant` :
+ *   - Applique `extractCandidateFromEntity` au lieu de `extractLeadFromEntity`
+ *     → aucun filtre sur la présence d'email (c'est le job de lead-exhauster)
+ *   - Retourne jusqu'à `batchSize * candidateMultiplier` candidats (3x par
+ *     défaut) pour donner de la marge au pipeline exhauster : chaque candidat
+ *     sera passé à leadExhauster ; certains seront résolus, d'autres tomberont
+ *     en unresolvable ; le caller itère jusqu'à avoir `batchSize` enriched
+ *   - Meta distinct : pas de `excludedNoEmail` (c'est LeadContacts qui tracera
+ *     les unresolvable, SPEC §9.3) ; ajout `excludedNoDirigeant` pour les
+ *     entités sans nom/prénom ni raison sociale exploitables
+ *   - Trace source marquée `source: 'candidates'` dans le meta pour que
+ *     dailyReport puisse distinguer les 2 flows (point Paul #3 Jalon 3)
+ *
+ * `selectLeadsForConsultant` (legacy) reste intact et testé non-régression.
+ *
+ * @param {Object} params
+ * @param {Object} params.brief
+ * @param {number} [params.batchSize]              Nombre cible d'enriched
+ * @param {number} [params.candidateMultiplier]   Défaut 3, override possible
+ * @param {Object} [params.adapters]
+ * @param {Object} [params.context]
+ * @param {string} [params.briefId]
+ * @param {string} [params.consultantId]
+ * @returns {Promise<{ status, candidates, meta }>}
+ */
+async function selectCandidatesForConsultant(params = {}) {
+  const started = Date.now();
+  const {
+    brief = {},
+    batchSize = DEFAULT_BATCH_SIZE,
+    candidateMultiplier = DEFAULT_CANDIDATE_MULTIPLIER,
+    adapters = {},
+    context,
+    briefId,
+    consultantId,
+  } = params;
+
+  const leadBase = adapters.leadBase || new LeadBaseAdapter({ logger: context && context.log });
+  const trace = adapters.trace || recordLeadSelectorEvent;
+
+  const maxCandidates = Math.max(batchSize, batchSize * candidateMultiplier);
+
+  try {
+    const filters = mapBriefToFilters(brief, { context });
+
+    if (filters.nafCodes.length === 0) {
+      const empty = {
+        status: 'empty',
+        candidates: [],
+        meta: {
+          requested: batchSize,
+          candidatesCount: 0,
+          excludedByRules: 0,
+          excludedNoDirigeant: 0,
+          excludedNoGps: 0,
+          returned: 0,
+          nafCodesQueried: [],
+          effectifCodesQueried: filters.effectifCodes,
+          zoneFilter: { type: brief.zone || 'default', center: null, radiusKm: Number(brief.zone_rayon) || null },
+          reason: 'no_sector_mapped',
+          source: 'candidates',
+          elapsedMs: Date.now() - started,
+        },
+      };
+      Promise.resolve(trace({ status: empty.status, meta: empty.meta, briefId, consultantId })).catch(() => {});
+      return empty;
+    }
+
+    const rawCandidates = await leadBase.queryLeads({
+      nafCodes: filters.nafCodes,
+      effectifCodes: filters.effectifCodes,
+      departements: filters.departements,
+      hardLimit: filters.hardLimit,
+    });
+    const candidatesCount = rawCandidates.length;
+
+    const { kept: afterExclusions, excluded } = applyExclusions(rawCandidates);
+
+    // Extraction candidate (sans filtre email)
+    let excludedNoDirigeant = 0;
+    const enriched = [];
+    for (const e of afterExclusions) {
+      const cand = extractCandidateFromEntity(e);
+      if (!cand) {
+        excludedNoDirigeant++;
+        continue;
+      }
+      enriched.push({ entity: e, candidate: cand });
+    }
+
+    const center = await computeZoneCenter(brief, { context });
+
+    const sortedEntities = sortByDistanceDesc(enriched.map((x) => x.entity), center);
+    const entityToCandidate = new Map();
+    for (const x of enriched) entityToCandidate.set(x.entity, x.candidate);
+
+    const sortedCandidates = sortedEntities.map((e) => entityToCandidate.get(e)).filter(Boolean);
+    const excludedNoGps = sortedEntities.filter((e) => !entityCoords(e)).length;
+
+    const selected = sortedCandidates.slice(0, maxCandidates);
+
+    const status = selected.length === 0
+      ? 'empty'
+      : selected.length < batchSize
+        ? 'insufficient'
+        : 'ok';
+
+    const result = {
+      status,
+      candidates: selected,
+      meta: {
+        requested: batchSize,
+        maxCandidates,
+        candidatesCount,
+        excludedByRules: excluded.length,
+        excludedNoDirigeant,
+        excludedNoGps,
+        returned: selected.length,
+        nafCodesQueried: filters.nafCodes,
+        effectifCodesQueried: filters.effectifCodes,
+        zoneFilter: {
+          type: brief.zone || 'default',
+          center,
+          radiusKm: Number(brief.zone_rayon) || null,
+        },
+        source: 'candidates',
+        elapsedMs: Date.now() - started,
+      },
+    };
+
+    logInfo(context, '[leadSelector] selectCandidatesForConsultant', {
+      status,
+      requested: batchSize,
+      maxCandidates,
+      candidatesCount,
+      returned: selected.length,
+      ms: result.meta.elapsedMs,
+    });
+
+    Promise.resolve(trace({ status: result.status, meta: result.meta, briefId, consultantId })).catch(() => {});
+    return result;
+  } catch (err) {
+    if (context && typeof context.error === 'function') context.error('[leadSelector] selectCandidates failed', err);
+    const errResult = {
+      status: 'error',
+      candidates: [],
+      meta: {
+        errorCode: err && err.code ? err.code : 'unknown',
+        errorMessage: err && err.message ? err.message : String(err),
+        source: 'candidates',
+        elapsedMs: Date.now() - started,
+      },
+    };
+    Promise.resolve(trace({ status: errResult.status, meta: errResult.meta, briefId, consultantId })).catch(() => {});
+    return errResult;
+  }
+}
+
 // ─── selectLeadsForConsultantById (Mem0) ───────────────────────────────────
 
 async function selectLeadsForConsultantById(params = {}) {
@@ -489,6 +722,48 @@ async function selectLeadsForConsultantById(params = {}) {
   }
 
   return selectLeadsForConsultant({ brief, batchSize, adapters, context });
+}
+
+/**
+ * Variante Mem0-by-id de `selectCandidatesForConsultant`. Mirror exact de
+ * `selectLeadsForConsultantById` mais pour le flow candidates (Jalon 3).
+ */
+async function selectCandidatesForConsultantById(params = {}) {
+  const { consultantId, batchSize, candidateMultiplier, adapters = {}, context } = params;
+  if (!consultantId) {
+    return {
+      status: 'error',
+      candidates: [],
+      meta: { errorCode: 'consultant_id_required', elapsedMs: 0 },
+    };
+  }
+
+  const mem0 = adapters.mem0 || getMem0(context);
+  if (!mem0) {
+    return { status: 'error', candidates: [], meta: { errorCode: 'mem0_off', elapsedMs: 0 } };
+  }
+
+  let memories;
+  try {
+    memories = await mem0.retrieveConsultant(consultantId);
+  } catch (err) {
+    return {
+      status: 'error',
+      candidates: [],
+      meta: { errorCode: 'mem0_retrieve_failed', errorMessage: err && err.message, elapsedMs: 0 },
+    };
+  }
+
+  if (!memories || memories.length === 0) {
+    return { status: 'error', candidates: [], meta: { errorCode: 'consultant_not_found', elapsedMs: 0 } };
+  }
+
+  const brief = parseBriefFromMemories(memories);
+  if (!brief) {
+    return { status: 'error', candidates: [], meta: { errorCode: 'brief_parse_failed', elapsedMs: 0 } };
+  }
+
+  return selectCandidatesForConsultant({ brief, batchSize, candidateMultiplier, adapters, context });
 }
 
 function parseBriefFromMemories(memories) {
@@ -531,6 +806,8 @@ function reviveBriefFromConsultantMemory(cm) {
 module.exports = {
   selectLeadsForConsultant,
   selectLeadsForConsultantById,
+  selectCandidatesForConsultant,
+  selectCandidatesForConsultantById,
   // exposés pour tests :
   mapBriefToFilters,
   applyExclusions,
@@ -547,6 +824,7 @@ module.exports = {
     return { kept, excludedNoEmail };
   },
   extractLeadFromEntity,
+  extractCandidateFromEntity,
   computeZoneCenter,
   sortByDistanceDesc,
   parseBriefFromMemories,

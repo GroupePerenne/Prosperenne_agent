@@ -229,7 +229,10 @@ test('extractLeadFromEntity — dirigeant avec email → lead complet', () => {
     ]),
   };
   const lead = extractLeadFromEntity(e);
+  // Extension Jalon 3 (Path additif b') : DTO enrichi avec siren pour
+  // permettre à lead-exhauster de résoudre l'email côté pipeline aval.
   assert.deepEqual(lead, {
+    siren: '111',
     prenom: 'Jean',
     nom: 'Dupont',
     entreprise: 'Acme SAS',
