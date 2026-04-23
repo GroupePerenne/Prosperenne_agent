@@ -23,6 +23,7 @@ const { sendMail } = require('../../shared/graph-mail');
 const { callClaude } = require('../../shared/anthropic');
 const { davidSignatureHtml } = require('../../shared/templates');
 const { parisDateParts } = require('../../shared/holidays');
+const { readEventsSince, summarizeEventsHtml } = require('../../shared/leadSelectorTrace');
 
 // ─── Helpers dates ─────────────────────────────────────────────────────────
 function getYesterdayParisISO() {
@@ -180,5 +181,36 @@ app.timer('dailyReport', {
         context.error(`dailyReport failed for ${consultant.email}: ${err.message}`);
       }
     }
+
+    // Section Lead Selector — mail séparé envoyé à direction (escalation),
+    // pas aux consultants. Best effort : si la table trace n'existe pas
+    // ou est vide, on n'envoie rien.
+    try {
+      await sendLeadSelectorReport(yesterday, context);
+    } catch (err) {
+      context.error(`dailyReport leadSelector section failed: ${err.message}`);
+    }
   },
 });
+
+async function sendLeadSelectorReport(yesterday, context) {
+  const events = await readEventsSince(yesterday);
+  if (!events || events.length === 0) {
+    context.log('[dailyReport] no Lead Selector events for the past 24h');
+    return;
+  }
+  const html = summarizeEventsHtml(events, { dateLabel: formatDateFR(yesterday) });
+  if (!html) return;
+  const to = process.env.ESCALATION_EMAIL || process.env.ADMIN_EMAIL;
+  if (!to) {
+    context.warn('[dailyReport] no ESCALATION_EMAIL/ADMIN_EMAIL configured, skipping Lead Selector report');
+    return;
+  }
+  await sendMail({
+    from: process.env.DAVID_EMAIL,
+    to,
+    subject: `Lead Selector — rapport ${formatDateFR(yesterday)}`,
+    html: `<div style="font-family:Arial,sans-serif;color:#1a1714"><p>Bonjour,</p><p>Synthèse des exécutions Lead Selector des dernières 24h.</p>${html}${davidSignatureHtml()}</div>`,
+  });
+  context.log(`[dailyReport] Lead Selector report sent to ${to} (${events.length} events)`);
+}
