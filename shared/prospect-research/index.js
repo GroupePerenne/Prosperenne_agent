@@ -4,32 +4,36 @@
  * Orchestrateur public — prospect-profiler V0.
  *
  * Transforme un SIREN + email résolu en briefing d'approche structuré :
- *   - companyProfile (couche A) — fiche entreprise
- *   - decisionMakerProfile (couche B) — fiche décideur       [Jalon 2]
- *   - discScore — profil comportemental du décideur         [Jalon 2]
- *   - accroche — hook 2-3 phrases + angle d'entrée            [Jalon 2]
+ *   - companyProfile         (couche A) — fiche entreprise  [Jalon 1]
+ *   - decisionMakerProfile   (couche B) — fiche décideur    [Jalon 2]
+ *   - discScore              — profil comportemental         [Jalon 2, inclus dans B]
+ *   - accroche (hook/angle)  — via Sonnet 4.6                [Jalon 2]
+ *
+ * Orchestration :
+ *   1. Couche A et Couche B lancées en parallèle (Promise.all).
+ *   2. Couche B consomme optionnellement companyTone issu du scraper de A
+ *      — pour préserver la parallelisation, on passe un extrait stocké
+ *      côté input si déjà connu, sinon companyTone reste null.
+ *   3. Pitch appelé à la fin, reçoit companyProfile et decisionMakerProfile.
+ *   4. Stockage Mem0 prospect:{siren} via storeProspect — Jalon 3.
  *
  * Fallback gracieux :
- *   - Aucune source → status 'error', profile null
- *   - Une des couches échoue → status 'partial'
- *   - Les deux couches ok → status 'ok'
+ *   - A null + B null → status 'error', accroche null
+ *   - A ok XOR B ok → status 'partial', accroche générée sur ce qui est dispo
+ *   - A ok AND B ok → status 'ok'
  *
- * Entrée Mem0 : à la fin d'un profileProspect, le payload est écrit
- *   via storeProspect(siren, profile) pour que runSequence.sendMail
- *   récupère automatiquement via resolveMem0Enrichments.         [Jalon 3]
- *
- * V0 Jalon 1 : seule la couche A est branchée. Les autres retournent null
- * tant que le Jalon 2 n'est pas livré. Le squelette fige le contrat
- * d'interface pour que les consommateurs downstream puissent déjà s'aligner.
+ * Tests : 4 scénarios SPEC §10.2 couverts via integration/full-pipeline.test.js.
  */
 
 const { buildCompanyProfile } = require('./companyProfile');
+const { buildDecisionMakerProfile } = require('./decisionMakerProfile');
+const { buildPitch } = require('./pitch');
 
 // ─── API publique ──────────────────────────────────────────────────────────
 
 /**
- * @param {object} input
- * @param {string} input.siren                     (requis)
+ * @param {object} input                               SPEC §3.2
+ * @param {string} input.siren                         (requis)
  * @param {string} [input.firstName]
  * @param {string} [input.lastName]
  * @param {string} [input.role]
@@ -39,9 +43,22 @@ const { buildCompanyProfile } = require('./companyProfile');
  * @param {string} [input.companyLinkedInUrl]
  * @param {string} [input.decisionMakerLinkedInUrl]
  * @param {string} [input.beneficiaryId]
- * @param {object} [input.experimentsContext]       // consumed Jalon 3
- * @param {object} [opts]                            // overrides pour tests
- * @param {object} [opts.context]                    // Azure InvocationContext
+ * @param {object} [input.experimentsContext]          consumed Jalon 3
+ * @param {object} [opts]
+ * @param {object} [opts.context]                      Azure InvocationContext
+ * @param {number} [opts.companyTimeoutMs]             Défaut 30s (SPEC §4.3)
+ * @param {number} [opts.decisionMakerTimeoutMs]       Défaut 30s (SPEC §5)
+ * @param {number} [opts.pitchTimeoutMs]               Défaut 20s
+ * @param {boolean} [opts.skipCache]                   Forcer rebuild couche A
+ * @param {Function} [opts.apiGouvImpl]
+ * @param {Function} [opts.scraperImpl]
+ * @param {Function} [opts.searchImpl]
+ * @param {Function} [opts.linkedinCompanyImpl]
+ * @param {Function} [opts.linkedinProfileImpl]
+ * @param {Function} [opts.discImpl]
+ * @param {Function} [opts.companyLlmImpl]             LLM Haiku pour extraction A
+ * @param {Function} [opts.discLlmImpl]                LLM Haiku pour DISC
+ * @param {Function} [opts.pitchLlmImpl]               LLM Sonnet pour pitch
  * @returns {Promise<ProfilerOutput>}
  */
 async function profileProspect(input = {}, opts = {}) {
@@ -49,58 +66,129 @@ async function profileProspect(input = {}, opts = {}) {
   const siren = String(input.siren || '').trim();
 
   if (!/^\d{9}$/.test(siren)) {
-    return buildErrorOutput({
-      siren,
-      reason: 'invalid_siren',
-      started,
-    });
+    return buildErrorOutput({ siren, reason: 'invalid_siren', started });
   }
 
-  // Couche A — fiche entreprise
-  const companyProfile = await buildCompanyProfile(
-    {
-      siren,
-      companyName: input.companyName,
-      companyDomain: input.companyDomain,
-    },
-    {
-      context: opts.context,
-      apiGouvImpl: opts.apiGouvImpl,
-      scraperImpl: opts.scraperImpl,
-      searchImpl: opts.searchImpl,
-      llmImpl: opts.llmImpl,
-      skipCache: opts.skipCache,
-      timeoutMs: opts.companyTimeoutMs,
-    },
-  ).catch(() => null);
+  const logger = makeLogger(opts.context);
+  logger.info('profiler.profileProspect.start', {
+    siren,
+    hasDomain: !!input.companyDomain,
+    hasLinkedIn: !!input.decisionMakerLinkedInUrl,
+  });
 
-  // Couches B + pitch — placeholder Jalon 2
-  const decisionMakerProfile = null;
-  const accroche = null;
+  // Couches A et B en parallèle
+  const [companyProfile, decisionMakerProfile] = await Promise.all([
+    buildCompanyProfile(
+      {
+        siren,
+        companyName: input.companyName,
+        companyDomain: input.companyDomain,
+      },
+      {
+        context: opts.context,
+        apiGouvImpl: opts.apiGouvImpl,
+        scraperImpl: opts.scraperImpl,
+        searchImpl: opts.searchImpl,
+        llmImpl: opts.companyLlmImpl,
+        skipCache: opts.skipCache,
+        timeoutMs: opts.companyTimeoutMs,
+      },
+    ).catch((err) => {
+      logger.warn('profiler.profileProspect.company_failed', { err: err && err.message });
+      return null;
+    }),
+    buildDecisionMakerProfile(
+      {
+        firstName: input.firstName,
+        lastName: input.lastName,
+        role: input.role,
+        companyName: input.companyName,
+        decisionMakerLinkedInUrl: input.decisionMakerLinkedInUrl,
+        contactId: input.contactId,
+        // companyTone n'est pas encore disponible (couches parallèles) ; V0 ok,
+        // un run ultérieur pourra enrichir via storeProspect + re-run.
+        companyTone: null,
+      },
+      {
+        context: opts.context,
+        linkedinImpl: opts.linkedinProfileImpl,
+        searchImpl: opts.searchImpl,
+        discImpl: opts.discImpl,
+        llmImpl: opts.discLlmImpl,
+        timeoutMs: opts.decisionMakerTimeoutMs,
+      },
+    ).catch((err) => {
+      logger.warn('profiler.profileProspect.decisionMaker_failed', { err: err && err.message });
+      return null;
+    }),
+  ]);
+
+  // Pitch — uniquement si au moins une couche a ramené quelque chose
+  let accroche = null;
+  let pitchCost = 0;
+  if (companyProfile || decisionMakerProfile) {
+    const pitchRes = await buildPitch(
+      {
+        companyProfile,
+        decisionMakerProfile,
+      },
+      {
+        context: opts.context,
+        llmImpl: opts.pitchLlmImpl,
+        timeoutMs: opts.pitchTimeoutMs,
+      },
+    ).catch((err) => {
+      logger.warn('profiler.profileProspect.pitch_failed', { err: err && err.message });
+      return null;
+    });
+    if (pitchRes) {
+      pitchCost = pitchRes.costCents || 0;
+      // Si le pitch a réussi (pas d'error), on l'expose tel quel.
+      // Si error → on expose quand même mais avec hook/angle null (le mail
+      // downstream ignorera l'accroche et utilisera un template neutre).
+      accroche = pitchRes.error
+        ? null
+        : {
+            hook: pitchRes.hook,
+            angle: pitchRes.angle,
+            discAdaptation: pitchRes.discAdaptation,
+            discApplied: pitchRes.discApplied,
+            tone: pitchRes.tone,
+          };
+    }
+  }
 
   const status = deriveStatus({ companyProfile, decisionMakerProfile });
 
-  const costCents = (companyProfile && companyProfile.costCents) || 0;
+  const companyCost = (companyProfile && companyProfile.costCents) || 0;
+  const dmCost = (decisionMakerProfile && decisionMakerProfile.costCents) || 0;
+  const totalCost = companyCost + dmCost + pitchCost;
 
-  return {
+  const output = {
     status,
+    siren,
     companyProfile: companyProfile || null,
-    decisionMakerProfile,
+    decisionMakerProfile: decisionMakerProfile || null,
     accroche,
     elapsedMs: Date.now() - started,
-    cost_cents: costCents,
+    cost_cents: totalCost,
     experimentsApplied: extractExperimentsApplied(input),
     version: 'v0',
   };
+
+  logger.info('profiler.profileProspect.done', {
+    siren,
+    status,
+    hasAccroche: !!accroche,
+    cost_cents: totalCost,
+    ms: output.elapsedMs,
+  });
+
+  return output;
 }
 
-/**
- * Status de l'output selon disponibilité des couches.
- *   - A null + B null   → 'error'
- *   - A ok + B null     → 'partial' (normal en V0 Jalon 1, Jalon 2 livre B)
- *   - A null + B ok     → 'partial'
- *   - A ok + B ok       → 'ok'
- */
+// ─── helpers ──────────────────────────────────────────────────────────────
+
 function deriveStatus({ companyProfile, decisionMakerProfile }) {
   const hasA = !!companyProfile;
   const hasB = !!decisionMakerProfile;
@@ -120,6 +208,7 @@ function extractExperimentsApplied(input) {
 function buildErrorOutput({ siren, reason, started }) {
   return {
     status: 'error',
+    siren,
     companyProfile: null,
     decisionMakerProfile: null,
     accroche: null,
@@ -128,7 +217,16 @@ function buildErrorOutput({ siren, reason, started }) {
     experimentsApplied: [],
     version: 'v0',
     error: reason,
-    siren,
+  };
+}
+
+function makeLogger(context) {
+  if (!context) return { info: () => {}, warn: () => {} };
+  const info = context.info || (context.log && context.log.info) || context.log || (() => {});
+  const warn = context.warn || (context.log && context.log.warn) || info;
+  return {
+    info: (msg, payload) => { try { info(msg, payload); } catch { /* noop */ } },
+    warn: (msg, payload) => { try { warn(msg, payload); } catch { /* noop */ } },
   };
 }
 
