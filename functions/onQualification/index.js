@@ -24,6 +24,11 @@ const CORS_HEADERS = {
 /**
  * Construit le schéma de mémoire consultant à partir du brief reçu du
  * formulaire public. Mapping conforme ARCHITECTURE §3.1 type 2.
+ *
+ * Enrichi (chantier Lead Selector v1.0) avec les champs de ciblage
+ * (secteurs_autres, effectif, zone, zone_rayon, adresse, prospecteur, ville,
+ * email) pour permettre à selectLeadsForConsultantById de relire le brief
+ * depuis Mem0 et déclencher le Lead Selector hors contexte HTTP.
  */
 function buildConsultantMemory(brief) {
   return {
@@ -36,17 +41,26 @@ function buildConsultantMemory(brief) {
     commercial_strategy: brief.offre,
     usable_anecdotes: brief.exemple_client ? [brief.exemple_client] : [],
     autonomy_level: brief.niveau_autonomie || 'autonome',
+    secteurs_autres: brief.secteurs_autres || '',
+    effectif: brief.effectif || '',
+    zone: brief.zone || 'default',
+    zone_rayon: brief.zone_rayon ? Number(brief.zone_rayon) : null,
+    adresse: brief.adresse || '',
+    ville: brief.ville || '',
+    prospecteur: brief.prospecteur || 'both',
+    email: brief.email ? brief.email.toLowerCase() : '',
   };
 }
 
 /**
- * Handler extractible pour les tests. Les deux dépendances externes
- * (sendMail, getMem0) sont injectables via `deps` — en prod on utilise
- * les implémentations par défaut.
+ * Handler extractible pour les tests. Trois dépendances externes
+ * (sendMail, getMem0, triggerLeadSelector) sont injectables via `deps` —
+ * en prod on utilise les implémentations par défaut.
  */
 async function handleQualification(request, context, deps = {}) {
   const sendMail = deps.sendMail || defaultSendMail;
   const getMem0 = deps.getMem0 || defaultGetMem0;
+  const triggerLeadSelector = deps.triggerLeadSelector || defaultTriggerLeadSelector;
 
   if (request.method === 'OPTIONS') {
     return { status: 204, headers: CORS_HEADERS };
@@ -103,6 +117,18 @@ async function handleQualification(request, context, deps = {}) {
       mem0Task,
     ]);
 
+    // Déclenchement Lead Selector en fire-and-forget. On ne bloque PAS la
+    // réponse HTTP au consultant. Toute erreur est swallowée par la fonction
+    // (defensive). Voir SPEC §9.2 — le piège fire-and-forget Azure Functions
+    // sera traité par bascule queue trigger si on observe des kills.
+    try {
+      triggerLeadSelector({ brief, briefId, consultantId, context });
+    } catch (err) {
+      if (context && typeof context.warn === 'function') {
+        context.warn(`[leadSelector] trigger sync error: ${err.message}`);
+      }
+    }
+
     return {
       status: 200,
       headers: CORS_HEADERS,
@@ -126,7 +152,136 @@ app.http('onQualification', {
   handler: (request, context) => handleQualification(request, context),
 });
 
-module.exports = { handleQualification, buildConsultantMemory };
+module.exports = {
+  handleQualification,
+  buildConsultantMemory,
+  defaultTriggerLeadSelector,
+  buildInsufficientBriefMail,
+};
+
+// ─── Lead Selector — fire-and-forget après Promise.all ─────────────────────
+
+/**
+ * Déclenche le Lead Selector + lance la séquence Martin/Mila si batch OK.
+ * Si batch insuffisant ou erreur : envoie un mail d'élargissement au consultant
+ * signé David. Toujours fire-and-forget — aucune exception ne remonte.
+ *
+ * Inhibé via env LEAD_SELECTOR_DISABLED=1 (utile pour tests/staging).
+ */
+function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
+  if (process.env.LEAD_SELECTOR_DISABLED === '1') return;
+
+  // Lazy-require pour éviter de charger leadSelector / orchestrator à
+  // l'import (et ne pas casser les tests qui n'instancient pas tous les modules).
+  let selectLeadsForConsultant;
+  let launchSequenceForConsultant;
+  let sendMailLazy;
+  try {
+    ({ selectLeadsForConsultant } = require('../../shared/leadSelector'));
+    ({ launchSequenceForConsultant } = require('../../agents/david/orchestrator'));
+    ({ sendMail: sendMailLazy } = require('../../shared/graph-mail'));
+  } catch (err) {
+    if (context && typeof context.warn === 'function') {
+      context.warn(`[leadSelector] trigger require failed: ${err.message}`);
+    }
+    return;
+  }
+
+  // La promise n'est volontairement pas await depuis le handler HTTP.
+  // try/catch interne pour swallow toute erreur.
+  (async () => {
+    try {
+      const result = await selectLeadsForConsultant({ brief, context });
+      if (context && typeof context.log === 'function') {
+        context.log(
+          `[leadSelector] brief_id=${briefId} status=${result.status} returned=${result.meta && result.meta.returned}`,
+        );
+      }
+
+      if (result.status === 'ok' || result.status === 'insufficient') {
+        const consultant = {
+          nom: brief.nom,
+          email: brief.email,
+          offre: brief.offre,
+          ton: brief.registre,
+          tutoiement: brief.vouvoiement === 'tu',
+        };
+        const briefForSeq = { prospecteur: brief.prospecteur || 'both' };
+        const seqResults = await launchSequenceForConsultant({
+          consultant,
+          brief: briefForSeq,
+          leads: result.leads,
+          context,
+        });
+        if (context && typeof context.log === 'function') {
+          const ok = seqResults.filter((r) => !r.error).length;
+          context.log(
+            `[leadSelector] sequence launched for brief_id=${briefId}, ok=${ok}/${seqResults.length}`,
+          );
+        }
+      } else {
+        // empty / error → David informe le consultant
+        await sendMailLazy({
+          from: process.env.DAVID_EMAIL,
+          to: brief.email,
+          subject: 'Lead Selector — base à affiner',
+          html: buildInsufficientBriefMail(brief, result),
+        });
+      }
+    } catch (err) {
+      if (context && typeof context.error === 'function') {
+        context.error('[leadSelector] fire-and-forget failed', err);
+      }
+    }
+  })();
+}
+
+function buildInsufficientBriefMail(brief, result) {
+  const meta = (result && result.meta) || {};
+  const prenomConsultant = String(brief.nom || '').split(/\s+/)[0] || 'Consultant';
+  const suggestions = buildSuggestions(brief, result);
+  const li = (s) => `<li>${escapeHtml(s)}</li>`;
+  const checks = [
+    `Secteurs NAF ciblés : ${(meta.nafCodesQueried && meta.nafCodesQueried.length) || 0} codes`,
+    `Effectif : tranches ${(meta.effectifCodesQueried || []).join(', ') || '—'}`,
+    `Candidats dans la base : ${meta.candidatesCount || 0}`,
+    `Exclus (règles produit) : ${meta.excludedByRules || 0}`,
+    `Sans email exploitable : ${meta.excludedNoEmail || 0}`,
+  ];
+  return `<div style="font-family:Arial,sans-serif;color:#1a1714">
+<p>Salut ${escapeHtml(prenomConsultant)},</p>
+<p>J'ai lancé la sélection des leads sur ta base cible et je tombe sur ${meta.returned || 0} prospects sur les ${meta.requested || 10} attendus. C'est pas assez pour démarrer proprement.</p>
+<p>Voilà ce que j'ai regardé :</p>
+<ul>${checks.map(li).join('')}</ul>
+<p>Mes propositions pour élargir :</p>
+<ul>${suggestions.map(li).join('')}</ul>
+<p>Dis-moi ce qui te va et je relance la sélection.</p>
+<p>David</p>
+</div>`;
+}
+
+function buildSuggestions(brief, result) {
+  const out = [];
+  const meta = (result && result.meta) || {};
+  const rayon = Number(brief.zone_rayon);
+  if (rayon && rayon < 50) {
+    out.push(`Élargir le rayon de ${rayon} km à 50 km ou 75 km`);
+  }
+  const zone = String(brief.zone || '').toLowerCase();
+  if (zone !== 'france' && zone !== 'region') {
+    out.push("Passer à la région entière ou à la France entière");
+  }
+  if (brief.effectif && !String(brief.effectif).includes('40-75') && !String(brief.effectif).includes('any')) {
+    out.push("Étendre l'effectif aux entreprises 40-75 salariés");
+  }
+  if (meta.excludedNoEmail && meta.returned !== undefined && meta.excludedNoEmail > meta.returned * 2) {
+    out.push("Beaucoup de prospects n'ont pas d'email direct en base — on a un chantier de résolution emails à venir, je peux te flagger pour qu'il soit prioritaire");
+  }
+  if (out.length === 0) {
+    out.push("Ajouter un secteur NAF complémentaire via le formulaire (autocomplete 'Autres secteurs ou codes NAF')");
+  }
+  return out;
+}
 
 function renderBriefEmail(brief, briefId) {
   const row = (k, v) => v
