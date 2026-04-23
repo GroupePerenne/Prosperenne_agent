@@ -100,12 +100,39 @@ test('mapBriefToFilters — effectif "5-10,40-75" : union INSEE', () => {
   assert.deepEqual(f.effectifCodes, ['02', '03', '12', '21']);
 });
 
-test('mapBriefToFilters — zone="region" : pas de filtre département (TODO v2)', () => {
+test('mapBriefToFilters — zone="region" + CP Paris : 8 dépts Île-de-France', () => {
   const f = mapBriefToFilters({
     secteurs: 'esn',
     effectif: '10-20',
     zone: 'region',
     ville: '75003 Paris',
+  });
+  // IDF = 75, 77, 78, 91, 92, 93, 94, 95
+  assert.equal(f.departements.length, 8);
+  for (const d of ['75', '77', '78', '91', '92', '93', '94', '95']) {
+    assert.ok(f.departements.includes(d), `missing dep ${d}`);
+  }
+});
+
+test('mapBriefToFilters — zone="region" + CP Lyon : 12 dépts Auvergne-Rhône-Alpes', () => {
+  const f = mapBriefToFilters({
+    secteurs: 'esn',
+    effectif: '10-20',
+    zone: 'region',
+    ville: '69003 Lyon',
+  });
+  assert.equal(f.departements.length, 12);
+  assert.ok(f.departements.includes('69'));
+  assert.ok(f.departements.includes('38'));
+  assert.ok(f.departements.includes('74'));
+});
+
+test('mapBriefToFilters — zone="region" sans CP exploitable : []', () => {
+  const f = mapBriefToFilters({
+    secteurs: 'esn',
+    effectif: '10-20',
+    zone: 'region',
+    ville: 'Paris', // pas de CP
   });
   assert.deepEqual(f.departements, []);
 });

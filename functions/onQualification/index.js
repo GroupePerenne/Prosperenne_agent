@@ -189,6 +189,18 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
 
   // La promise n'est volontairement pas await depuis le handler HTTP.
   // try/catch interne pour swallow toute erreur.
+  const startedAt = Date.now();
+  const logInfo = (msg, payload) => {
+    if (!context) return;
+    if (context.log && typeof context.log.info === 'function') context.log.info(msg, payload);
+    else if (typeof context.log === 'function') context.log(msg, payload);
+  };
+  // Log START : paire avec END pour détecter les kills silencieux runtime
+  // Azure Functions. Dans Application Insights : comparer le count de
+  // `leadSelector.trigger.start` vs `leadSelector.trigger.end` ; un écart
+  // signifie que le runtime a tué la closure avant la fin → basculer sur
+  // queue trigger (cf. SPEC §9.2).
+  logInfo('leadSelector.trigger.start', { brief_id: briefId, consultantId });
   (async () => {
     try {
       const result = await selectLeadsForConsultant({ brief, context });
@@ -228,10 +240,24 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
           html: buildInsufficientBriefMail(brief, result),
         });
       }
+      logInfo('leadSelector.trigger.end', {
+        brief_id: briefId,
+        consultantId,
+        status: result.status,
+        returned: result.meta && result.meta.returned,
+        elapsed_ms: Date.now() - startedAt,
+      });
     } catch (err) {
       if (context && typeof context.error === 'function') {
         context.error('[leadSelector] fire-and-forget failed', err);
       }
+      logInfo('leadSelector.trigger.end', {
+        brief_id: briefId,
+        consultantId,
+        status: 'exception',
+        error: err && err.message,
+        elapsed_ms: Date.now() - startedAt,
+      });
     }
   })();
 }

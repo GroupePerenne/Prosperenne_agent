@@ -115,10 +115,40 @@ function mapBriefToFilters(brief, { context } = {}) {
   };
 }
 
+// ─── Régions métropolitaines → départements INSEE ──────────────────────────
+// Source : référentiel INSEE post-réforme 2016 (13 régions métropolitaines).
+// Les DOM (Guadeloupe, Martinique, Guyane, Réunion, Mayotte) sont volontairement
+// hors scope V1 : les consultants OSEYS ciblent la France métropolitaine, et
+// la LeadBase n'a pas de couverture DOM équilibrée. Fallback pour un dep DOM :
+// retourner [dep] (on reste limité au département unique).
+const REGION_TO_DEPARTEMENTS = {
+  ARA: ['01', '03', '07', '15', '26', '38', '42', '43', '63', '69', '73', '74'],
+  BFC: ['21', '25', '39', '58', '70', '71', '89', '90'],
+  BRE: ['22', '29', '35', '56'],
+  CVL: ['18', '28', '36', '37', '41', '45'],
+  COR: ['2A', '2B'],
+  GES: ['08', '10', '51', '52', '54', '55', '57', '67', '68', '88'],
+  HDF: ['02', '59', '60', '62', '80'],
+  IDF: ['75', '77', '78', '91', '92', '93', '94', '95'],
+  NOR: ['14', '27', '50', '61', '76'],
+  NAQ: ['16', '17', '19', '23', '24', '33', '40', '47', '64', '79', '86', '87'],
+  OCC: ['09', '11', '12', '30', '31', '32', '34', '46', '48', '65', '66', '81', '82'],
+  PDL: ['44', '49', '53', '72', '85'],
+  PAC: ['04', '05', '06', '13', '83', '84'],
+};
+const DEPARTEMENT_TO_REGION = (() => {
+  const out = {};
+  for (const [region, deps] of Object.entries(REGION_TO_DEPARTEMENTS)) {
+    for (const d of deps) out[d] = region;
+  }
+  return out;
+})();
+
 /**
  * Approximation v1 du filtre département à partir du brief.
- *  - zone='france' ou 'region' → []  (pas de filtre — région = TODO v2,
- *    fallback france pour ne pas vider la base par erreur)
+ *  - zone='france' → []  (pas de filtre)
+ *  - zone='region' → départements de la région du consultant déduite via
+ *    son CP (table REGION_TO_DEPARTEMENTS). Si CP non exploitable → [].
  *  - zone='adresse' / 'custom' / 'default' / chaîne libre → liste des
  *    départements dont le centroïde est à <= (rayon + 100km) du center
  *    issu de l'adresse du consultant. Si on ne peut pas géocoder, [].
@@ -130,7 +160,13 @@ function mapBriefToFilters(brief, { context } = {}) {
 function deduceDepartements(brief, { context } = {}) {
   const zone = String(brief.zone || 'default').toLowerCase();
   if (zone === 'france') return [];
-  if (zone === 'region') return []; // TODO v2 : table région → départements
+  if (zone === 'region') {
+    const dep = inferDepartementFromBrief(brief);
+    if (!dep) return [];
+    const region = DEPARTEMENT_TO_REGION[dep];
+    if (!region) return [dep]; // DOM hors cible v1 ou dép inconnu → fallback au dep seul
+    return [...REGION_TO_DEPARTEMENTS[region]];
+  }
 
   // Zones locales : on a besoin d'un center. Si pas géocodable, on laisse
   // ouvert (pas de filtre PartitionKey) plutôt que de vider la query.

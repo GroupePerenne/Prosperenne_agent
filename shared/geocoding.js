@@ -23,6 +23,14 @@ const DEFAULT_USER_AGENT =
   process.env.NOMINATIM_USER_AGENT || 'Pereneo-agents/1.0 (direction@oseys.fr)';
 const DEFAULT_TIMEOUT_MS = 3000;
 
+// Cache in-memory volontaire en V1 : vit le temps d'un warm container Azure
+// Functions, reset à chaque cold start. Suffisant pour le pilote interne
+// OSEYS (Morgane/Johnny, 1 brief ≠ /consultant/jour).
+//
+// TODO post-pilote (avant ouverture commerciale Prospérenne) : persister en
+// Azure Table `GeocodingCache` (PartitionKey=hash(address), RowKey=fixed).
+// Sinon on risque des 429 Nominatim lors de batches de briefs simultanés
+// post cold-start (Nominatim : 1 req/s et hard-throttle par IP sur abus).
 const _cache = new Map();
 
 function normalizeAddress(addr) {
