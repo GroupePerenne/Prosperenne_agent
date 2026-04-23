@@ -273,6 +273,11 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
         subject: j0.objet, bodyPreview: j0.corps.slice(0, 200),
       });
     }
+    // Fire-and-forget feedback exhauster : le mail vient de sortir, on
+    // l'enregistre comme 'delivered' (Graph n'émet pas d'accusé réception
+    // immédiat, on prend le succès sendMail comme proxy). Les bounces
+    // futurs corrigeront ce statut via davidInbox.handleBounceAction.
+    reportExhausterDelivered(lead).catch(() => {});
     results.sent.push('J0');
   } else {
     await scheduleRelance({
@@ -330,7 +335,31 @@ async function sendScheduledStep(job) {
     });
   }
 
+  reportExhausterDelivered(lead).catch(() => {});
   return { sent: jour };
+}
+
+/**
+ * Fire-and-forget hook : notifie lead-exhauster qu'un mail vient d'être
+ * délivré par Graph. Alimente LeadContacts.feedbackStatus='delivered'.
+ *
+ * Si le lead n'a pas de siren (ancien format DTO) ou pas de nom exploitable,
+ * le no-op est silencieux. Aucune exception n'est propagée.
+ */
+async function reportExhausterDelivered(lead) {
+  if (!lead || !lead.siren) return;
+  try {
+    const { leadExhauster } = require('./lead-exhauster');
+    await leadExhauster.reportFeedback({
+      siren: lead.siren,
+      firstName: lead.prenom || '',
+      lastName: lead.nom || '',
+      status: 'delivered',
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    // swallow
+  }
 }
 
 module.exports = {

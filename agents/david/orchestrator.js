@@ -225,6 +225,8 @@ async function handlePositive(msg, decision, ctx) {
     });
   }
   await alertConsultant(ctx.consultantEmail, msg, decision, 'positive');
+  // Fire-and-forget feedback exhauster (Jalon 3 Bouclea de feedback qualité)
+  reportLeadExhausterFeedback({ ctx, status: 'replied' }).catch(() => {});
   return { classe: 'positive', confidence: decision.confidence, action: 'stopped+qualified', dealId: ctx.dealId };
 }
 
@@ -242,6 +244,7 @@ async function handleQuestion(msg, decision, ctx) {
       html: wrapHtml(decision.reply_draft),
     });
   }
+  reportLeadExhausterFeedback({ ctx, status: 'replied' }).catch(() => {});
   return { classe: 'question', confidence: decision.confidence, action: 'stopped+replied_cc_consultant', dealId: ctx.dealId };
 }
 
@@ -259,6 +262,7 @@ async function handleNeutre(msg, decision, ctx) {
     });
   }
   await alertConsultant(ctx.consultantEmail, msg, decision, 'neutre');
+  reportLeadExhausterFeedback({ ctx, status: 'replied' }).catch(() => {});
   return { classe: 'neutre', confidence: decision.confidence, action: 'stopped+ack', dealId: ctx.dealId };
 }
 
@@ -276,6 +280,7 @@ async function handleNegative(msg, decision, ctx) {
     });
   }
   await alertConsultant(ctx.consultantEmail, msg, decision, 'negative');
+  reportLeadExhausterFeedback({ ctx, status: 'replied' }).catch(() => {});
   return { classe: 'negative', confidence: decision.confidence, action: 'stopped+opt_out_permanent', dealId: ctx.dealId };
 }
 
@@ -315,6 +320,9 @@ async function handleBounceAction(targetAddress, ctx) {
       ),
     });
   }
+  // Fire-and-forget : alimente LeadContacts.feedbackStatus='bounced' pour
+  // que patterns-learner dégrade le pattern responsable au prochain batch.
+  reportLeadExhausterFeedback({ ctx, status: 'bounced' }).catch(() => {});
   return { classe: 'bounce', action: 'stopped+flagged_pipedrive', targetAddress, dealId: ctx.dealId, personId: ctx.personId };
 }
 
@@ -331,13 +339,21 @@ async function stopSequence(dealId) {
  * des champs vides si pas trouvé.
  */
 async function findDealContext(prospectEmail) {
-  const ctx = { personId: null, dealId: null, orgId: null, consultantEmail: null };
+  const ctx = {
+    personId: null, dealId: null, orgId: null, consultantEmail: null,
+    personFirstName: '', personLastName: '',
+  };
   if (!prospectEmail) return ctx;
   try {
     const persons = await pipedrive.searchPerson(prospectEmail);
     const person = persons[0];
     if (!person) return ctx;
     ctx.personId = person.id;
+    // Parse person.name ("Jean Dupont") en firstName + lastName pour
+    // permettre le lookup LeadContacts par (siren, firstName, lastName).
+    const parsed = splitPersonName(person.name);
+    ctx.personFirstName = parsed.firstName;
+    ctx.personLastName = parsed.lastName;
     const deals = await pipedrive.findOpenDealsForPersonInOurPipe(person.id);
     if (deals.length > 0) {
       const deal = deals[0];
@@ -351,6 +367,48 @@ async function findDealContext(prospectEmail) {
     // Best effort : on ne bloque pas la classification sur un échec Pipedrive
   }
   return ctx;
+}
+
+function splitPersonName(name) {
+  if (!name || typeof name !== 'string') return { firstName: '', lastName: '' };
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0) return { firstName: '', lastName: '' };
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+/**
+ * Signale au module lead-exhauster le feedback d'un mail envoyé ou reçu.
+ * Fire-and-forget : aucune exception n'est propagée, aucun await bloquant
+ * côté caller. Alimente la boucle d'apprentissage `patterns-learner`
+ * (Jalon 4) via `LeadContacts.feedbackStatus`.
+ *
+ * Hook ajouté au Jalon 3 (SPEC §7 "Boucle de feedback qualité"). Appelé
+ * depuis les handlers de routage prospect (bounce, positive, negative,
+ * question, neutre) et depuis `shared/worker.js` au moment des sendMail
+ * (delivered).
+ *
+ * @param {Object} params
+ * @param {Object} params.ctx        Context enrichi par findDealContext
+ * @param {string} params.status     'delivered'|'bounced'|'replied'|'spam_flagged'
+ * @param {Object} [params.context]  Azure Functions context pour logs
+ */
+async function reportLeadExhausterFeedback({ ctx, status, context }) {
+  if (!ctx || !status) return;
+  try {
+    const { leadExhauster } = require('../../shared/lead-exhauster');
+    const siren = await resolveSirenForOrg(ctx.orgId, { context });
+    if (!siren) return;
+    await leadExhauster.reportFeedback({
+      siren,
+      firstName: ctx.personFirstName || '',
+      lastName: ctx.personLastName || '',
+      status,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    warnLog(context, `[exhauster] reportFeedback failed: ${err && err.message}`);
+  }
 }
 
 async function alertConsultant(consultantEmail, msg, decision, classe) {
@@ -671,4 +729,6 @@ module.exports = {
   checkLeadCooldown,
   pickMostRecent,
   resolveOrCreateDeal,
+  reportLeadExhausterFeedback,
+  splitPersonName,
 };
