@@ -1,0 +1,14 @@
+{
+  "_version": "1.0",
+  "_note": "Codes INSEE officiels des tranches d'effectif salarié. Clés alignées sur les data-value des tags du formulaire (Section 5 — Tranches d'effectif). Les clés 10-40 / 20-75 / 10-75 sont conservées pour rétro-compat URL params (legacy CLAUDE.md §1.6). Cible OSEYS : sweet spot 10-40, large 5-75. On expose 02/03 (3-9 salariés) sur '5-10' pour rester proche de l'intent utilisateur.",
+
+  "5-10": ["02", "03"],
+  "10-20": ["11"],
+  "20-40": ["12"],
+  "40-75": ["12", "21"],
+  "any": ["02", "03", "11", "12", "21"],
+
+  "10-40": ["11", "12"],
+  "20-75": ["12", "21"],
+  "10-75": ["11", "12", "21"]
+}

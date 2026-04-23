@@ -1,0 +1,27 @@
+{
+  "_version": "1.0",
+  "_generated_by": "spec lead-selector v1.0 — 2026-04-23",
+  "_source": "NAF rév. 2 INSEE — codes à jour au 23/04/2026",
+  "_note": "Clés alignées sur les data-value des tags du formulaire forms/formulaire-oseys.html (Section 5). Mapping volontairement généreux : on élargit pour ne pas rater une PME cible au profil inhabituel. Les exclusions produit (comptables/avocats) sont gérées séparément via naf-exclusions.json. Toute évolution = bump _version + commit dédié.",
+
+  "plomberie": ["43.22A", "43.22B"],
+  "electricite": ["43.21A", "43.21B"],
+  "paysagisme": ["81.30Z"],
+  "domotique": ["43.21A", "43.22B", "43.29A"],
+  "menuiserie": ["43.32A", "43.32B", "43.32C", "16.23Z"],
+
+  "agence_communication": ["73.11Z", "73.12Z", "70.21Z", "74.10Z", "58.19Z"],
+  "conseil": ["70.21Z", "70.22Z", "74.90B"],
+  "esn": ["62.01Z", "62.02A", "62.02B", "62.03Z", "62.09Z", "63.11Z", "63.12Z"],
+  "recrutement": ["78.10Z", "78.20Z", "78.30Z"],
+  "bureau_etudes": ["71.12A", "71.12B", "71.20A", "71.20B"],
+  "architecture": ["71.11Z"],
+  "design": ["74.10Z", "74.20Z", "74.30Z"],
+  "formation": ["85.32Z", "85.41Z", "85.42Z", "85.51Z", "85.52Z", "85.53Z", "85.59A", "85.59B", "85.60Z"],
+  "maintenance": ["33.11Z", "33.12Z", "33.13Z", "33.14Z", "33.19Z", "33.20A", "33.20B", "33.20C", "33.20D", "95.11Z", "95.12Z", "95.21Z", "95.22Z", "95.23Z", "95.24Z", "95.25Z", "95.29Z"],
+  "securite": ["80.10Z", "80.20Z", "80.30Z"],
+
+  "nettoyage": ["81.21Z", "81.22Z", "81.29A", "81.29B"],
+  "immobilier": ["68.31Z"],
+  "services_particuliers": ["96.01A", "96.01B", "96.02A", "96.02B", "96.03Z", "96.04Z", "96.09Z", "97.00Z"]
+}

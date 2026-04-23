@@ -1,0 +1,9 @@
+{
+  "_version": "1.0",
+  "_note": "Règle produit Groupe Pérenne : cabinets comptables et cabinets d'avocats sont partenaires/apporteurs, jamais prospects directs. Cette liste est appliquée en post-filtre côté Lead Selector, après la requête LeadBase.",
+
+  "exclusions": [
+    { "code": "69.10Z", "raison": "Activités juridiques (avocats, notaires, huissiers, conseil juridique)" },
+    { "code": "69.20Z", "raison": "Activités comptables (experts-comptables, commissaires aux comptes)" }
+  ]
+}
