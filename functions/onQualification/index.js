@@ -175,12 +175,13 @@ module.exports = {
 function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
   if (process.env.LEAD_SELECTOR_DISABLED === '1') return;
 
-  let enrichBatchForConsultant;
+  let enrichAndProfileBatchForConsultant;
   let buildInsufficientBatchMail;
   let launchSequenceForConsultant;
   let sendMailLazy;
   try {
-    ({ enrichBatchForConsultant, buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch'));
+    ({ enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndProfileBatch'));
+    ({ buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch'));
     ({ launchSequenceForConsultant } = require('../../agents/david/orchestrator'));
     ({ sendMail: sendMailLazy } = require('../../shared/graph-mail'));
   } catch (err) {
@@ -201,7 +202,7 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
   (async () => {
     try {
       const beneficiaryId = `oseys-${String(consultantId || '').split('@')[0] || 'unknown'}`;
-      const result = await enrichBatchForConsultant({
+      const result = await enrichAndProfileBatchForConsultant({
         brief,
         beneficiaryId,
         briefId,

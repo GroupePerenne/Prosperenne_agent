@@ -50,6 +50,9 @@ const { buildPitch } = require('./pitch');
  * @param {number} [opts.decisionMakerTimeoutMs]       Défaut 30s (SPEC §5)
  * @param {number} [opts.pitchTimeoutMs]               Défaut 20s
  * @param {boolean} [opts.skipCache]                   Forcer rebuild couche A
+ * @param {boolean} [opts.simulated]                   Mode dryRun — skip tous les appels
+ *                                                     LLM / scraping, retourne un stub
+ *                                                     marqué simulated:true (Jalon 3)
  * @param {Function} [opts.apiGouvImpl]
  * @param {Function} [opts.scraperImpl]
  * @param {Function} [opts.searchImpl]
@@ -67,6 +70,16 @@ async function profileProspect(input = {}, opts = {}) {
 
   if (!/^\d{9}$/.test(siren)) {
     return buildErrorOutput({ siren, reason: 'invalid_siren', started });
+  }
+
+  // Mode dryRun — court-circuite tous les appels facturables (LLM Haiku
+  // companyProfile, LLM Haiku DISC, LLM Sonnet pitch, Proxycurl, scraping,
+  // API gouv). Sert aux smoke tests du pipeline en dev et aux tests
+  // d'intégration Jalon 3. Le digest simulated reste exploitable par
+  // storeProspect si on le souhaite, mais enrichAndProfileBatch skip
+  // volontairement le store en dryRun pour ne pas polluer Mem0.
+  if (opts.simulated) {
+    return buildSimulatedOutput({ siren, input, started });
   }
 
   const logger = makeLogger(opts.context);
@@ -217,6 +230,44 @@ function buildErrorOutput({ siren, reason, started }) {
     experimentsApplied: [],
     version: 'v0',
     error: reason,
+  };
+}
+
+/**
+ * Stub dryRun — retourne la forme normale du profileProspect output avec
+ * tous les champs sentinelles à 0/null, sauf `simulated:true` et les champs
+ * propagés depuis l'input pour que les traces aval restent lisibles.
+ */
+function buildSimulatedOutput({ siren, input, started }) {
+  const companyName = input && input.companyName;
+  return {
+    status: 'ok',
+    siren,
+    simulated: true,
+    companyProfile: {
+      siren,
+      nomEntreprise: companyName || null,
+      simulated: true,
+    },
+    decisionMakerProfile: {
+      firstName: input && input.firstName,
+      lastName: input && input.lastName,
+      currentRole: input && input.role,
+      discScore: {
+        primary: 'unknown',
+        secondary: null,
+        confidence: 0,
+        tone: 'unknown',
+        signals: [],
+        inferredPainPoints: [],
+      },
+      simulated: true,
+    },
+    accroche: null,
+    elapsedMs: Date.now() - started,
+    cost_cents: 0,
+    experimentsApplied: extractExperimentsApplied(input),
+    version: 'v0',
   };
 }
 

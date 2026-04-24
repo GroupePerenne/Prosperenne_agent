@@ -24,7 +24,8 @@ const { app } = require('@azure/functions');
 const { parseBriefFromMemories } = require('../../shared/leadSelector');
 const { launchSequenceForConsultant } = require('../../agents/david/orchestrator');
 const { getMem0 } = require('../../shared/adapters/memory/mem0');
-const { enrichBatchForConsultant, buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch');
+const { enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndProfileBatch');
+const { buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch');
 const { sendMail } = require('../../shared/graph-mail');
 
 const DEFAULT_BATCH_SIZE = Number(process.env.LEAD_SELECTOR_BATCH_SIZE || 10);
@@ -51,7 +52,7 @@ app.http('runLeadSelectorForConsultant', {
         };
       }
 
-      const result = await enrichBatchForConsultant({
+      const result = await enrichAndProfileBatchForConsultant({
         brief: consultantPayload.originalBrief,
         beneficiaryId: consultantPayload.beneficiaryId,
         batchSize,
