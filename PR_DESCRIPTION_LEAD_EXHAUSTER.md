@@ -235,16 +235,41 @@ Fix pré-existant (commit `d9e4c45` sur `feat/lead-selector`) : `onQualification
 
 ## Smoke réel à exécuter avec Paul
 
-Commande :
+Le script accepte soit les SIRENs hardcodés par défaut (OSEYS + 2 cas de test), soit un fichier JSON via `--sirens <path>`. Un échantillon de 5 SIRENs LeadBase curés est livré dans `scripts/smoke-sirens-sample.json`.
+
+Format du fichier JSON :
+```json
+[
+  {
+    "siren": "384989208",
+    "denom": "COMPAGNIE PHOCEENNE D EQUIPEMENTS MULTISITES",
+    "naf": "62.02A",
+    "trancheEffectif": "03",
+    "ville": "MARSEILLE",
+    "siteWeb": null,
+    "dirigeant": { "prenom": "Jean Francois", "nom": "PAPAZIAN", "fonction": "73" }
+  }
+]
+```
+
+Commandes :
 
 ```
+# Dry-run avec le sample (validation structure, pas d appel réseau)
+node scripts/exhauster-smoke.js --dry-run --sirens scripts/smoke-sirens-sample.json
+
+# Smoke réel avec le sample (vraie cascade Dropcontact)
 DROPCONTACT_ENABLED=true \
   DROPCONTACT_API_KEY=<clé> \
   AzureWebJobsStorage='<conn string staging>' \
-  node scripts/exhauster-smoke.js --real --yes
+  node scripts/exhauster-smoke.js --real --yes --sirens scripts/smoke-sirens-sample.json
 ```
 
-Liste SIRENs à valider avec Paul avant exécution (3-5 SIRENs OSEYS sphere faible impact).
+### Dettes post-merge identifiées lors de l extraction SIRENs
+
+1. **API gouv `recherche-entreprises` ne remonte pas `site_web`** dans la réponse standard (0/35 SIRENs testés lors de l extraction sample). `resolveDomain` retourne systématiquement `null` quand `companyDomain` n est pas fourni en input. Conséquence : la cascade maison (scraping ciblé site entreprise) ne peut pas démarrer sans domain source alternatif. À corriger post-merge : soit autre endpoint API gouv, soit fallback Google site-restricted, soit enrichissement LeadBase côté Constantin. Flaggé MEMO §14.
+
+2. **`fonction` dirigeant en code INSEE numérique brut** (73=dirigeant, 65=DG, 30=gérant, 53=président) et non libellé texte dans LeadBase. `resolveDecisionMaker.inseeRole` consomme la string brute. Non-bloquant pour Dropcontact (firstName+lastName+siren suffisent), mais rescore PME ≥ 20 sera approximatif. À corriger post-merge via table de correspondance code INSEE → libellé. Flaggé MEMO §14.
 
 ---
 

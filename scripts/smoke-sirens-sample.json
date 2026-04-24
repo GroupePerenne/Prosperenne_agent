@@ -1,0 +1,67 @@
+[
+  {
+    "siren": "384989208",
+    "denom": "COMPAGNIE PHOCEENNE D EQUIPEMENTS MULTISITES",
+    "naf": "62.02A",
+    "trancheEffectif": "03",
+    "ville": "MARSEILLE",
+    "siteWeb": null,
+    "dirigeant": {
+      "prenom": "Jean Francois",
+      "nom": "PAPAZIAN",
+      "fonction": "73"
+    }
+  },
+  {
+    "siren": "331785717",
+    "denom": "INFORSUD TECHNOLOGIES",
+    "naf": "62.02A",
+    "trancheEffectif": "21",
+    "ville": "BOZOULS",
+    "siteWeb": null,
+    "dirigeant": {
+      "prenom": "Jerome Olivier",
+      "nom": "DELGADO",
+      "fonction": "65"
+    }
+  },
+  {
+    "siren": "353730104",
+    "denom": "COMPUTER ASSOCIES",
+    "naf": "62.02A",
+    "trancheEffectif": "11",
+    "ville": "MARSEILLE",
+    "siteWeb": null,
+    "dirigeant": {
+      "prenom": "Georges Rene Henri",
+      "nom": "ALBERTO",
+      "fonction": "73"
+    }
+  },
+  {
+    "siren": "383759347",
+    "denom": "ART INFORMATIQUE",
+    "naf": "62.02A",
+    "trancheEffectif": "03",
+    "ville": "AIX-EN-PROVENCE",
+    "siteWeb": null,
+    "dirigeant": {
+      "prenom": "Marielle",
+      "nom": "JALOGNE",
+      "fonction": "30"
+    }
+  },
+  {
+    "siren": "383749033",
+    "denom": "ANALYSE DU RISQUE MEDICAL",
+    "naf": "70.22Z",
+    "trancheEffectif": "12",
+    "ville": "NICE",
+    "siteWeb": null,
+    "dirigeant": {
+      "prenom": "Pierre",
+      "nom": "HERTEL",
+      "fonction": "53"
+    }
+  }
+]
