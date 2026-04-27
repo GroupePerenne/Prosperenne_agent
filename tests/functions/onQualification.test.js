@@ -11,7 +11,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { handleQualification, buildConsultantMemory } = require('../../functions/onQualification');
+const { handleQualification, buildConsultantMemory } = require('../../src/functions/onQualification');
 
 const BRIEF_COMPLET = {
   nom: 'Morgane Dupont',

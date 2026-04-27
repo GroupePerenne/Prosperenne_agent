@@ -1,10 +1,13 @@
-require('../functions/sendMail');
-require('../functions/sendOnboarding');
-require('../functions/choixNiveau');
-require('../functions/onQualification');
-require('../functions/runSequence');
-require('../functions/trackOpen');
-require('../functions/scheduler');
-require('../functions/davidInbox');
-require('../functions/avatarProxy');
-require('../functions/dailyReport');
+require('./functions/sendMail');
+require('./functions/sendOnboarding');
+require('./functions/choixNiveau');
+require('./functions/onQualification');
+require('./functions/runSequence');
+require('./functions/trackOpen');
+require('./functions/scheduler');
+require('./functions/davidInbox');
+require('./functions/avatarProxy');
+require('./functions/dailyReport');
+// TODO: activer quand prêts
+// require('./functions/patternsLearner');
+// require('./functions/runLeadSelectorForConsultant');
