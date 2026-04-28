@@ -40,3 +40,6 @@ build/
 briefs/*.json
 briefs/*.md
 !briefs/README.md
+
+# Smoke tests scratch state
+scripts/.smoke-*.json
