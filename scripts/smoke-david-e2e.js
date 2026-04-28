@@ -218,6 +218,28 @@ function preflightEnv() {
 
 // ─── Pipedrive helpers (utilise le module shared) ──────────────────────────
 async function setupPipedrive(pipedrive) {
+  // Idempotent : si un state file existe avec orgId+personId, on les réutilise
+  // (vérifie d'abord que les objets existent encore côté Pipedrive et n'ont
+  // pas été archivés [CLEANED-UP]). Sinon création.
+  const previous = readState();
+  if (previous && previous.orgId && previous.personId) {
+    try {
+      const [org, person] = await Promise.all([
+        pipedriveCall(`/organizations/${previous.orgId}`),
+        pipedriveCall(`/persons/${previous.personId}`),
+      ]);
+      const orgUsable = org && org.active_flag !== false && !String(org.name || '').includes('[CLEANED-UP]');
+      const personUsable = person && person.active_flag !== false && !String(person.name || '').includes('[CLEANED-UP]');
+      if (orgUsable && personUsable) {
+        info(`Setup Pipedrive : réutilise state existant org=${previous.orgId} person=${previous.personId}`);
+        return { orgId: previous.orgId, personId: previous.personId };
+      }
+      info(`Setup Pipedrive : state file présent mais objets inutilisables (cleaned-up?), recréation`);
+    } catch (e) {
+      info(`Setup Pipedrive : state file présent mais lookup KO (${e.message}), recréation`);
+    }
+  }
+
   info(`Setup Pipedrive : création org + person ${SMOKE_TAG}`);
   const sirenFieldKey = process.env.PIPEDRIVE_ORG_FIELD_SIREN;
 
@@ -365,7 +387,8 @@ async function triggerOnboarding() {
   // sendOnboarding est en authLevel=function → besoin d'une function key.
   const code = process.env.SEND_ONBOARDING_FUNC_CODE || '';
   const url = `${PEREENO_FA_URL}/api/sendOnboarding${code ? `?code=${code}` : ''}`;
-  info(`Trigger onboarding flow vers ${url}`);
+  const urlMasked = code ? url.replace(code, code.slice(0, 8) + '…[redacted]') : url;
+  info(`Trigger onboarding flow vers ${urlMasked}`);
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -443,18 +466,24 @@ async function runCleanup() {
       }
     }
   }
-  if (state.orgId) {
+  // Toutes les orgs (orgId historique + orgIds multiples si l'orchestrator
+  // a créé un doublon malgré l'idempotence — peut arriver si search Pipedrive
+  // a une latence d'indexation au moment du second run)
+  const orgIds = Array.isArray(state.orgIds) && state.orgIds.length > 0
+    ? state.orgIds
+    : (state.orgId ? [state.orgId] : []);
+  for (const orgId of orgIds) {
     try {
-      await pipedriveCall(`/organizations/${state.orgId}`, 'DELETE');
-      info(`  org ${state.orgId} deleted`);
+      await pipedriveCall(`/organizations/${orgId}`, 'DELETE');
+      info(`  org ${orgId} deleted`);
     } catch (e) {
       try {
-        await pipedriveCall(`/organizations/${state.orgId}`, 'PUT', {
-          name: `[CLEANED-UP] org ${state.orgId}`,
+        await pipedriveCall(`/organizations/${orgId}`, 'PUT', {
+          name: `[CLEANED-UP] org ${orgId}`,
         });
-        info(`  org ${state.orgId} renamed (DELETE refusé)`);
+        info(`  org ${orgId} renamed (DELETE refusé)`);
       } catch (e2) {
-        errors.push(`org ${state.orgId}: ${e.message} / fallback ${e2.message}`);
+        errors.push(`org ${orgId}: ${e.message} / fallback ${e2.message}`);
       }
     }
   }
