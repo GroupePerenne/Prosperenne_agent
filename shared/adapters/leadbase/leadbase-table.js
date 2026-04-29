@@ -95,7 +95,11 @@ class LeadBaseAdapter {
     this.tableName = opts.tableName || DEFAULT_TABLE_NAME;
     this.logger = opts.logger || null;
     this._injectedClient = opts.tableClient || null;
-    this._connectionString = opts.connectionString || process.env.AzureWebJobsStorage || null;
+    this._connectionString =
+      opts.connectionString
+      || process.env.LEADBASE_STORAGE_CONNECTION_STRING
+      || process.env.AzureWebJobsStorage
+      || null;
     this._client = null;
   }
 
@@ -104,7 +108,7 @@ class LeadBaseAdapter {
     if (this._client) return this._client;
     if (!this._connectionString) {
       throw new LeadBaseError(
-        'AzureWebJobsStorage absent (et tableClient non injecté)',
+        'LeadBase connection string absente: ni opts.connectionString, ni LEADBASE_STORAGE_CONNECTION_STRING, ni AzureWebJobsStorage (et tableClient non injecté)',
         'auth_failed',
       );
     }

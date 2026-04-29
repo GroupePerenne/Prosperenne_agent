@@ -43,3 +43,6 @@ briefs/*.md
 
 # Smoke tests scratch state
 scripts/.smoke-*.json
+
+# Migration scripts transient state
+.migration-checkpoint.json
