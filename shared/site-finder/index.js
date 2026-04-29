@@ -87,6 +87,9 @@ function getLimitsForMode(mode) {
  * @param {Object} [opts.validatorImpl]                      { validateCandidate }
  * @param {Function} [opts.fetcherImpl]                      fetchPagesForValidation
  * @param {Object} [opts.context]                            Azure InvocationContext
+ * @param {Function} [opts.now]                              Clock injectable
+ *   pour tests déterministes (default: Date.now). Affecte uniquement le
+ *   tracking politesse/timeout cascade, pas le champ validatedAt.
  * @returns {Promise<FindWebsiteOutput>}
  */
 async function findWebsite(input = {}, opts = {}) {
@@ -135,8 +138,12 @@ async function findWebsite(input = {}, opts = {}) {
     ? options.timeoutMs
     : (limits.totalTimeoutMs || DEFAULT_TIMEOUT_MS);
 
-  const startedAt = Date.now();
-  const isOverallBudget = () => Date.now() - startedAt > limits.totalTimeoutMs;
+  // Clock injectable pour tests déterministes (T4.1). Default : Date.now.
+  // Sert UNIQUEMENT au tracking politesse / timeout cascade — pas au champ
+  // `validatedAt` du résultat (qui doit refléter l'horloge wall-clock).
+  const now = (typeof opts.now === 'function') ? opts.now : Date.now.bind(Date);
+  const startedAt = now();
+  const isOverallBudget = () => now() - startedAt > limits.totalTimeoutMs;
 
   const adapters = {
     apiGouv: opts.apiGouvImpl || { findCandidatesViaApiGouv },
@@ -270,7 +277,7 @@ async function findWebsite(input = {}, opts = {}) {
       if (!adapters.webSearch.canApply(strategy, input)) continue;
 
       strategiesAppliedCount++;
-      const stratStart = Date.now();
+      const stratStart = now();
       let strategyCandidates = [];
       let strategyRejectedReason;
       try {
@@ -288,7 +295,7 @@ async function findWebsite(input = {}, opts = {}) {
           backendBlocked = true;
         }
       }
-      politenessUsedMs += Date.now() - stratStart;
+      politenessUsedMs += now() - stratStart;
 
       attempted.push({
         source: `websearch_${strategy.name}`,

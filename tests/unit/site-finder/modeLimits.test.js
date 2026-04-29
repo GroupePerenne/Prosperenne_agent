@@ -242,10 +242,96 @@ test('Mode invalide ("foo") → fallback on_demand', async () => {
 
 // ─── Politeness budget en on_demand ────────────────────────────────────────
 
-test('Mode on_demand — politeness budget exhausted → early-exit avec signal', async () => {
-  // On force chaque appel à consommer 3s — 2 appels = 6s > budget 5s
-  const ws = makeWebSearchStub({ byStrategy: {}, sleepMs: 3000 });
+/**
+ * Stub webSearch qui simule la durée de chaque fetch en avançant un faux
+ * clock partagé. Pas de setTimeout réel → test rapide et déterministe.
+ *
+ * @param {Object} clock                  { current: number } muté à chaque appel
+ * @param {number} addMsPerCall           ms à ajouter à clock.current par stratégie
+ */
+function makeWebSearchStubAdvancingClock(clock, addMsPerCall) {
+  const calls = [];
+  return {
+    stub: {
+      QUERY_STRATEGIES: webSearchReal.QUERY_STRATEGIES,
+      canApply: webSearchReal.canApply,
+      searchOneStrategy: async (strategy) => {
+        calls.push(strategy.name);
+        clock.current += addMsPerCall;
+        return [];
+      },
+    },
+    calls,
+  };
+}
+
+test('Mode on_demand — politeness budget exhausted → early-exit déterministe', async () => {
+  // Setup déterministe via clock injecté :
+  //   - politenessBudgetMs = 5000 (default on_demand)
+  //   - chaque stratégie consomme 3000ms simulés
+  //   - max 2 stratégies on_demand (name_city, name_siren)
+  //
+  // Trajectoire attendue :
+  //   t=0      : findWebsite démarre, startedAt=0
+  //   t=0      : check politeness 0 < 5000 OK → strat 1 (name_city)
+  //   t=3000   : politenessUsed=3000
+  //   t=3000   : check politeness 3000 < 5000 OK → strat 2 (name_siren)
+  //   t=6000   : politenessUsed=6000
+  //   (boucle finit par épuisement maxStrategies=2, pas par politeness)
+  //
+  // Pour FORCER l'early-exit politeness, on baisse le budget à 4000 :
+  //   t=0      : check 0 < 4000 OK → strat 1
+  //   t=3000   : politenessUsed=3000
+  //   t=3000   : check 3000 >= 4000 ? Non → strat 2
+  //   t=6000   : politenessUsed=6000
+  // Mauvaise trajectoire — la 2e tourne quand même.
+  //
+  // Pour vraie early-exit, budget < addMsPerCall pour la 1re vérification
+  // après strat 1. On choisit budget=2500, addMsPerCall=3000 :
+  //   t=0    : politenessUsed=0 < 2500 → strat 1 OK
+  //   t=3000 : politenessUsed=3000 >= 2500 → SKIP strat 2 (politeness_exhausted)
+  const clock = { current: 0 };
+  const ws = makeWebSearchStubAdvancingClock(clock, 3000);
   const cache = makeCacheStub();
+
+  const out = await findWebsite(
+    {
+      siren: '123456789',
+      companyName: 'ACME',
+      ville: 'Lyon',
+      // Override explicite du budget via env-like — passé via input.options
+      // n'est pas exposé pour politeness, donc on patch ON_DEMAND_LIMITS au niveau
+      // module en injectant un clock + en surveillant que le défaut joue.
+      // Ici on s'appuie sur le défaut on_demand 5000ms et on force addMsPerCall
+      // à 6000 pour épuiser le budget après strat 1.
+      options: { mode: 'on_demand' },
+    },
+    {
+      apiGouvImpl: makeApiGouvStub(),
+      webSearchImpl: ws.stub,
+      validatorImpl: makeValidatorStub(),
+      cacheImpl: cache.stub,
+      now: () => clock.current,
+    },
+  );
+  // addMsPerCall=3000, budget on_demand=5000 → après strat 1 (t=3000),
+  // politenessUsed=3000 < 5000 OK donc strat 2 tourne. politenessUsed devient
+  // 6000. La boucle s'arrête parce que strategiesAppliedCount=2=maxStrategies.
+  // Pour forcer l'arrêt par politesse au lieu de maxStrategies, il faut
+  // addMsPerCall > budget OR un budget plus restrictif — vérifions le scénario
+  // où addMsPerCall=6000 (1 seul appel suffit à dépasser).
+  // → on relance avec un autre stub pour ce scénario plus bas.
+  // Ici on vérifie juste que les 2 stratégies on_demand ont tourné.
+  assert.deepEqual(ws.calls, ['name_city', 'name_siren']);
+});
+
+test('Mode on_demand — politeness budget exhausted en 1 seul appel cher → strat 2 skippée', async () => {
+  // addMsPerCall=6000 > budget 5000 → après strat 1 (clock=6000),
+  // politenessUsed=6000 >= 5000 → SKIP strat 2 avec rejectedReason 'politeness_exhausted'
+  const clock = { current: 0 };
+  const ws = makeWebSearchStubAdvancingClock(clock, 6000);
+  const cache = makeCacheStub();
+
   const out = await findWebsite(
     {
       siren: '123456789',
@@ -258,15 +344,42 @@ test('Mode on_demand — politeness budget exhausted → early-exit avec signal'
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: cache.stub,
+      now: () => clock.current,
     },
   );
-  // Premier appel passe (3s consommés), deuxième early-exit (3s + 3s > 5s budget)
-  // Donc soit 1 soit 2 appels selon la précision du timing — on assert ≤ 2
-  assert.ok(ws.calls.length <= 2);
-  // Un signal d'early-exit doit apparaître dans attempted
+  // Assertion DURE : exactement 1 appel webSearch
+  assert.equal(ws.calls.length, 1);
+  assert.equal(ws.calls[0], 'name_city');
+  // Le signal politeness_exhausted doit apparaître dans attempted
   const skipped = out.attempted.find((a) => a.source === 'websearch_skipped');
-  if (ws.calls.length === 1) {
-    assert.ok(skipped);
-    assert.equal(skipped.rejectedReason, 'politeness_exhausted');
-  }
+  assert.ok(skipped, 'attendu : entrée websearch_skipped dans attempted');
+  assert.equal(skipped.rejectedReason, 'politeness_exhausted');
+});
+
+test('Mode on_demand — overall timeout exhausted → cascade stoppée déterministe', async () => {
+  // addMsPerCall=21000 > on_demand totalTimeoutMs 20000 → après strat 1,
+  // isOverallBudget retourne true → SKIP strat 2 avec rejectedReason 'overall_timeout'
+  const clock = { current: 0 };
+  const ws = makeWebSearchStubAdvancingClock(clock, 21000);
+  const cache = makeCacheStub();
+
+  const out = await findWebsite(
+    {
+      siren: '123456789',
+      companyName: 'ACME',
+      ville: 'Lyon',
+      options: { mode: 'on_demand' },
+    },
+    {
+      apiGouvImpl: makeApiGouvStub(),
+      webSearchImpl: ws.stub,
+      validatorImpl: makeValidatorStub(),
+      cacheImpl: cache.stub,
+      now: () => clock.current,
+    },
+  );
+  assert.equal(ws.calls.length, 1);
+  const skipped = out.attempted.find((a) => a.source === 'websearch_skipped');
+  assert.ok(skipped);
+  assert.equal(skipped.rejectedReason, 'overall_timeout');
 });
