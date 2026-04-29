@@ -92,6 +92,8 @@ const AGGREGATOR_DOMAINS = new Set([
   'wikipedia.org',
   'fr.wikipedia.org',
   'infogreffe.fr',
+  'annuaire-mairie.fr',
+  'mairie.com',
   'societe-info.com',
   'manageo.fr',
   'kompass.com',
