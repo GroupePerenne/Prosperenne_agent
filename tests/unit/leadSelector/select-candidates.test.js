@@ -95,6 +95,22 @@ test('extractCandidateFromEntity — role INSEE capturé', () => {
   assert.equal(cand.inseeRole, 'Président');
 });
 
+// Sprint 2 — extension partitionKey pour le writer LeadBase site-finder
+test('extractCandidateFromEntity — propage le partitionKey de l\'entité', () => {
+  const cand = extractCandidateFromEntity(buildEntity({ partitionKey: '69' }));
+  assert.equal(cand.partitionKey, '69');
+});
+
+test('extractCandidateFromEntity — partitionKey absent → string vide', () => {
+  // Build sans partitionKey (entité minimale)
+  const cand = extractCandidateFromEntity({
+    siren: '123456789',
+    nom: 'Acme',
+    dirigeants: JSON.stringify([{ prenoms: 'Jean', nom: 'Dupont' }]),
+  });
+  assert.equal(cand.partitionKey, '');
+});
+
 // ─── selectCandidatesForConsultant ─────────────────────────────────────────
 
 test('selectCandidatesForConsultant — pool = batchSize * multiplier', async () => {

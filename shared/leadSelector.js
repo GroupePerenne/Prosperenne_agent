@@ -301,6 +301,11 @@ function extractCandidateFromEntity(entity) {
 
   return {
     siren: String(entity.siren),
+    // partitionKey propagé pour permettre les écritures Merge en aval
+    // (site-finder writer Sprint 2). Le partitionKey LeadBase n'est pas
+    // standardisé (cf. T0bis), c'est le seul moyen fiable de retrouver
+    // l'entité pour un Merge sans round-trip supplémentaire.
+    partitionKey: String(entity.partitionKey || entity.PartitionKey || ''),
     firstName,
     lastName,
     companyName,
