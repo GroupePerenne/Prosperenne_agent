@@ -1,21 +1,22 @@
 'use strict';
 
 /**
- * Site-finder — orchestrateur public (T1).
+ * Site-finder — orchestrateur public.
  *
  * Pour un SIREN donné, retourne l'URL canonique du site web officiel avec une
  * preuve forte (SIREN trouvé dans les pages mentions légales) ou retourne null
  * avec la trace des tentatives.
  *
- * Pipeline T1 :
+ * Pipeline :
  *   1. Cache lookup (sauf forceRefresh ou skipCache).
- *   2. Source apiGouv (T1 unique source — T2/T3 ajouteront scrape agrégateurs
- *      et DuckDuckGo dans des jalons distincts sans toucher à l'orchestrateur).
- *   3. Validation séquentielle de chaque candidat via siteValidator.
- *   4. Premier candidat ≥ threshold (défaut 0.85) → cache.put + return.
- *   5. Aucun candidat validé → cache.recordFailure + return null.
- *
- * Contrat public : voir SPEC du brief T1.2 (FindWebsiteInput, FindWebsiteOutput).
+ *   2. Source apiGouv → candidats validés via siteValidator.
+ *   3. Si toujours rien : cascade webSearch sur 5 stratégies de query
+ *      (name_city, name_postcode, name_siren, name_director, name_naf_city).
+ *      On stoppe dès qu'un candidat passe le seuil — économie backend +
+ *      validation. Les agrégateurs connus sont filtrés en amont par webSearch.
+ *   4. Premier candidat ≥ threshold → cache.put + return.
+ *   5. Aucun candidat validé → cache.recordFailure + return null avec trace
+ *      complète des tentatives.
  *
  * Tous les adapters externes sont injectables via `opts.<thing>Impl` pour les
  * tests — pattern conforme à `shared/lead-exhauster/index.js` et
@@ -23,6 +24,7 @@
  */
 
 const { findCandidatesViaApiGouv } = require('./sources/apiGouv');
+const webSearch = require('./sources/webSearch');
 const { validateCandidate } = require('./validation/siteValidator');
 const { fetchPagesForValidation } = require('./utils/pageFetcher');
 const websitePatternsCache = require('./cache/websitePatternsCache');
@@ -32,7 +34,7 @@ const DEFAULT_CONFIDENCE_THRESHOLD = Number(
 );
 const DEFAULT_TIMEOUT_MS = Number(process.env.SITE_FINDER_TIMEOUT_MS || 15000);
 
-const SOURCES_ORDER_T1 = ['api_gouv'];
+const SOURCES_ORDER = ['api_gouv', 'websearch'];
 
 /**
  * @param {Object} input
@@ -41,6 +43,8 @@ const SOURCES_ORDER_T1 = ['api_gouv'];
  * @param {string} [input.ville]
  * @param {string} [input.codePostal]
  * @param {string} [input.codeDepartement]
+ * @param {string} [input.dirigeantName]                    Pour stratégie name_director
+ * @param {string} [input.libelleNaf]                       Pour stratégie name_naf_city
  * @param {Object} [input.options]
  * @param {number}  [input.options.confidenceThreshold]
  * @param {number}  [input.options.timeoutMs]
@@ -48,6 +52,7 @@ const SOURCES_ORDER_T1 = ['api_gouv'];
  * @param {boolean} [input.options.skipCache]
  * @param {Object} [opts]                                    Adapters injectables pour tests
  * @param {Object} [opts.apiGouvImpl]                        { findCandidatesViaApiGouv }
+ * @param {Object} [opts.webSearchImpl]                      { searchOneStrategy, QUERY_STRATEGIES, canApply }
  * @param {Object} [opts.cacheImpl]                          { get, put, recordFailure }
  * @param {Object} [opts.validatorImpl]                      { validateCandidate }
  * @param {Function} [opts.fetcherImpl]                      fetchPagesForValidation
@@ -94,6 +99,7 @@ async function findWebsite(input = {}, opts = {}) {
 
   const adapters = {
     apiGouv: opts.apiGouvImpl || { findCandidatesViaApiGouv },
+    webSearch: opts.webSearchImpl || webSearch,
     cache: opts.cacheImpl || websitePatternsCache,
     validator: opts.validatorImpl || { validateCandidate },
     fetcher: opts.fetcherImpl || fetchPagesForValidation,
@@ -109,7 +115,6 @@ async function findWebsite(input = {}, opts = {}) {
           ...cached,
           source: 'cache',
           signals: [...(cached.signals || []), 'cache_hit'],
-          // validatedAt = la date de validation initiale, on garde celle du cache
         };
       }
     } catch (err) {
@@ -117,13 +122,58 @@ async function findWebsite(input = {}, opts = {}) {
     }
   }
 
-  // ─── Étape 2 : source apiGouv ────────────────────────────────────────────
   const attempted = [];
-  let candidates = [];
-  let apiGouvRejectedReason;
+  let bestRejected = null;
+  const validatorOpts = {
+    timeoutMs,
+    fetcherImpl: opts.fetcherImpl ? adapters.fetcher : undefined,
+  };
 
+  // Helper : valide une liste de candidats, retourne le 1er validé ou met à
+  // jour bestRejected. Effet de bord sur `bestRejected` capturé via closure.
+  const tryValidate = async (candidates, sourceLabel) => {
+    for (const candidate of candidates) {
+      const result = await adapters.validator.validateCandidate(
+        {
+          url: candidate.url,
+          targetSiren: input.siren,
+          companyName: input.companyName,
+          ville: input.ville,
+          codePostal: input.codePostal,
+        },
+        validatorOpts,
+      ).catch((err) => {
+        logger.warn('site-finder.validator.error', { err: err && err.message, url: candidate.url });
+        return null;
+      });
+
+      if (!result) continue;
+
+      if (result.confidence >= threshold) {
+        return buildOutput({
+          siteUrl: candidate.url,
+          confidence: result.confidence,
+          source: sourceLabel,
+          proofType: result.proofType,
+          proofDetails: result.proofDetails,
+          signals: [...(candidate.signals || []), ...(result.signals || [])],
+          attempted: attempted.slice(),
+          validatedAt,
+        });
+      }
+
+      if (!bestRejected || result.confidence > bestRejected.result.confidence) {
+        bestRejected = { candidate, result };
+      }
+    }
+    return null;
+  };
+
+  // ─── Étape 2 : source apiGouv ────────────────────────────────────────────
+  let apiGouvCandidates = [];
+  let apiGouvRejectedReason;
   try {
-    candidates = await adapters.apiGouv.findCandidatesViaApiGouv(
+    apiGouvCandidates = await adapters.apiGouv.findCandidatesViaApiGouv(
       {
         siren: input.siren,
         companyName: input.companyName,
@@ -138,50 +188,51 @@ async function findWebsite(input = {}, opts = {}) {
 
   attempted.push({
     source: 'api_gouv',
-    candidates: candidates.length,
+    candidates: apiGouvCandidates.length,
     ...(apiGouvRejectedReason ? { rejectedReason: apiGouvRejectedReason } : {}),
   });
 
-  // ─── Étape 3 : validation séquentielle ───────────────────────────────────
-  let validatedOutput = null;
-  let bestRejected = null;
+  let validatedOutput = await tryValidate(apiGouvCandidates, 'api_gouv');
 
-  for (const candidate of candidates) {
-    const result = await adapters.validator.validateCandidate(
-      {
-        url: candidate.url,
-        targetSiren: input.siren,
-        companyName: input.companyName,
-        ville: input.ville,
-        codePostal: input.codePostal,
-      },
-      {
-        timeoutMs,
-        fetcherImpl: opts.fetcherImpl ? adapters.fetcher : undefined,
-      },
-    ).catch((err) => {
-      logger.warn('site-finder.validator.error', { err: err && err.message, url: candidate.url });
-      return null;
-    });
+  // ─── Étape 3 : cascade webSearch ─────────────────────────────────────────
+  // Skippée si apiGouv a déjà validé. Si le backend est blocked, on stoppe
+  // la cascade pour ne pas marteler.
+  if (!validatedOutput && adapters.webSearch && Array.isArray(adapters.webSearch.QUERY_STRATEGIES)) {
+    let backendBlocked = false;
+    for (const strategy of adapters.webSearch.QUERY_STRATEGIES) {
+      if (validatedOutput || backendBlocked) break;
+      if (!adapters.webSearch.canApply(strategy, input)) continue;
 
-    if (!result) continue;
+      let strategyCandidates = [];
+      let strategyRejectedReason;
+      try {
+        strategyCandidates = await adapters.webSearch.searchOneStrategy(strategy, input, {
+          fetchImpl: opts.fetchImpl,
+          timeoutMs,
+        });
+      } catch (err) {
+        strategyRejectedReason = (err && err.code) || 'error';
+        logger.warn('site-finder.websearch.error', {
+          strategy: strategy.name,
+          err: err && err.message,
+        });
+        if (err && err.code === 'blocked') {
+          backendBlocked = true;
+        }
+      }
 
-    if (result.confidence >= threshold) {
-      validatedOutput = buildOutput({
-        siteUrl: candidate.url,
-        confidence: result.confidence,
-        source: candidate.source,
-        proofType: result.proofType,
-        proofDetails: result.proofDetails,
-        signals: [...(candidate.signals || []), ...(result.signals || [])],
-        attempted,
-        validatedAt,
+      attempted.push({
+        source: `websearch_${strategy.name}`,
+        candidates: strategyCandidates.length,
+        ...(strategyRejectedReason ? { rejectedReason: strategyRejectedReason } : {}),
       });
-      break;
-    }
 
-    if (!bestRejected || result.confidence > bestRejected.confidence) {
-      bestRejected = { candidate, result };
+      if (strategyCandidates.length > 0) {
+        validatedOutput = await tryValidate(
+          strategyCandidates,
+          `websearch_${strategy.name}`,
+        );
+      }
     }
   }
 
@@ -271,6 +322,6 @@ module.exports = {
     buildOutput,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_TIMEOUT_MS,
-    SOURCES_ORDER_T1,
+    SOURCES_ORDER,
   },
 };

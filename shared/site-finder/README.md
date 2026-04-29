@@ -23,13 +23,16 @@ const out = await findWebsite({
 //     costCents, validatedAt, attempted: [{ source, candidates, rejectedReason? }] }
 ```
 
-## Architecture T1
+## Architecture
 
 ```
 shared/site-finder/
 ├── index.js                         orchestrateur public
 ├── sources/
-│   └── apiGouv.js                   T1 — API Recherche d'entreprises
+│   ├── apiGouv.js                   T1 — API Recherche d'entreprises
+│   ├── webSearch.js                 T2 — cascade de requêtes web
+│   └── webSearchBackends/
+│       └── duckduckgoHtml.js        T2 — backend DDG HTML scrape
 ├── validation/
 │   ├── sirenExtractor.js            extraction SIREN robuste depuis HTML
 │   └── siteValidator.js             validateCandidate(url, targetSiren)
@@ -40,18 +43,52 @@ shared/site-finder/
     └── pageFetcher.js               fetch home + mentions légales
 ```
 
-T2 ajoutera `sources/scrapeAggregators.js` (societe.com, verif.com, pages-jaunes.fr) et T3 ajoutera `sources/duckDuckGo.js`. Aucun changement à l'orchestrateur n'est prévu pour ces extensions — l'ordre des sources est piloté par `SOURCES_ORDER_T1` (qui deviendra `SOURCES_ORDER`).
+Cascade de l'orchestrateur : `cache → apiGouv → webSearch (5 stratégies) → null`. Les agrégateurs publics (societe.com, verif.com, pages-jaunes.fr…) ont été abandonnés en T2 — soit la donnée n'est pas publiée dans le HTML public, soit les sites sont protégés par Cloudflare (cf. note plus bas).
+
+### Cascade webSearch — 5 stratégies de query
+
+Quand `apiGouv` ne retourne aucun candidat ou que les candidats retournés ne passent pas la validation, le module bascule sur une cascade de requêtes web. Chaque stratégie est appliquée dans l'ordre, on s'arrête dès qu'un candidat est validé :
+
+1. `name_city` — `"<companyName>" <ville>` (la plus discriminante en général)
+2. `name_postcode` — `"<companyName>" <codePostal>`
+3. `name_siren` — `"<companyName>" <siren>` (puissante quand le site mentionne le SIREN en footer)
+4. `name_director` — `"<companyName>" "<dirigeantName>"`
+5. `name_naf_city` — `"<companyName>" <libelleNaf> <ville>`
+
+Backend par défaut : DuckDuckGo HTML scrape (`html.duckduckgo.com/html/`). DDG retourne occasionnellement un challenge anti-bot ("anomaly modal") — détecté et propagé comme `SearchBlockedError`. Quand le backend est bloqué, la cascade s'arrête (pas de retry martelant).
+
+Backends alternatifs prévus en backlog : SearXNG self-hosté, Brave Search API. Architecture pluggable via `webSearchBackends/`.
+
+### Filtrage des agrégateurs
+
+`webSearch.AGGREGATOR_DOMAINS` liste les domaines connus (societe.com, linkedin.com, pappers.fr, pagesjaunes.fr, infogreffe.fr, manageo.fr, kompass.com, europages.fr, annuaire-entreprises.data.gouv.fr…). Les URLs candidates appartenant à ces domaines sont filtrées avant d'être présentées au validator.
+
+### Pourquoi pas societe.com / verif.com / pages-jaunes.fr en source directe
+
+Reconnaissance T2.0 (2026-04-29) sur 3 SIREN (Danone + 2 PME OSEYS-cible) :
+
+- **societe.com** : HTTP 200, mais le HTML public ne contient PAS de lien vers le site web réel de l'entreprise. La donnée est probablement derrière une feature payante.
+- **verif.com** : HTTP 403 Cloudflare Challenge (`<title>Just a moment…</title>`). Inutilisable sans browser headless.
+- **pages-jaunes.fr** : HTTP 403 Cloudflare CAPTCHA explicite (tag analytics `p=CLOUDFLARE::CAPTCHA`). Inutilisable.
+
+Décision : on attaque le problème via DuckDuckGo (qui indexe ces sources et exclut leur contenu cloué derrière du JS). L'investissement browser headless / API payante reste possible en backlog si le ROI le justifie ultérieurement.
 
 ## Variables d'environnement
 
 ```
-SITE_FINDER_TIMEOUT_MS=15000                    # mode à-la-demande
+SITE_FINDER_TIMEOUT_MS=15000                            # mode à-la-demande
 SITE_FINDER_CONFIDENCE_THRESHOLD=0.85
 SITE_FINDER_CACHE_TTL_VALIDATED_DAYS=90
 SITE_FINDER_CACHE_TTL_UNVERIFIED_DAYS=30
 WEBSITE_PATTERNS_TABLE=WebsitePatterns
-WEBSITE_PATTERNS_STORAGE_CONNECTION_STRING=     # KV ref en prod ; fallback AzureWebJobsStorage
+WEBSITE_PATTERNS_STORAGE_CONNECTION_STRING=             # KV ref en prod ; fallback AzureWebJobsStorage
 RECHERCHE_ENTREPRISES_API_URL=https://recherche-entreprises.api.gouv.fr
+
+# T2 — cascade webSearch
+SITE_FINDER_WEBSEARCH_MAX_RESULTS_PER_QUERY=10
+SITE_FINDER_WEBSEARCH_POLITENESS_DELAY_MS=2000          # entre 2 requêtes au même backend
+SITE_FINDER_WEBSEARCH_USER_AGENT=                       # défaut Chrome 120 macOS si vide
+SITE_FINDER_DDG_HTML_URL=https://html.duckduckgo.com/html/
 ```
 
 En prod, `WEBSITE_PATTERNS_STORAGE_CONNECTION_STRING` doit être une référence Key Vault (jamais une chaîne en clair). Si absente, le module fallback sur `AzureWebJobsStorage` (pattern Sprint 1 leadbase-table). Si les deux sont absents, le cache est désactivé silencieusement et toutes les requêtes appellent les sources directement.
