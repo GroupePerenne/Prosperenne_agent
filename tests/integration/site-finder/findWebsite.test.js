@@ -391,6 +391,9 @@ test('findWebsite — cascade name_city → name_postcode → name_siren validé
       companyName: 'ACME',
       ville: 'Lyon',
       codePostal: '69001',
+      // T3 : mode batch nécessaire pour autoriser name_postcode (default
+      // on_demand limite à name_city + name_siren).
+      options: { mode: 'batch' },
     },
     {
       apiGouvImpl: apiGouv.stub,
@@ -517,7 +520,11 @@ test('findWebsite — DDG transient sur 1 stratégie → continue les autres', a
   const validator = makeValidatorStub({ confidence: 0.99, proofType: 'siren_match', signals: [] });
   const cache = makeCacheStub();
   const out = await findWebsite(
-    { siren: '123456789', companyName: 'ACME', ville: 'Lyon', codePostal: '69001' },
+    {
+      siren: '123456789', companyName: 'ACME', ville: 'Lyon', codePostal: '69001',
+      // T3 : mode batch nécessaire pour autoriser name_postcode après échec name_city
+      options: { mode: 'batch' },
+    },
     {
       apiGouvImpl: apiGouv.stub,
       webSearchImpl: webSearchStub.stub,

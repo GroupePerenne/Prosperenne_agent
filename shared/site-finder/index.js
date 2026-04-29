@@ -37,6 +37,36 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.SITE_FINDER_TIMEOUT_MS || 15000);
 const SOURCES_ORDER = ['api_gouv', 'websearch'];
 
 /**
+ * Mode 'on_demand' : appel interactif avec bornes serrées. Utilisé par le
+ * pipeline d'enrichissement automatique pour ne pas bloquer la chaîne. Limite
+ * la cascade aux 2 stratégies les plus discriminantes (name_city, name_siren).
+ *
+ * Mode 'batch' : run continu / smoke test. Bornes lâches, toutes stratégies
+ * appliquées. Utilisé par le wrapper standalone (mode MacBook Air, hors scope
+ * Sprint 2 mais le mode est exposé pour le préparer).
+ */
+const ON_DEMAND_LIMITS = {
+  totalTimeoutMs: Number(process.env.SITE_FINDER_ON_DEMAND_TIMEOUT_MS || 20000),
+  politenessBudgetMs: Number(process.env.SITE_FINDER_ON_DEMAND_POLITENESS_BUDGET_MS || 5000),
+  maxStrategies: 2,
+  strategyOrder: ['name_city', 'name_siren'],
+};
+
+const BATCH_LIMITS = {
+  totalTimeoutMs: Number(process.env.SITE_FINDER_BATCH_TIMEOUT_MS || 90000),
+  politenessBudgetMs: Infinity,
+  maxStrategies: 5,
+  strategyOrder: ['name_city', 'name_postcode', 'name_siren', 'name_director', 'name_naf_city'],
+};
+
+const VALID_MODES = new Set(['on_demand', 'batch']);
+
+function getLimitsForMode(mode) {
+  if (mode === 'batch') return BATCH_LIMITS;
+  return ON_DEMAND_LIMITS;
+}
+
+/**
  * @param {Object} input
  * @param {string} input.siren                              9 chiffres, requis
  * @param {string} input.companyName                         Raison sociale, requise
@@ -91,11 +121,22 @@ async function findWebsite(input = {}, opts = {}) {
   const threshold = Number.isFinite(options.confidenceThreshold)
     ? options.confidenceThreshold
     : DEFAULT_CONFIDENCE_THRESHOLD;
-  const timeoutMs = Number.isFinite(options.timeoutMs)
-    ? options.timeoutMs
-    : DEFAULT_TIMEOUT_MS;
   const forceRefresh = Boolean(options.forceRefresh);
   const skipCache = Boolean(options.skipCache);
+
+  // Mode on_demand vs batch — borne le coût de la cascade webSearch.
+  // Le mode peut venir de input.options.mode (passé par le caller métier) ou
+  // opts.mode (pour les tests). Default 'on_demand' (mode le plus serré, sûr).
+  const mode = (options.mode && VALID_MODES.has(options.mode)) ? options.mode
+    : (opts.mode && VALID_MODES.has(opts.mode)) ? opts.mode
+    : 'on_demand';
+  const limits = getLimitsForMode(mode);
+  const timeoutMs = Number.isFinite(options.timeoutMs)
+    ? options.timeoutMs
+    : (limits.totalTimeoutMs || DEFAULT_TIMEOUT_MS);
+
+  const startedAt = Date.now();
+  const isOverallBudget = () => Date.now() - startedAt > limits.totalTimeoutMs;
 
   const adapters = {
     apiGouv: opts.apiGouvImpl || { findCandidatesViaApiGouv },
@@ -195,14 +236,41 @@ async function findWebsite(input = {}, opts = {}) {
   let validatedOutput = await tryValidate(apiGouvCandidates, 'api_gouv');
 
   // ─── Étape 3 : cascade webSearch ─────────────────────────────────────────
-  // Skippée si apiGouv a déjà validé. Si le backend est blocked, on stoppe
-  // la cascade pour ne pas marteler.
+  // Skippée si apiGouv a déjà validé. Bornée par les limites du mode :
+  //   - Liste autorisée (limits.strategyOrder) → on_demand limite à 2
+  //     stratégies (name_city, name_siren), batch en autorise 5.
+  //   - maxStrategies : nombre max de stratégies effectivement tentées.
+  //   - politenessBudget / totalTimeout : early-exit si dépassé.
+  // Si le backend throw blocked, on arrête la cascade pour ne pas marteler.
   if (!validatedOutput && adapters.webSearch && Array.isArray(adapters.webSearch.QUERY_STRATEGIES)) {
     let backendBlocked = false;
-    for (const strategy of adapters.webSearch.QUERY_STRATEGIES) {
+    let strategiesAppliedCount = 0;
+    let politenessUsedMs = 0;
+    const allowedStrategies = new Set(limits.strategyOrder);
+
+    // On itère selon l'ordre canonique du module webSearch (qui définit
+    // l'ordre des stratégies de query). Mais on filtre sur allowedStrategies
+    // en respectant l'ordre voulu par le mode.
+    const orderedStrategies = limits.strategyOrder
+      .map((name) => adapters.webSearch.QUERY_STRATEGIES.find((s) => s.name === name))
+      .filter(Boolean);
+
+    for (const strategy of orderedStrategies) {
       if (validatedOutput || backendBlocked) break;
+      if (strategiesAppliedCount >= limits.maxStrategies) break;
+      if (isOverallBudget()) {
+        attempted.push({ source: 'websearch_skipped', candidates: 0, rejectedReason: 'overall_timeout' });
+        break;
+      }
+      if (politenessUsedMs >= limits.politenessBudgetMs) {
+        attempted.push({ source: 'websearch_skipped', candidates: 0, rejectedReason: 'politeness_exhausted' });
+        break;
+      }
+      if (!allowedStrategies.has(strategy.name)) continue;
       if (!adapters.webSearch.canApply(strategy, input)) continue;
 
+      strategiesAppliedCount++;
+      const stratStart = Date.now();
       let strategyCandidates = [];
       let strategyRejectedReason;
       try {
@@ -220,6 +288,7 @@ async function findWebsite(input = {}, opts = {}) {
           backendBlocked = true;
         }
       }
+      politenessUsedMs += Date.now() - stratStart;
 
       attempted.push({
         source: `websearch_${strategy.name}`,
@@ -317,11 +386,14 @@ function makeLogger(context) {
 
 module.exports = {
   findWebsite,
+  ON_DEMAND_LIMITS,
+  BATCH_LIMITS,
   // Exposés pour tests :
   _internals: {
     buildOutput,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_TIMEOUT_MS,
     SOURCES_ORDER,
+    getLimitsForMode,
   },
 };

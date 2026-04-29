@@ -27,7 +27,7 @@ const out = await findWebsite({
 
 ```
 shared/site-finder/
-├── index.js                         orchestrateur public
+├── index.js                         orchestrateur public + modes on_demand/batch
 ├── sources/
 │   ├── apiGouv.js                   T1 — API Recherche d'entreprises
 │   ├── webSearch.js                 T2 — cascade de requêtes web
@@ -38,6 +38,8 @@ shared/site-finder/
 │   └── siteValidator.js             validateCandidate(url, targetSiren)
 ├── cache/
 │   └── websitePatternsCache.js      cache Azure Tables WebsitePatterns
+├── writers/
+│   └── leadbaseWriter.js            T3 — écriture Merge sur LeadBase
 └── utils/
     ├── urlNormalizer.js             normalisation URL canonique
     └── pageFetcher.js               fetch home + mentions légales
@@ -89,7 +91,33 @@ SITE_FINDER_WEBSEARCH_MAX_RESULTS_PER_QUERY=10
 SITE_FINDER_WEBSEARCH_POLITENESS_DELAY_MS=2000          # entre 2 requêtes au même backend
 SITE_FINDER_WEBSEARCH_USER_AGENT=                       # défaut Chrome 120 macOS si vide
 SITE_FINDER_DDG_HTML_URL=https://html.duckduckgo.com/html/
+
+# T3 — modes on_demand / batch
+SITE_FINDER_ON_DEMAND_TIMEOUT_MS=20000                  # mode interactif, bornes serrées
+SITE_FINDER_ON_DEMAND_POLITENESS_BUDGET_MS=5000         # max politesse cumulée mode on_demand
+SITE_FINDER_BATCH_TIMEOUT_MS=90000                      # mode batch (run continu)
 ```
+
+## Modes on_demand vs batch (T3)
+
+`findWebsite` accepte `options.mode`. Default `'on_demand'`.
+
+- **`on_demand`** : mode interactif (intégré dans le pipeline d'enrichissement, latence importe). Limite à 2 stratégies (`name_city`, `name_siren`), timeout 20s, budget politesse 5s.
+- **`batch`** : run continu (futur wrapper standalone, smoke tests, scripts de migration). 5 stratégies appliquées, timeout 90s, politesse illimitée.
+
+Si la politesse cumulée dépasse `politenessBudgetMs` (mode on_demand surtout), la cascade s'arrête tôt avec `attempted` contenant `{source: 'websearch_skipped', rejectedReason: 'politeness_exhausted'}`.
+
+## Intégration pipeline (T3)
+
+Pré-passe automatique dans `shared/lead-exhauster/enrichBatch.js` (étape 1.5, entre `selectCandidatesForConsultant` et la boucle exhauster) :
+
+1. Pour chaque candidate sans `hintedEmail` : appel `findWebsite()` en mode `'on_demand'`.
+2. Si validé, écriture Merge sur LeadBase via `writers/leadbaseWriter.js` (sauf en `dryRun`). Champs ajoutés : `siteWeb`, `siteWebConfidence`, `siteWebSource`, `siteWebProofType`, `siteWebValidatedAt`, `siteWebLastCheckedAt`, `siteWebVersion`.
+3. Le `companyDomain` du candidate est enrichi → l'exhauster en bénéficie pour `resolveDomain`.
+
+Compteurs ajoutés au `meta` retourné par `enrichBatchForConsultant` : `siteFinderAttempts`, `siteFinderOk`, `siteFinderSkipped`, `siteFinderCacheHits`, `siteFinderCostCents`. Propagés automatiquement par `enrichAndProfileBatchForConsultant` dans son meta global.
+
+Fail-safe : si `findWebsite` throw ou retourne null, le candidate continue dans le pipeline sans `companyDomain` enrichi (l'exhauster fait son boulot avec ce qu'il a). Pas de blocage du pipeline.
 
 En prod, `WEBSITE_PATTERNS_STORAGE_CONNECTION_STRING` doit être une référence Key Vault (jamais une chaîne en clair). Si absente, le module fallback sur `AzureWebJobsStorage` (pattern Sprint 1 leadbase-table). Si les deux sont absents, le cache est désactivé silencieusement et toutes les requêtes appellent les sources directement.
 

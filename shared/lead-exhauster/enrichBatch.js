@@ -28,6 +28,8 @@ const { selectCandidatesForConsultant } = require('../leadSelector');
 const { leadExhauster } = require('./index');
 const { recordUnresolvable } = require('./unresolvableTrace');
 const { DEFAULT_CONFIDENCE_THRESHOLD } = require('./schemas');
+const { findWebsite } = require('../site-finder');
+const { writeSiteFinderResultToLeadBase } = require('../site-finder/writers/leadbaseWriter');
 
 /**
  * Enrichit un brief en batch prêt pour launchSequenceForConsultant.
@@ -70,6 +72,9 @@ async function enrichBatchForConsultant(params = {}) {
   const exhauster = adapters.leadExhauster || leadExhauster;
   const unresolvableWriter = adapters.recordUnresolvable || recordUnresolvable;
   const buildCtx = adapters.buildExperimentsContext || defaultBuildExperimentsContext;
+  // Sprint 2 — site-finder injectables
+  const siteFinder = adapters.findWebsite || findWebsite;
+  const siteFinderWriter = adapters.writeSiteFinderResultToLeadBase || writeSiteFinderResultToLeadBase;
 
   if (!beneficiaryId) {
     return errorResult(started, 'missing_beneficiary_id');
@@ -106,9 +111,79 @@ async function enrichBatchForConsultant(params = {}) {
     };
   }
 
+  const candidates = Array.isArray(selectorResult.candidates) ? selectorResult.candidates : [];
+
+  // ─── Étape 1.5 : pré-passe site-finder (Sprint 2) ────────────────────
+  // Pour chaque candidate sans companyDomain hint, on essaie de retrouver
+  // le site web officiel via api.gouv.fr + cascade DDG. Mode 'on_demand'
+  // (bornes serrées : 20s timeout, max 2 stratégies). Si un site est validé,
+  // on l'écrit dans LeadBase (Merge) et on enrichit le candidate pour que
+  // l'exhauster en bénéficie (ligne 136 du code historique : `companyDomain`
+  // est dérivé de hintedEmail ; site-finder donne une 2e source).
+  //
+  // Fail-safe : si site-finder retourne null ou throw, on continue sans
+  // enrichissement. Pas de blocage du pipeline.
+  const siteFinderMeta = {
+    siteFinderAttempts: 0,
+    siteFinderOk: 0,
+    siteFinderSkipped: 0,
+    siteFinderCacheHits: 0,
+    siteFinderCostCents: 0,
+  };
+
+  for (const cand of candidates) {
+    // Skip si on a déjà un domaine (via hintedEmail) — on ne re-enrichit pas
+    // les candidates déjà résolus, économie cascade DDG.
+    if (cand.hintedEmail) {
+      siteFinderMeta.siteFinderSkipped++;
+      continue;
+    }
+    siteFinderMeta.siteFinderAttempts++;
+    let result;
+    try {
+      result = await siteFinder(
+        {
+          siren: cand.siren,
+          companyName: cand.companyName,
+          ville: cand.ville,
+          dirigeantName: buildDirigeantName(cand.firstName, cand.lastName),
+        },
+        { mode: 'on_demand', context },
+      );
+    } catch (err) {
+      logWarn(context, `[site-finder] failed for ${cand.siren}: ${err && err.message}`);
+      continue;
+    }
+
+    if (!result || !result.siteUrl) continue;
+    siteFinderMeta.siteFinderOk++;
+    if (result.source === 'cache') siteFinderMeta.siteFinderCacheHits++;
+    siteFinderMeta.siteFinderCostCents += Number(result.costCents) || 0;
+
+    // Enrichit le candidate : `companyDomain` sera consommé par l'exhauster
+    // ligne ~136 (hintedEmail prioritaire mais ici hintedEmail est null
+    // puisqu'on a skip dès que présent).
+    cand.companyDomain = result.siteUrl;
+    cand.siteFinderResult = {
+      siteUrl: result.siteUrl,
+      confidence: result.confidence,
+      source: result.source,
+      proofType: result.proofType,
+    };
+
+    // Écriture LeadBase (Merge) sauf en dryRun. Best effort, on log warn
+    // mais on ne bloque pas si le writer échoue.
+    if (!dryRun) {
+      try {
+        await siteFinderWriter(cand.siren, result, { partitionKey: cand.partitionKey });
+      } catch (err) {
+        logWarn(context, `[site-finder] writer failed for ${cand.siren}: ${err && err.message}`);
+      }
+    }
+  }
+
   // ─── Étape 2 : boucle exhauster séquentielle ────────────────────────
   const leads = [];
-  const candidates = Array.isArray(selectorResult.candidates) ? selectorResult.candidates : [];
   let resolutionAttempts = 0;
   let resolutionOk = 0;
   let resolutionUnresolvable = 0;
@@ -126,6 +201,12 @@ async function enrichBatchForConsultant(params = {}) {
       tranche: cand.trancheEffectif,
     }).catch(() => null);
 
+    // companyDomain priorité : (1) hintedEmail si présent, (2) résultat
+    // site-finder enrichi en pré-passe Sprint 2.
+    const companyDomain = cand.hintedEmail
+      ? domainFromEmail(cand.hintedEmail)
+      : (cand.companyDomain || undefined);
+
     const enrichment = await exhauster(
       {
         siren: cand.siren,
@@ -133,7 +214,7 @@ async function enrichBatchForConsultant(params = {}) {
         firstName: cand.firstName,
         lastName: cand.lastName,
         companyName: cand.companyName,
-        companyDomain: cand.hintedEmail ? domainFromEmail(cand.hintedEmail) : undefined,
+        companyDomain,
         inseeRole: cand.inseeRole,
         trancheEffectif: cand.trancheEffectif,
         naf: cand.codeNaf,
@@ -193,8 +274,22 @@ async function enrichBatchForConsultant(params = {}) {
       costCentsTotal,
       dryRun: Boolean(dryRun),
       elapsedMs: Date.now() - started,
+      ...siteFinderMeta,
     },
   };
+}
+
+/**
+ * Construit un nom de dirigeant unifié pour les stratégies webSearch
+ * (cf. `name_director` dans site-finder/sources/webSearch.js).
+ */
+function buildDirigeantName(firstName, lastName) {
+  const f = String(firstName || '').trim();
+  const l = String(lastName || '').trim();
+  if (!f && !l) return undefined;
+  if (!f) return l;
+  if (!l) return f;
+  return `${f} ${l}`;
 }
 
 /**
