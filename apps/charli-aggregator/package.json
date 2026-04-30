@@ -1,0 +1,17 @@
+{
+  "name": "pereneo-charli-aggregator",
+  "version": "0.1.0",
+  "description": "FA queue consumer charli-events qui écrit dans Mem0 user_id=charli via le Container App MCP mem0-mcp-charli",
+  "main": "src/{index.js,functions/*.js}",
+  "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "func start",
+    "test": "node --test 'tests/**/*.test.js'"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0"
+  }
+}
