@@ -104,6 +104,8 @@ const AGGREGATOR_DOMAINS = new Set([
   'dnb.com',
   'bvdinfo.com',
   'corporama.com',
+  'entreprises.lagazettefrance.fr',
+  'lagazettefrance.fr',
   'verif-siren.com',
   'siren-info.com',
   'societe-info.com',
