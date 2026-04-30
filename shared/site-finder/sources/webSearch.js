@@ -26,7 +26,7 @@
 const duckduckgoHtml = require('./webSearchBackends/duckduckgoHtml');
 
 const DEFAULT_POLITENESS_DELAY_MS = Number(
-  process.env.SITE_FINDER_WEBSEARCH_POLITENESS_DELAY_MS || 2000,
+  process.env.SITE_FINDER_WEBSEARCH_POLITENESS_DELAY_MS || 5000,
 );
 const DEFAULT_MAX_RESULTS = Number(
   process.env.SITE_FINDER_WEBSEARCH_MAX_RESULTS_PER_QUERY || 10,
