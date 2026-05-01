@@ -2,7 +2,7 @@
   "name": "prosperenne-agent",
   "version": "0.2.0",
   "description": "OSEYS — équipe commerciale IA (David manager + Martin/Mila prospecteurs)",
-  "main": "src/{index.js,functions/*.js}",
+  "main": "src/index.js",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
