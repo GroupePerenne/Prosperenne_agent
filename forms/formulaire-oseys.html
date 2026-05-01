@@ -347,34 +347,40 @@
       <input type="hidden" id="f_prospecteur" name="prospecteur" value="both">
     </div>
 
-    <!-- ─── Section 3 : Niveau d'autonomie ─── -->
+    <!-- ─── Section 3 : Ce que David te livre (offre commerciale) ─── -->
     <div class="section" data-section>
       <div class="section-head">
         <div class="section-num">3</div>
         <div>
-          <div class="section-title">Mon niveau d'autonomie</div>
-          <div class="section-desc">Quelle place tu nous laisses pour prospecter en ton nom.</div>
+          <div class="section-title">Ce que David te livre</div>
+          <div class="section-desc">Deux modes de livraison au choix. Tu peux changer en cours de pilote.</div>
         </div>
       </div>
 
-      <div class="tags" data-tags="niveau" data-single="true">
-        <span class="tag level-option" data-value="fantome">
-          <div class="level-name">Mode fantôme</div>
-          <div class="level-desc">Martin et Mila prospectent en mon nom, je ne reçois que les retours qui matchent.</div>
+      <div class="tags" data-tags="offre_choisie" data-single="true">
+        <span class="tag level-option" data-value="lead">
+          <div class="level-name">Leads qualifiés</div>
+          <div class="level-desc">Martin et Mila identifient les prospects qui ont exprimé un intérêt concret, et te transmettent le contact. C'est toi qui prends la main pour la suite (RDV, qualification, signature).</div>
         </span>
-        <span class="tag level-option" data-value="duo">
-          <div class="level-name">Mode duo</div>
-          <div class="level-desc">Ils m'assistent, je suis en copie de chaque envoi. On construit ensemble, je valide.</div>
-        </span>
-        <span class="tag level-option selected" data-value="autonome">
-          <div class="level-name">Mode autonome</div>
-          <div class="level-desc">Ils prospectent et calent les RDV directement dans mon agenda.</div>
+        <span class="tag level-option selected" data-value="rdv-cale">
+          <div class="level-name">RDV calés dans ton agenda</div>
+          <div class="level-desc">Martin et Mila prospectent, qualifient, et fixent directement le RDV dans ton agenda Microsoft Bookings. Tu arrives en RDV qualifié, prêt à closer.</div>
         </span>
       </div>
-      <input type="hidden" id="f_niveau" name="niveau_autonomie" value="autonome">
+      <input type="hidden" id="f_offre_choisie" name="offre_choisie" value="rdv-cale">
+
+      <div class="field" style="margin-top: 1.5rem">
+        <label>Visibilité sur les échanges en cours</label>
+        <div class="zone-radios">
+          <label><input type="radio" name="mise_en_copie_choice" value="true"> En copie de tout — je veux suivre chaque envoi et chaque réponse en temps réel</label>
+          <label><input type="radio" name="mise_en_copie_choice" value="false" checked> Notifications ciblées — David ne me notifie que sur les classes engagées (positive, question, négative). Le reste reste invisible.</label>
+        </div>
+        <input type="hidden" id="f_mise_en_copie" name="mise_en_copie_consultant" value="false">
+        <p class="hint">Tu pourras changer à tout moment.</p>
+      </div>
     </div>
 
-    <!-- ─── Section 4 : Offre ─── -->
+    <!-- ─── Section 4 : Offre + méthode propre ─── -->
     <div class="section" data-section>
       <div class="section-head">
         <div class="section-num">4</div>
@@ -385,6 +391,11 @@
       </div>
       <div class="field">
         <textarea id="f_offre" name="offre" required data-example="J'accompagne les dirigeants de TPE et PME à reprendre la main sur le pilotage commercial et la rentabilité de leur activité, avec la méthode OSEYS et l'outil PilotagePro."></textarea>
+      </div>
+      <div class="field">
+        <label for="f_methode">Ta méthode propre, ta spécialité (optionnel)</label>
+        <textarea id="f_methode" name="methode_consultant" placeholder="Si tu as une nuance qui te distingue (un angle, un secteur où tu excelles, une approche personnelle), explique-la. Martin et Mila la projetteront naturellement dans les messages, sans la pitcher comme un produit."></textarea>
+        <p class="hint">Laisse vide si tu veux juste le socle OSEYS commun.</p>
       </div>
     </div>
 
@@ -478,19 +489,26 @@
           <input type="hidden" id="f_zone" name="zone" value="default">
         </div>
       </div>
+
+      <div class="field" style="margin-top: 1.5rem">
+        <label for="f_cible_specifique">Cible spécifique éventuelle (optionnel)</label>
+        <input type="text" id="f_cible_specifique" name="cible_specifique" placeholder="Ex : agences créa 10-20 salariés en accélération, ou cabinets conseil 30+ qui peinent à se transmettre…">
+        <p class="hint">Si tu veux nuancer le socle 5-75 par une typologie particulière. Sinon laisse vide.</p>
+      </div>
     </div>
 
-    <!-- ─── Section 6 : Référence ─── -->
+    <!-- ─── Section 6 : Anecdotes anonymisées ─── -->
     <div class="section" data-section>
       <div class="section-head">
         <div class="section-num">6</div>
         <div>
-          <div class="section-title">Un exemple de client idéal</div>
-          <div class="section-desc">Un cas concret que tu as accompagné et que tu voudrais dupliquer. Ça aide à calibrer le ciblage.</div>
+          <div class="section-title">Anecdotes que tu autorises</div>
+          <div class="section-desc">Des cas que tu as accompagnés et dont Martin et Mila peuvent s'inspirer dans leurs messages. Toujours anonymisés côté prospect — jamais de nom client réel cité.</div>
         </div>
       </div>
       <div class="field">
-        <textarea id="f_exemple" name="exemple_client" placeholder="Nom, secteur, ce que tu as fait pour lui, le résultat obtenu."></textarea>
+        <textarea id="f_anecdotes" name="anecdotes_anonymisees" placeholder="Une ligne par anecdote utilisable. Ex :&#10;- un cabinet conseil RH qui a structuré son pilotage des marges après un trimestre flou&#10;- un atelier d'agencement qui a clarifié sa rentabilité par type de chantier&#10;- un dirigeant qui hésitait à recruter et a tranché en lecture du seuil de rentabilité"></textarea>
+        <p class="hint">Une ligne par anecdote. Laisse vide si tu préfères qu'on reste sur le socle générique.</p>
       </div>
     </div>
 
@@ -513,7 +531,7 @@
 
 <script>
   // ─── Configuration ────────────────────────────────────────────────────────
-  const SUBMIT_ENDPOINT = 'https://oseys-mail-sender-c8cveseah3g8a9gs.francecentral-01.azurewebsites.net/api/onQualification';
+  const SUBMIT_ENDPOINT = 'https://pereneo-mail-sender.azurewebsites.net/api/onQualification';
   const STORAGE_KEY = 'oseys_qualification_draft';
 
   // ─── Pré-remplissage via paramètres URL ───────────────────────────────────
@@ -696,6 +714,15 @@
     zoneRayonHidden.dispatchEvent(new Event('input', { bubbles: true }));
   });
 
+  // ─── Mise en copie consultant : sync radios vers hidden input ───────────
+  document.querySelectorAll('input[name="mise_en_copie_choice"]').forEach(r => {
+    r.addEventListener('change', () => {
+      const checked = document.querySelector('input[name="mise_en_copie_choice"]:checked');
+      if (checked) document.getElementById('f_mise_en_copie').value = checked.value;
+      updateProgress();
+    });
+  });
+
   // ─── Tag groups ──────────────────────────────────────────────────────────
   document.querySelectorAll('[data-tags]').forEach(group => {
     const isSingle = group.dataset.single === 'true';
@@ -707,7 +734,8 @@
           // sync vers hidden input
           const inputId = group.dataset.tags === 'registre' ? 'f_registre'
                        : group.dataset.tags === 'vouv' ? 'f_vouv'
-                       : group.dataset.tags === 'niveau' ? 'f_niveau' : null;
+                       : group.dataset.tags === 'niveau' ? 'f_niveau'
+                       : group.dataset.tags === 'offre_choisie' ? 'f_offre_choisie' : null;
           if (inputId) document.getElementById(inputId).value = tag.dataset.value;
         } else {
           tag.classList.toggle('selected');
@@ -724,8 +752,8 @@
   // + cachés synchronisés par les tags/choice (prospecteur, secteurs, registre, vouv).
   const PROGRESS_FIELD_IDS = [
     'f_nom', 'f_email', 'f_entreprise', 'f_telephone', 'f_ville', 'f_linkedin',
-    'f_prospecteur', 'f_niveau', 'f_offre', 'f_secteurs', 'f_effectif', 'f_zone',
-    'f_zone_rayon', 'f_exemple',
+    'f_prospecteur', 'f_offre_choisie', 'f_offre', 'f_secteurs', 'f_effectif', 'f_zone',
+    'f_zone_rayon',
   ];
   function updateProgress() {
     let filled = 0;
@@ -937,6 +965,14 @@
     const payload = collectFormData();
     payload.submitted_at = new Date().toISOString();
     payload.user_agent = navigator.userAgent;
+
+    // Anecdotes : textarea multi-ligne → array de strings non-vides (1 par ligne)
+    if (typeof payload.anecdotes_anonymisees === 'string') {
+      payload.anecdotes_anonymisees = payload.anecdotes_anonymisees
+        .split(/\r?\n/)
+        .map(s => s.replace(/^[\s\-•*]+/, '').trim())
+        .filter(Boolean);
+    }
 
     try {
       const res = await fetch(SUBMIT_ENDPOINT, {
