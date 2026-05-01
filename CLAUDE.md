@@ -1,616 +1,373 @@
 # CLAUDE.md — Brief de reprise pour Claude Code
 
-> Ce fichier est ton point d'entrée sur le projet. Lis-le intégralement avant toute action. Il contient le contexte produit, l'état de l'infra, les secrets à récupérer, les pièges connus, et le plan de travail priorisé.
+> Point d'entrée Claude Code sur le projet `Pereneo_agents`. À lire intégralement avant toute action.
+> **Dernière révision** : 1er mai 2026 (refonte complète post-lancement pilote David — résolution BL-43/45/47/48/49/51, refonte VP socle, lancement officiel pilote Morgane/Johnny). Drift 17 avril clos.
+> Cohérence avec : STRATEGY v3.0 / MEMO v3.0 / ARCHITECTURE v6.0 / CHARLI v1.5 / OPERATIONS v4.3 / CLAUDE_JOURNAL v1.11 — sur SharePoint `Direction OSEYS - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`.
 
 ---
 
 ## 1. Identité du projet
 
-**Nom technique** : `Pereneo_agents` (anciennement `Mila_agent`)
-**Nom commercial** : Prospérenne
-**Owner** : Paul Rudler (paul.rudler@oseys.fr) — Président d'OSEYS GROUPE
+**Nom technique** : `Pereneo_agents` (anciennement `Mila_agent`, puis `Prosperenne_agent`)
+**Nom commercial actuel** : OSEYS (pilote interne) — futur Prospérenne (commercialisation post-validation pilote)
+**Owner** : Paul Rudler (paul.rudler@oseys.fr) — Président OSEYS Groupe / Pereneo
 **GitHub** : https://github.com/GroupePerenne/Pereneo_agents
-**Business** : OSEYS est un réseau de consultants en développement commercial. Le projet construit une équipe commerciale IA (3 agents) déployable pour les consultants du réseau, puis commercialisable à d'autres réseaux à terme.
+**Business** : OSEYS est un réseau de consultants indépendants qui copilotent les dirigeants TPE/PME françaises dans le pilotage économique de leur activité. Ce projet construit l'équipe commerciale IA (David + Martin + Mila) qui prospecte au nom des consultants OSEYS, puis sera commercialisée à grande échelle sous la marque Prospérenne (filiale Pereneo).
 
-### Les trois agents
+### 1.1 Phase actuelle — pilote OSEYS ACTIF depuis le 1er mai 2026
 
-| Agent | Rôle | Adresse mail | Nature |
-|-------|------|--------------|--------|
-| **David** | Manager commercial — interface consultants | `david@oseys.fr` (shared mailbox) | Agent LLM conversationnel |
-| **Martin** | Prospecteur, profil masculin | `martin@oseys.fr` (licence Business Basic) | Worker semi-déterministe |
-| **Mila** | Prospectrice, profil féminin | `mila@oseys.fr` (licence Business Basic) | Worker semi-déterministe |
+David, Martin et Mila sont **en production** depuis le 1er mai 2026 18:11 CEST. Pilote interne avec 2 consultants OSEYS : Morgane DE JESSEY (`m.dejessey@oseys.fr`) et Johnny SERRA (`j.serra@oseys.fr`). Les 2 ont reçu leur mail d'onboarding David. Les briefs consultants seront posés via le formulaire HTML public. Lead Selector se déclenche fire-and-forget après chaque brief.
 
-**Règle architecturale clé** : seul David parle aux consultants. Martin et Mila ne contactent que les prospects externes. Leur `replyTo` pointe sur `david@oseys.fr`, donc toute réponse de prospect atterrit chez David, qui la lit via le timer `davidInbox` et prévient le consultant concerné.
+**Conséquences pour le développement** :
+- **Pas de déploiement prod sans GO Paul** explicite. Le pilote tourne, on ne perturbe pas en heures ouvrées
+- **Heures creuses obligatoires** pour tout déploiement (≥21h Paris ou weekend ou jour férié français) — discipline §5.3 anti-régression
+- **Multi-tenancy futur** : pas encore en place ; OSEYS hardcodé dans les configs initiales mais externalisable Tranche 8 (avant commercialisation Prospérenne)
+- Pilote en assignation libre (consultant choisit Martin OU Mila OU les deux dans le formulaire)
 
-### 1.5 Positionnement produit — David est manager, pas exécutant
+### 1.2 Les trois agents
 
-David est le manager commercial de l'équipe. Il ne prospecte jamais lui-même. Son équipe Martin + Mila exécute la prospection ; David coordonne, brief, suit, rapporte. Le consultant utilisateur voit les trois dans son quotidien :
-- David au jour le jour (onboarding, briefs, comptes rendus hebdo)
-- Martin et Mila nommément dans les dashboards, rapports de performance, notifications de réponse prospect
+| Agent | Rôle | Adresse mail | Posture |
+|---|---|---|---|
+| **David** | Manager commercial — interface consultants + classification réponses prospects | `david@oseys.fr` (shared mailbox) | Posture de manager : intervient pour valider/appuyer, pas dans le flux nominal des messages prospects |
+| **Martin** | Chargé d'Affaires, profil masculin | `martin@oseys.fr` (licence Business Basic, en warmup) | Opère depuis sa propre boîte, jamais d'usurpation consultant |
+| **Mila** | Chargée d'Affaires, profil féminin | `mila@oseys.fr` (licence Business Basic, en warmup) | Idem |
 
-Pitch produit : "une équipe commerciale IA de 3 personnes", pas "un chatbot commercial". La métaphore RH est assumée — c'est ce qui fait la valeur perçue.
+**Règle architecturale clé** (refonte 1er mai 2026) : Martin et Mila opèrent depuis **leur propre boîte mail** (`replyTo` = expéditeur, pas David). Cohérence prospect : il échange avec le commercial qu'il connaît. David n'est **pas** dans le flux nominal des échanges. Il intervient ponctuellement (escalation, validation, appui hiérarchique). `davidInbox` poll désormais les **3 boîtes** (`martin@`, `mila@`, `david@`) en multi-mailbox.
 
-### 1.6 Phase actuelle — pilote interne OSEYS
+### 1.3 Charli — DG Pereneo
 
-Avant de commercialiser Prospérenne, on valide en interne avec 2 consultants OSEYS : Morgane et Johnny. L'équipe David+Martin+Mila doit être opérationnelle end-to-end (les 3 ensemble, pas séquentiellement — David sans Martin/Mila n'a pas de valeur).
+Charli est le DG de Pereneo (filiale tech/IA du Groupe Pérenne, à créer formellement). Mandat de Directeur Général sur le périmètre agents : David aujourd'hui, futurs Alicia (Prospérenne) et Richard (RT). Mémoire continue Niveau 1 active sur la machine Paul depuis le 30 avril 2026 PM via Claude Code CLI + wrapper Bearer Entra + proxy `charli-mcp-proxy` 1.1.0. Adresse mail : `charli@pereneo.eu`.
 
-Conséquences pour le développement :
-- Pas de multi-tenancy pour l'instant (un seul Function App, un seul tenant Microsoft 365 OSEYS, une seule instance Pipedrive)
-- Les règles métier OSEYS (cible "vente d'heures", tranches 5-75 salariés, exclusions comptables/avocats) sont la config initiale mais doivent rester externalisables pour le pivot Prospérenne
-- Pas d'OSEYS hardcodé dans le code : chaque texte "OSEYS" dans un prompt, template ou règle métier doit venir d'une variable d'env ou d'un fichier de config tenant, jamais d'une constante en dur
-- Pilote avec assignation forcée (1 prospecteur par consultant) recommandé avant d'activer le mode "both" par défaut
+### 1.4 Convention domaines
 
-**TODO avant pilote Morgane/Johnny** : résoudre les `user_id` Pipedrive des 2 consultants (via `GET /v1/users?term=<email>`) et passer `owner_id` au `pipedrive.createDeal` dans `agents/david/orchestrator.js` → `launchSequenceForConsultant`. Sans ça, tous les deals créés ont David comme owner, ce qui casse le rapport quotidien `dailyReport` qui filtre par `user_id` du consultant. Paul récupère les IDs ou Claude peut le faire automatiquement depuis les env vars `MORGANE_EMAIL` / `JOHNNY_EMAIL`.
+| Domaine | Usage | Adresses |
+|---|---|---|
+| `oseys.fr` | OSEYS pilote actuel | `david@`, `martin@`, `mila@`, `m.dejessey@` (Morgane), `j.serra@` (Johnny), `paul.rudler@`, `direction@` |
+| `prosperenne.com` | Prospérenne future (commercialisation agence IA) | `martin@`, `mila@`, `alicia@` futurs (boîtes distinctes des oseys.fr, pas alias) |
+| `pereneo.eu` | Groupe Pereneo (mandats transverses) | `charli@`, futurs DG filiales, équipe corporate |
 
-### 1.7 Règles produit validées (session du 17 avril 2026)
+### 1.5 Cible commerciale OSEYS
 
-**Rythme de la séquence de prospection** : 5 touches sur 28 jours ouvrés → **J0**, **J+4**, **J+10**, **J+18**, **J+28**. Tous les offsets sont comptés en jours ouvrés français (hors samedi, dimanche, jours fériés).
+**Cible** : dirigeants TPE/PME françaises **5 à 75 salariés**, sweet spot **10 à 40** (note VP Paul 1er mai 2026, cf. `agents/david/value-proposition.md` §2.1).
 
-**Jours ouvrés uniquement** : aucun envoi prospect un samedi, dimanche ou jour férié français. Si un job (immédiat ou différé) tombe hors jour ouvré ou hors plage 9h-11h Paris, il est reporté au prochain créneau ouvré.
+**Exclusions absolues** :
+- Cabinets comptables et avocats (partenaires/apporteurs uniquement)
+- < 5 salariés (pas la maturité)
+- B2C pur (hors terrain)
 
-**Créneau d'envoi** : 9h-11h Paris pour tous les envois prospects (ouverture + relances). Heure locale Paris garantie par l'app setting `WEBSITE_TIME_ZONE=Romance Standard Time` sur le Function App.
-
-**Rapport quotidien David** : 8h Paris du lundi au vendredi. Un mail par consultant actif contenant activité de la veille (envois, ouvertures, réponses, RDV), analyse comparative Martin/Mila si pertinent, propositions d'actions pour la journée.
-
-**A/B testing Martin/Mila permanent** : les deux agents coexistent toujours, on optimise lead-par-lead. Aucun "choix d'un gagnant" qui supprimerait un agent.
-
-**Bascule d'agent sur silence** : si un lead termine ses 28 jours ouvrés sans réponse, il est flagué `retry_available_after = today + 180j` avec `last_agent_attempted = <agent_courant>`. Future campagne → l'autre agent prend le relais.
-
-**Opt-out permanent sur réponse négative** : un prospect qui répond négativement est retiré de toute future campagne, tous agents confondus (`opt_out_until = 9999-12-31`).
-
-**Classification des réponses prospects (6 classes)** : `positive` / `question` / `neutre` / `negative` / `out_of_office` / `bounce`. Si la confidence LLM est < 0.7 → escalation humaine obligatoire via la règle d'honneur.
-
-**Règle d'honneur David** (non négociable, s'applique aussi à Martin et Mila dans la génération de leurs messages) :
-1. **Pas d'improvisation** sur les cas ambigus. En cas de doute → mail à `direction@oseys.fr` (env var `ESCALATION_EMAIL`) avec contexte, 2-3 propositions, reco personnelle. Attendre validation humaine avant d'agir.
-2. **Pas d'invention** : aucun chiffre, benchmark, cas client, référence ou nom non sourçable.
-3. **Pas de promesse** : pas de garantie de résultat, délai, taux. Formulations qualitatives uniquement.
-
-**URL canonique dans les signatures** : `https://oseys.fr/dirigeant` (et non plus `https://oseys.fr` nu).
-
-**Filtrage des leads existants** : avant le J0, David vérifie via Pipedrive si le prospect est déjà dans un deal actif d'un autre pipeline. Match clair (même email ou même `person_id`) → skip silencieux. Match flou (même nom d'entreprise, prénoms différents) → escalation au consultant owner du deal existant, pas d'envoi tant que pas de réponse.
-
-**Prise de RDV via Microsoft Bookings** : chaque consultant a sa page Bookings personnelle, URL stockée dans son brief et injectée par David dans les réponses positives aux prospects.
-
-**Pipedrive Smart BCC hybride** : envoi principal via Graph API (pour contrôle du template) + BCC vers l'adresse Smart Email Pipedrive unique du consultant (pour tracking natif + timeline deal). Env var `PIPEDRIVE_BCC_<CONSULTANT>` par consultant.
-
-**Cutoff déploiement prod** : aucun `func azure functionapp publish` tant que Paul n'a pas validé la base de leads livrée par Constantin avec Claude lors d'une session dédiée. Le code reste prêt sur `main` en attendant.
-
-### 1.8 Dépendances externes à ne pas casser
-
-Certains IDs Pipedrive sont **hardcodés** dans `shared/pipedrive.js` parce qu'ils sont stables tant que les ressources correspondantes ne sont pas recréées. Si tu supprimes et recrées un des éléments ci-dessous, il faut resynchroniser.
-
-**IDs d'options des enum fields** (dans `shared/pipedrive.js`) :
-- `AGENT_SENDER_OPTION_ID` : `martin = 378`, `mila = 379`
-- `LAST_AGENT_ATTEMPTED_OPTION_ID` : `martin = 380`, `mila = 381`
-
-**Keys de custom fields Pipedrive** (en env var, mais recréer = régénérer le hash) :
-- `PIPEDRIVE_FIELD_AGENT_SENDER` (deal)
-- `PIPEDRIVE_FIELD_LAST_AGENT_ATTEMPTED` (deal)
-- `PIPEDRIVE_FIELD_OPT_OUT_UNTIL` (deal)
-- `PIPEDRIVE_FIELD_RETRY_AVAILABLE_AFTER` (deal)
-- `PIPEDRIVE_PERSON_FIELD_EMAIL_BOUNCED_AT` (person)
-
-**IDs de stages** (en env var) :
-- `PIPEDRIVE_PIPELINE_ID=28` — pipe "Prospérenne — Prospection automatisée"
-- `PIPEDRIVE_STAGE_NEW=251` à `PIPEDRIVE_STAGE_CLOSED_SILENCE=258`
-
-**Procédure de resynchro** si recréation :
-1. `GET /v1/pipelines` pour retrouver l'ID du pipe et de ses stages.
-2. `GET /v1/dealFields` et `GET /v1/personFields` pour retrouver les `key` (hash) et les options.
-3. Mettre à jour les env vars Azure + `local.settings.json` + les constantes `AGENT_SENDER_OPTION_ID` / `LAST_AGENT_ATTEMPTED_OPTION_ID` dans `shared/pipedrive.js`.
-
-### 1.9 Architecture scalable à planifier (Tranche 8 — avant commercialisation)
-
-Le projet va évoluer :
-- Groupe Pérenne (ex-OSEYS) va créer PérennIA comme entité/filiale pour exploiter une gamme d'agents IA
-- Prospérenne sera la première offre commerciale (prospection via David/Martin/Mila)
-- Prochaines offres prévues : Responsable Technique (branché PilotagePro), Community Manager, Créateur de sites, Contrôleur de gestion, Assistante de direction
-- Deux versions de David prévues : une "interne Groupe Pérenne" dédiée aux consultants OSEYS, une "Prospérenne" exploitée à grande échelle pour des clients externes
-
-Implications pour l'architecture :
-- Introduire une notion de tenant (`/tenants/<slug>/`) séparée du code template des agents
-- Externaliser les règles métier (ICP, cible, ton, règles) en config JSON par tenant, plus jamais hardcoder dans les prompts
-- Préparer des adapters pour les intégrations externes (CRM, mail, calendar) afin de pouvoir swap Pipedrive ↔ HubSpot, Graph ↔ autre provider, etc.
-
-Cette refacto ne bloque pas le pilote interne mais doit être faite avant commercialisation Prospérenne. À traiter après validation base de leads + pilote Morgane/Johnny.
-
-### Cœur de cible OSEYS — critère qualitatif #1
-
-Les entreprises qui **vendent des heures** : agences, cabinets, ESN, bureaux d'études, services B2B, artisans avec salariés. 5 à 75 salariés, sweet spot 10-20. Problèmes communs : croissance plafonnée par les heures d'équipe, pricing sous-évalué, zéro prospection active. Ce critère pilote le ciblage des leads et la qualification des briefs consultant.
+**Le métier** : pilotage économique. Lecture continue des chiffres et arbitrages structurants. Pas conseil ponctuel, pas auditeur, pas coach — **copilote**. Cf. note VP Paul.
 
 ---
 
-## 2. État actuel (push du 17 avril 2026, commit `d03fbae`)
+## 2. Proposition de valeur OSEYS — socle directeur
 
-### Ce qui est dans le repo
+La doctrine humaine de la VP OSEYS est dans **`agents/david/value-proposition.md`** (lue par les humains et par les LLMs en référence). Le module programmatique injecté dans le system prompt Sonnet est `shared/oseys-vp/index.js`.
 
-43 fichiers organisés en 4 dossiers (`agents/`, `shared/`, `functions/`, `forms/`) + la doc (`README.md`, `ARCHITECTURE.md`, `DEPLOY.md`, `.env.example`).
+**Synthèse opérationnelle** (à connaître pour coder juste sur les prompts agents) :
 
-**Lis dans cet ordre avant d'agir :**
-1. `README.md` — vue d'ensemble
-2. `ARCHITECTURE.md` — flow complet, responsabilités de chaque agent
-3. `DEPLOY.md` — procédure Azure pas à pas
-4. `.env.example` — toutes les variables d'environnement attendues
+- **Baseline** : « Vos décisions méritent un allié. »
+- **Mot juste** : copilote (pas conseil, pas auditeur, pas coach)
+- **5 angles d'entrée** par signal observable : Croissance / Stagnation / Transmission / Mutation sectorielle / Pas de signal
+- **Modulation DISC** (D/I/S/C) calibre le ton, pas le fond
+- **2 offres** au choix consultant : `lead` (transmis au consultant) ou `rdv-cale` (Bookings direct)
+- **Vouvoiement strict** universel (override le tutoiement éventuel du brief)
+- **Démarche commerciale qui n'en est pas une** : curiosité humaine, observation détournée, VP en sous-texte, pas pitch frontal
+- **Pas de mode fantôme** : commerciaux opèrent depuis leur propre adresse, jamais usurpation boîte consultant ou client
 
-### Ce qui est déjà déployé sur Azure
+**11 règles d'honneur** (cf. `REGLES_HONNEUR` dans `shared/oseys-vp/index.js`) :
+1. Pas d'invention (chiffres, cas clients, références non sourçables)
+2. Pas de promesse (délai, résultat, taux)
+3. Pas de chiffrage tarifaire (apanage exclusif consultant en séance)
+4. Pas de mention IA / automatisation côté prospect
+5. Pas d'usurpation identité consultant
+6. Vouvoiement strict
+7. Pas de présomption d'incompétence (« à l'instinct qu'aux chiffres » → BANNI)
+8. Démarche commerciale masquée (curiosité, pas pitch)
+9. Pas de demande RDV/créneau en J0
+10. Pas de formulation template ("consultant qui copilote des dirigeants TPE/PME...")
+11. Formule de politesse obligatoire avant signature
 
-- **Function App** : `oseys-mail-sender` (Node 22, France Central, plan Consumption)
-  - **URL de base** : `https://oseys-mail-sender-c8cveseah3g8a9gs.francecentral-01.azurewebsites.net`
-- **Function déjà live et testée** : `sendMail` (envoie via Graph API, testée avec succès vers constantin.picoron@gmail.com lors d'une session précédente)
-- **App registration Azure AD** : `OSEYS-ProspectionAgent`
-  - Tenant ID : `70f9e20f-964f-4925-8dc2-b72d62384629`
-  - Permission `Mail.Send` de type **Application** accordée + consentement admin donné
-- **Storage account** attaché au Function App (requis pour la queue — vérifier qu'il existe, sinon en créer un)
-
-### Ce qui N'EST PAS encore déployé
-
-- Les 7 autres functions (`sendOnboarding`, `choixNiveau`, `onQualification`, `runSequence`, `trackOpen`, `scheduler`, `davidInbox`) — leur code est dans le repo mais pas encore publié sur Azure
-- La queue Azure Storage `mila-relances` (sera créée automatiquement au premier appel à `shared/queue.js` via `ensureQueue()`)
-- La permission `Mail.Read` sur l'app registration (nécessaire pour `davidInbox`) — À AJOUTER
-
-### Ce qui reste à configurer hors-code
-
-- Les 3 custom fields Pipedrive (voir section 8.2)
-- GitHub Pages pour héberger le formulaire publiquement (voir section 8.3)
-- Le warm-up des boîtes Martin et Mila (2-3 semaines avant volume)
+**Anti-patterns vocabulaire BANNIS** : « solution clé en main », « méthode propriétaire », « ROI garanti », « disruption », « scale-up », promesses chiffrées (+30% CA, ROI 6 mois), tirets cadratin `—` et `–` (signatures stylistiques LLM).
 
 ---
 
-## 3. Setup de l'environnement local
+## 3. Cadence de prospection
 
-Prérequis macOS (Paul travaille sur Mac) :
+**3 touches sur 28 jours ouvrés** (refonte 1er mai 2026, espacement validé Paul) :
+- **J0** : ouverture (présentation démarche, observation signal, question ouverte, pas de RDV demandé)
+- **J+14** : relance avec angle complémentaire (proof point Coface, observation métier)
+- **J+28** : rupture polie (fermeture respectueuse, porte ouverte)
+
+**Jours ouvrés français uniquement** (samedi, dimanche, jours fériés exclus). **Créneau d'envoi** : 9h-11h Paris (`WEBSITE_TIME_ZONE=Romance Standard Time`).
+
+**Bascule d'agent sur silence** : si lead silencieux après 28j ouvrés → `retry_available_after = today + 180j` + `last_agent_attempted` posé. Future campagne → l'autre agent prend le relais.
+
+**Opt-out permanent** sur réponse négative : `opt_out_until = 9999-12-31` sur tous deals (sticky inter-agents).
+
+**Classification réponses (6 classes)** : `positive` / `question` / `neutre` / `negative` / `out_of_office` / `bounce`. Confidence < 0.7 → escalation `direction@oseys.fr` avec contexte + 2-3 propositions + reco.
+
+---
+
+## 4. Architecture technique — invariants
+
+### 4.1 Quatre invariants non négociables
+
+1. **Un agent = template + config tenant** : pas de code dupliqué entre instances (David / Alicia futur partagent le template `manager-commercial`)
+2. **Règles métier en config externalisée** : pas de règle hardcodée dans un prompt
+3. **Intégrations externes derrière adapters** : CRM, mail, calendar, base de leads → swap Pipedrive ↔ HubSpot, Graph ↔ autre
+4. **Credentials jamais en clair** : Azure Key Vault + Managed Identity, `local.settings.json` gitignored
+
+### 4.2 Architecture VP en 3 couches (refonte 1er mai 2026)
+
+Le system prompt Sonnet 4.6 reçoit 3 couches injectées :
+
+1. **Socle OSEYS commun** (`shared/oseys-vp/index.js`) — IDENTITY, BASELINE, FORMULATIONS, ANGLES_ENTREE, MODULATION_DISC, ANTI_PATTERNS_VOCABULAIRE, REGLES_HONNEUR (×11), VERBATIMS_DIRIGEANTS, OFFER_TYPES, POSITIONNEMENT_ETHIQUE
+2. **Brief consultant** (`buildConsultantMemory` dans `onQualification.js`) — offre, ton, prospecteur, secteurs, effectif, zone, **offre_choisie** (`lead`/`rdv-cale`), **mise_en_copie_consultant**, **cible_specifique**, **methode_consultant**, **anecdotes_anonymisees**
+3. **Profil prospect** (calculé enrichissement) — `companyProfile` + `decisionMakerProfile` + DISC inféré + signal observable → angle d'entrée + modulation ton + proof points
+
+### 4.3 Module `shared/safe-log.js` (BL-45 transverse)
+
+`makeSafeLogger(context)` wrappe `context.log/info/warn/error` avec try/catch + fallback `console.*`. Résout BL-45 (`#privateField` Azure Functions v4 `InvocationContext.log` perdu au `.bind()` entre invocations). Utilisé par les 13 fonctions FA + module Mem0 adapter. **Toujours utiliser `safeLog` dans tout nouveau handler**.
+
+### 4.4 Police emails
+
+**Aptos 12pt** (Microsoft Aptos par défaut Outlook 365, fallback Calibri puis Arial). Cohérent côté `worker.js renderEmailHtml`, `orchestrator.js wrapHtml`, 3 `identity.json` (martin/mila/david), `templates.js`. **Ne pas mélanger avec la charte web** (Syne titres + DM Sans body sur `oseys.fr` et formulaire HTML).
+
+### 4.5 Multi-mailbox poll davidInbox
+
+Depuis 1er mai 2026, `agents/david/orchestrator.js handleInboxPoll` itère sur `[MARTIN_EMAIL, MILA_EMAIL, DAVID_EMAIL]`. Les réponses prospects arrivent dans la boîte du commercial (Martin ou Mila), pas chez David. David garde sa boîte pour messages consultants directs et escalations.
+
+### 4.6 Auto-linkify URLs dans messages
+
+`shared/worker.js linkify(s)` transforme `oseys.fr` (et sous-pages) en `<a href="https://oseys.fr/dirigeant" style="color:#F39561;...">oseys.fr</a>` — texte court affiché, URL pleine en href.
+
+---
+
+## 5. Infrastructure Azure actuelle
+
+### 5.1 Function Apps prod
+
+- **`pereneo-mail-sender`** (Linux Consumption Node 22, France Central, RG `oseys-prospection-rg`) — 13 fonctions David :
+  `sendMail`, `sendOnboarding`, `choixNiveau`, `onQualification`, `runSequence`, `trackOpen`, `scheduler`, `davidInbox`, `avatarProxy`, `dailyReport`, `dailyDigest`, `patternsLearner`, `runLeadSelectorForConsultant`
+  - URL : `https://pereneo-mail-sender.azurewebsites.net`
+- **`pereneo-charli-aggregator`** — Niveau 2 mémoire continue Charli (Phase A+B+C livrées 30/04). Queue `charli-events` consommée → MCP Container App → `user_id=charli` Mem0
+- **`oseys-mail-sender`** (legacy) — désactivé fonctionnellement, conservé pour archives
+
+### 5.2 Container Apps
+
+- **`mem0-mcp-charli`** (RG `pereneo-charli-mcp`) — fork `GroupePerenne/mem0-mcp-pereneo`, image v5 (commit `2b22725`), patch BL-47 conformité spec MCP §3 (404 sur transport perdu cold start)
+
+### 5.3 Storage Tables
+
+- `dailyMetrics` (alimentée par dailyDigest) — métriques par consultant et par jour
+- `LeadContacts` (alimentée par lead-exhauster) — emails résolus + feedback
+- `LeadBase` (12.8M entreprises Constantin)
+- Queue Azure Storage `mila-relances` (séquences différées)
+- Queue Azure Storage `charli-events` (Niveau 2 aggregator)
+
+### 5.4 Apps Entra v2
+
+- **`OSEYS-ProspectionAgent`** (Tenant `70f9e20f-964f-4925-8dc2-b72d62384629`) — permissions Application : `Mail.Send`, `Mail.Read`, `User.Read.All` (admin consent accordé)
+- **`Pereneo-Charli-MCP-Server`** (Container App auth) — permissions `mcp.access`
+- **`Pereneo-Charli-Wrapper-CLI`** (Niveau 1 Charli machine Paul) — Bearer Entra v2 client_credentials
+
+### 5.5 Pipedrive
+
+- Pipeline `28` (« Prospérenne — Prospection automatisée »), 8 stages `PIPEDRIVE_STAGE_NEW=251` à `PIPEDRIVE_STAGE_CLOSED_SILENCE=258`
+- Custom fields deal : `agent_sender`, `last_agent_attempted`, `opt_out_until`, `retry_available_after`. Person field : `email_bounced_at`
+- IDs hardcodés dans `shared/pipedrive.js` : `AGENT_SENDER_OPTION_ID = {martin:378, mila:379}`, `LAST_AGENT_ATTEMPTED_OPTION_ID = {martin:380, mila:381}`
+- Smart BCC partagé : `oseys@pipedrivemail.com` (configuré sur `PIPEDRIVE_BCC_MORGANE/JOHNNY`). Les 2 commerciaux `martin@oseys.fr`/`mila@oseys.fr` doivent être dans « Adresses autorisées » Pipedrive
+- Pipedrive user_id : Morgane = `25153135`, Johnny = `23354822`
+
+### 5.6 Anthropic
+
+- API key valide configurée en App Settings `pereneo-mail-sender` (clé du compte Anthropic Pereneo, propagée du legacy `oseys-mail-sender` 1er mai PM, BL-51 résolu)
+- Modèle Sonnet 4.6 (`claude-sonnet-4-6`) pour génération séquence + classification réponses
+- Modèle Haiku 4.5 (`claude-haiku-4-5-20251001`) pour extraction company profile
+
+### 5.7 Flags d'activation pilote
+
+- `DAILY_REPORT_ENABLED=1` (activé 1er mai 18:23 CEST) — David envoie débrief 8h matin lun-ven aux consultants + dailyDigest 00h vers `user_id=charli`
+- `LEAD_SELECTOR_DISABLED` non défini = lead selector actif (déclenché fire-and-forget après chaque formulaire consultant)
+- `DROPCONTACT_ENABLED` cf. App Settings — cascade exhauster
+
+---
+
+## 6. Setup local
 
 ```bash
-# Vérifie les versions
-node -v    # doit être ≥ 20
-npm -v
-
-# Azure Functions Core Tools (si absent)
-brew tap azure/functions
-brew install azure-functions-core-tools@4
-
-# Azure CLI (pour récupérer les secrets existants)
-brew install azure-cli
+# Prérequis macOS
+node -v    # ≥ 22
+brew install azure-functions-core-tools@4 azure-cli jq
 az login --tenant 70f9e20f-964f-4925-8dc2-b72d62384629
-```
 
-Installation des deps du projet :
-
-```bash
-cd ~/Downloads/Pereneo_agents
+# Repo
+cd ~/Documents/Professionnel/GROUPE\ PERENNE/Pereneo_agents
 npm install
-```
 
----
+# Récupérer les secrets (en var shell, jamais en sortie clear)
+KEY=$(az functionapp config appsettings list --name pereneo-mail-sender --resource-group oseys-prospection-rg --query "[?name=='ANTHROPIC_API_KEY'].value" -o tsv)
 
-## 4. Récupération des secrets (NE JAMAIS LES COMMITTER)
-
-Les secrets existent déjà côté Azure — on les lit, on ne les recrée pas.
-
-### 4.1 Depuis le Function App existant
-
-```bash
-# Liste les variables d'env déjà configurées sur oseys-mail-sender
-az functionapp config appsettings list \
-  --name oseys-mail-sender \
-  --resource-group oseys-prospection-rg \
-  --query "[].{name:name, value:value}" \
-  -o table
-```
-
-Tu devrais voir au minimum : `TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`, `FROM_EMAIL`, `AzureWebJobsStorage`.
-
-### 4.2 Secrets à ajouter
-
-Si ces clés ne sont pas encore dans le Function App, il faut les ajouter :
-
-| Clé | Où la trouver |
-|-----|---------------|
-| `DAVID_EMAIL` | `david@oseys.fr` (statique) |
-| `MARTIN_EMAIL` | `martin@oseys.fr` (statique) |
-| `MILA_EMAIL` | `mila@oseys.fr` (statique) |
-| `ADMIN_EMAIL` | `paul.rudler@oseys.fr` (statique) |
-| `PIPEDRIVE_TOKEN` | Pipedrive > Personal Preferences > API (compte David) |
-| `PIPEDRIVE_COMPANY_DOMAIN` | `oseys` (statique) |
-| `PIPEDRIVE_STAGE_NEW/CONTACTED/REPLIED/CLOSED_LOST` | Créer le pipeline "OSEYS Prospection" dans Pipedrive, relever les IDs |
-| `ANTHROPIC_API_KEY` | console.anthropic.com — créer une clé dédiée à ce projet si elle n'existe pas |
-| `QUEUE_NAME_RELANCES` | `mila-relances` (statique) |
-| `PUBLIC_FORMS_BASE_URL` | `https://groupeperenne.github.io/Pereneo_agents/forms` (une fois GitHub Pages activé) |
-| `FUNCTION_APP_HOST` | `oseys-mail-sender-c8cveseah3g8a9gs.francecentral-01.azurewebsites.net` |
-| `CHOIXNIVEAU_FUNC_CODE` | Sera généré après le 1er déploiement de `choixNiveau` |
-
-### 4.3 Fichier local `local.settings.json` (pour `func start`)
-
-À créer à la racine du repo, **gitignored** :
-
-```json
-{
-  "IsEncrypted": false,
-  "Values": {
-    "FUNCTIONS_WORKER_RUNTIME": "node",
-    "AzureWebJobsStorage": "<connection string du storage>",
-    "TENANT_ID": "70f9e20f-964f-4925-8dc2-b72d62384629",
-    "CLIENT_ID": "<de l'env Azure>",
-    "CLIENT_SECRET": "<de l'env Azure>",
-    "DAVID_EMAIL": "david@oseys.fr",
-    "MARTIN_EMAIL": "martin@oseys.fr",
-    "MILA_EMAIL": "mila@oseys.fr",
-    "ADMIN_EMAIL": "paul.rudler@oseys.fr",
-    "PIPEDRIVE_TOKEN": "<à demander à Paul ou lire depuis Azure>",
-    "PIPEDRIVE_COMPANY_DOMAIN": "oseys",
-    "ANTHROPIC_API_KEY": "<clé dédiée>",
-    "QUEUE_NAME_RELANCES": "mila-relances",
-    "FUNCTION_APP_HOST": "oseys-mail-sender-c8cveseah3g8a9gs.francecentral-01.azurewebsites.net"
-  },
-  "Host": {
-    "CORS": "*"
-  }
-}
-```
-
-Commande Azure CLI pratique pour générer ce fichier automatiquement :
-
-```bash
-func azure functionapp fetch-app-settings oseys-mail-sender
-```
-
----
-
-## 5. Phase 1 — Audit et validation (AUCUN DÉPLOIEMENT)
-
-Ordre strict. Chaque étape doit passer avant la suivante.
-
-### 5.1 Validation syntaxique de tous les modules JS
-
-```bash
-# Tous les .js du projet doivent parser sans erreur
-for f in shared/*.js agents/*/*.js functions/*/index.js; do
-  node --check "$f" && echo "OK  $f" || echo "FAIL $f"
-done
-```
-
-Attendu : 19 fichiers `OK`, 0 `FAIL`.
-
-### 5.2 Résolution des imports
-
-```bash
-# Avec les deps installées, chaque module doit se charger
-node -e "
-const files = [
-  'shared/graph-mail.js','shared/pipedrive.js','shared/anthropic.js',
-  'shared/sequence.js','shared/queue.js','shared/templates.js','shared/worker.js',
-  'agents/david/orchestrator.js','agents/david/onboarding.js',
-  'agents/martin/worker.js','agents/mila/worker.js',
-  'functions/sendMail/index.js','functions/sendOnboarding/index.js',
-  'functions/choixNiveau/index.js','functions/onQualification/index.js',
-  'functions/runSequence/index.js','functions/trackOpen/index.js',
-  'functions/scheduler/index.js','functions/davidInbox/index.js'
-];
-for (const f of files) {
-  try { require('./' + f); console.log('OK  ' + f); }
-  catch(e) { console.log('FAIL ' + f + ' — ' + e.message.split(String.fromCharCode(10))[0]); }
-}
-"
-```
-
-### 5.3 Validation des JSON
-
-```bash
-for f in agents/*/identity.json functions/*/function.json host.json package.json; do
-  jq empty "$f" 2>/dev/null && echo "OK  $f" || echo "FAIL $f"
-done
-```
-
-### 5.4 Vérification cohérence identités / prompts
-
-```bash
-# Les avatar_url dans identity.json doivent pointer vers les fichiers existants du repo
-node -e "
-const fs = require('fs');
-['david','martin','mila'].forEach(a => {
-  const id = JSON.parse(fs.readFileSync('agents/'+a+'/identity.json','utf8'));
-  const local = id.avatar_path;
-  const ok = fs.existsSync(local);
-  console.log((ok?'OK  ':'FAIL')+' '+a+' → '+local);
-});
-"
-```
-
----
-
-## 6. Phase 2 — Test local
-
-### 6.1 Lancer la Function App en local
-
-```bash
+# Run local
 func start
 ```
 
-Les 8 endpoints doivent monter sans erreur :
-
-```
-Http Functions:
-  choixNiveau:       http://localhost:7071/api/choixNiveau
-  davidInbox:        (timer, pas d'URL)
-  onQualification:   http://localhost:7071/api/onQualification
-  runSequence:       http://localhost:7071/api/runSequence
-  scheduler:         (timer, pas d'URL)
-  sendMail:          http://localhost:7071/api/sendMail
-  sendOnboarding:    http://localhost:7071/api/sendOnboarding
-  trackOpen:         http://localhost:7071/api/trackOpen
-```
-
-### 6.2 Tests curl en local (avant déploiement prod)
-
-**Test 1 — pixel de tracking** (inoffensif, ne touche pas Pipedrive si pas de deal/person) :
-
+**`local.settings.json`** : à fetcher depuis Azure (gitignored, jamais commité) :
 ```bash
-curl -v "http://localhost:7071/api/trackOpen?agent=martin&day=J0" > /tmp/pixel.gif
-file /tmp/pixel.gif   # doit dire "GIF image data"
+func azure functionapp fetch-app-settings pereneo-mail-sender
 ```
-
-**Test 2 — sendMail vers une adresse test** :
-
-```bash
-curl -X POST http://localhost:7071/api/sendMail \
-  -H "Content-Type: application/json" \
-  -d '{
-    "from":"david@oseys.fr",
-    "to":"paul.rudler@oseys.fr",
-    "subject":"Test local",
-    "html":"<p>Ceci est un test depuis func start local. Ignore.</p>"
-  }'
-```
-
-Attendu : `{"success":true,...}` et un mail arrive dans la boîte de Paul.
-
-**Test 3 — onQualification avec un brief minimal** :
-
-```bash
-curl -X POST http://localhost:7071/api/onQualification \
-  -H "Content-Type: application/json" \
-  -d '{
-    "nom":"Paul Rudler",
-    "email":"paul.rudler@oseys.fr",
-    "entreprise":"OSEYS GROUPE",
-    "offre":"Test depuis func start local",
-    "prospecteur":"both",
-    "secteurs":"conseil",
-    "registre":"direct_cordial",
-    "vouvoiement":"tu"
-  }'
-```
-
-Attendu : deux mails arrivent chez Paul (un notif David, un accusé).
-
-**Test 4 — sendOnboarding (end-to-end)** :
-
-```bash
-curl -X POST http://localhost:7071/api/sendOnboarding \
-  -H "Content-Type: application/json" \
-  -d '{"prenom":"Paul","nom":"Rudler","email":"paul.rudler@oseys.fr"}'
-```
-
-Attendu : mail d'onboarding avec les 3 boutons niveau + cartes Martin/Mila/both + lien formulaire. Cliquer sur un bouton doit ouvrir la page de confirmation et déclencher les 2 mails (accusé consultant + alerte admin).
-
-### 6.3 Test du formulaire en local
-
-```bash
-# Sert forms/ sur un port local
-npx serve forms -p 8080
-# Puis ouvre http://localhost:8080/formulaire-oseys.html?nom=Paul+Rudler&email=paul.rudler@oseys.fr&entreprise=OSEYS+GROUPE
-```
-
-Vérifie visuellement :
-- Les champs sont bien pré-remplis et surlignés orange
-- Le progress bar se met à jour
-- La soumission appelle bien `onQualification` (configure `SUBMIT_ENDPOINT` en dur vers localhost si besoin pour le test local)
 
 ---
 
-## 7. Phase 3 — Déploiement Azure
+## 7. Déploiement — doctrine BL-49
 
-### 7.1 Décision gate avant de publier
+**Linux Consumption + `WEBSITE_RUN_FROM_PACKAGE`** monte le ZIP en read-only, donc Oryx ne peut pas y écrire `node_modules` post-upload. Le ZIP doit donc contenir `node_modules` localement.
 
-**STOP** — avant tout `func azure functionapp publish`, valide avec Paul :
-- Que les tests locaux ont tous passé
-- Que les variables d'env prod sont toutes en place
-- Qu'il est conscient qu'on va remplacer le code actuel de `sendMail` (qui tourne déjà en prod)
-
-### 7.2 Publication
-
+**Doctrine deploy** :
 ```bash
-# Option A — publication standard (remplace tout le code)
-func azure functionapp publish oseys-mail-sender --javascript
+# 1. Installer deps locales
+npm install --omit=dev
 
-# Option B — publication sans build (si les deps sont dans node_modules local)
-func azure functionapp publish oseys-mail-sender --javascript --nozip
+# 2. Vérifier que .funcignore N'EXCLUT PAS node_modules
+cat .funcignore | grep -v "^#" | grep node_modules
+# (doit être vide ou commenté)
+
+# 3. Deploy en heures creuses (≥21h Paris ou weekend)
+func azure functionapp publish pereneo-mail-sender --javascript --no-build
 ```
 
-### 7.3 Vérification post-déploiement
+**Smoke post-deploy obligatoire** :
+- 4 endpoints : `trackOpen` GET (200 + GIF) / `sendMail` POST (401 sans key) / `onQualification` OPTIONS (204) / `avatarProxy` GET (200 + JPEG)
+- Application Insights : 0 exception sur 5-10 min post-deploy
 
-```bash
-# Liste des fonctions déployées (doit en montrer 8)
-az functionapp function list \
-  --name oseys-mail-sender \
-  --resource-group oseys-prospection-rg \
-  --query "[].name" -o tsv
-
-# Récupère le code de la fonction choixNiveau pour construire l'URL
-az functionapp function keys list \
-  --name oseys-mail-sender \
-  --resource-group oseys-prospection-rg \
-  --function-name choixNiveau
-```
-
-### 7.4 Smoke tests en prod
-
-Reprends les curl de la 6.2 en remplaçant `http://localhost:7071` par `https://oseys-mail-sender-c8cveseah3g8a9gs.francecentral-01.azurewebsites.net` et en ajoutant `?code=<function_key>` pour les endpoints protégés.
+**Si régression** : vérifier d'abord le contenu du ZIP via `WEBSITE_RUN_FROM_PACKAGE` URL avant fix-forward (cf. mémoire BL-49 résolution 1er mai 2026).
 
 ---
 
-## 8. Configurations hors-code à finaliser
+## 8. Conventions de code
 
-### 8.1 Permission `Mail.Read` sur l'app Azure AD
-
-Sans ça, `davidInbox` ne pourra pas lire la boîte de David.
-
-```bash
-# Via Azure CLI (à tester, sinon via portail)
-az ad app permission add \
-  --id <CLIENT_ID de l'app OSEYS-ProspectionAgent> \
-  --api 00000003-0000-0000-c000-000000000000 \
-  --api-permissions 810c84a8-4a9e-49e6-bf7d-12d183f40d01=Role
-
-# Puis consentement admin
-az ad app permission admin-consent --id <CLIENT_ID>
-```
-
-Ou via portail : Azure AD > App registrations > OSEYS-ProspectionAgent > API permissions > Add > Microsoft Graph > Application permissions > `Mail.Read` > Grant admin consent.
-
-### 8.2 Pipeline et custom fields Pipedrive
-
-Créer dans Pipedrive (via l'UI web, côté Paul si tu n'as pas les droits admin) :
-
-**Pipeline** : "OSEYS Prospection" avec 4 stages :
-
-| Ordre | Nom | Variable env |
-|-------|-----|--------------|
-| 1 | Nouveau | `PIPEDRIVE_STAGE_NEW` |
-| 2 | Contacté | `PIPEDRIVE_STAGE_CONTACTED` |
-| 3 | A répondu | `PIPEDRIVE_STAGE_REPLIED` |
-| 4 | Fermé — pas de suite | `PIPEDRIVE_STAGE_CLOSED_LOST` |
-
-**Custom fields sur Deal** :
-- `agent_sender` (type : Single option) — options : `martin`, `mila`, `both`
-- `consultant_nom` (type : Text) — qui est le consultant propriétaire de ce lead
-
-Noter les IDs retournés par l'API Pipedrive (`GET /v1/dealFields`) et les reporter dans `shared/pipedrive.js` ligne 106 (actuellement `agent_sender` en placeholder).
-
-### 8.3 Activation de GitHub Pages
-
-Dans Settings du repo > Pages :
-- Source : `Deploy from a branch`
-- Branch : `main` / `(root)` ou `/forms`
-
-URL résultante : `https://groupeperenne.github.io/Pereneo_agents/forms/formulaire-oseys.html`
-
-Mettre à jour `PUBLIC_FORMS_BASE_URL` dans les env Azure une fois l'URL live.
-
-### 8.4 Warm-up des boîtes Martin et Mila
-
-Avant d'envoyer du volume (>10 mails/jour/boîte) aux prospects froids :
-- Envoyer pendant 2 semaines des mails "internes" chaleureux (vers comptes OSEYS)
-- Recevoir des réponses (important — le ratio envoyé/reçu compte pour les algos anti-spam)
-- Augmenter progressivement le volume
-- Vérifier SPF/DKIM/DMARC sur `oseys.fr` (normalement OK vu que c'est un tenant Microsoft 365 géré)
+- **Programming model Azure Functions v4** (`@azure/functions ^4.5.0`)
+- `app.http(...)`, `app.timer(...)` — pas de `function.json`
+- Main entry : `src/index.js` qui require les 13 handlers explicitement
+- `package.json` `"main": "src/index.js"` simple, pas de glob
+- Style : async/await, pas de `.then()` chaining
+- Logs : `safeLog(context)` (`shared/safe-log.js`), pas `context.log` direct (BL-45 doctrine)
+- Naming : camelCase fonctions/vars, kebab-case fichiers, PascalCase classes
+- Tests TDD via `node:test` natif : `npm test` lance `node --test 'tests/**/*.test.js'`
+- 747+ tests TDD verts en local (au 1er mai 2026)
 
 ---
 
-## 9. Pièges connus / lessons learned
+## 9. Pipedrive dépendances à ne pas casser
 
-### 9.1 Azure Function App sans Storage
-L'actuel `oseys-mail-sender` a eu des problèmes pendant une session précédente parce que créé initialement sans Storage Account. Si tu recrées une Function App, **toujours** l'associer à un Storage Account dès la création, sinon le runtime ne trouve pas le code déployé.
-
-### 9.2 Kudu VFS vs Azure Files
-Sur Windows Consumption plan, déposer des fichiers via Kudu VFS (`/api/vfs/site/wwwroot/...`) ne les rend PAS visibles au runtime Functions, qui lit depuis le share Azure Files. Toujours passer par `func azure functionapp publish` ou par un ZIP deploy propre.
-
-### 9.3 Permission Application vs Delegated pour Mail.Send
-Le code utilise le flow `client_credentials` → il lui faut `Mail.Send` de type **Application**. Si quelqu'un a accordé uniquement la version **Delegated**, l'envoi plantera en 403 `Access denied`. Vérifier dans portail Azure AD > App > API permissions > type doit dire "Application".
-
-### 9.4 Shared mailbox et envoi via Graph
-Microsoft autorise l'envoi depuis une shared mailbox via Graph `POST /users/{id}/sendMail` dès lors que l'app a `Mail.Send` en Application scope. Pas besoin de licence sur la shared mailbox si elle ne dépasse pas 50 Go.
-
-### 9.5 Pipedrive custom fields
-Quand tu crées un custom field via l'API, son "key" est un hash unique (ex : `a1b2c3...`) — pas le nom humain. Ce hash doit être utilisé dans les appels `createDeal`. Récupère-le via `GET /v1/dealFields` une fois le field créé, et mets à jour `shared/pipedrive.js` (ligne ~106).
-
-### 9.6 Les réponses aux prospects arrivent chez David
-Volontaire : `replyTo: process.env.DAVID_EMAIL` dans `shared/worker.js`. Ne pas changer ça — c'est ce qui permet à David de faire son boulot d'orchestrateur.
-
-### 9.7 Le pixel de tracking et les images bloquées
-Beaucoup de clients mail bloquent les images par défaut. Le tracking d'ouverture est donc **une métrique indicative, pas fiable**. La métrique qui compte vraiment : taux de réponse. Ne pas sur-investir dans l'analytics d'ouverture.
+Les IDs Pipedrive sont **stables** tant que les ressources ne sont pas recréées. Si recréation : resynchro via :
+1. `GET /v1/pipelines` (IDs pipe + stages)
+2. `GET /v1/dealFields` + `GET /v1/personFields` (keys hash + options)
+3. Update env vars Azure + `local.settings.json` + constantes `shared/pipedrive.js` lignes ~138-140
 
 ---
 
-## 10. DON'Ts (choses à ne JAMAIS faire sans validation explicite de Paul)
+## 10. Backlog — état au 1er mai 2026 PM
 
-- **Ne jamais committer de secrets** (`PIPEDRIVE_TOKEN`, `CLIENT_SECRET`, `ANTHROPIC_API_KEY`) — utiliser les variables d'env Azure uniquement
-- **Ne jamais supprimer la Function App `oseys-mail-sender`** (la fonction `sendMail` existante y tourne déjà — on l'écrase, on ne la supprime pas)
-- **Ne jamais envoyer en volume à des prospects sans warm-up** (risque de blacklist `oseys.fr` sur les listes anti-spam)
-- **Ne jamais modifier le fichier `CLAUDE.md`** (celui-ci) sans expliquer pourquoi à Paul — c'est la source de vérité du projet
-- **Ne jamais faire de `git push --force` sur `main`** sans avoir validé
-- **Ne jamais ajouter une dépendance lourde** (framework, ORM, etc.) sans discussion — on vise une stack minimale
-- **Ne jamais générer les photos d'agents** via AI — les 3 avatars actuels ont été choisis spécifiquement par Paul pour leur cohérence visuelle
-- **Ne jamais envoyer de mail à un vrai prospect depuis l'environnement de test local** — toujours utiliser `paul.rudler@oseys.fr` ou `constantin.picoron@gmail.com` pour les tests
+### Résolus 1er mai 2026
+
+- BL-31 (sécurité tokens Bearer transit clear) — résolu 30/04 PM
+- BL-43 (TTL Bearer 1h wrapper Charli MCP, refresh auto) — proxy 1.0.0 → 1.1.0
+- BL-45 (#privateField FA Linux Consumption) — refonte transverse `safe-log.js`
+- BL-47 (MCP session resilience cold start) — patch fork v0.6.4-pereneo.1, image v5
+- BL-48 (proxy auto-reinit sur 404 upstream) — proxy 1.1.0 stateful + sessionState.js
+- BL-49 (régression deploy `.funcignore` + `node_modules`) — doctrine `--no-build`
+- BL-51 (clé Anthropic invalide) — propagation legacy → pereneo-mail-sender
+- BL-50 — fermé "cosmétique" par Paul (credential leak terminal session)
+
+### Ouverts non urgents
+
+- **BL-04bis** (P3) : télémétrie Application Insights silencieuse — bloque diag stack si nouveau bug runtime
+- **BL-34** (P3) : PartitionKey LeadBase non standardisée — scan global, latence acceptable MVP
+- **BL-40** (P4) : helpers Pipedrive dupliqués entre `dailyReport` et `dailyDigest` — refacto Phase D
+- **BL-41** (P2) : escalations + bounces + opt_outs PAS trackés en table dédiée → absents du dailyDigest. **Visibilité dégradée pendant 1ère semaine pilote — à surveiller**
+- **BL-44** (P4) : branche `phase-b-charli-aggregator` mergée superseded — supprimée 1er mai PM ✅
+- **BL-46** (P3) : drift CLAUDE.md repo — résolu par cette refonte ✅
+
+### Chantiers stratégiques en attente
+
+- Refonte cascade `site-finder` (Sprint 3 Phase 3 inachevée — F3 site_web absent dégrade qualité enrichissement)
+- R&D Maillon 6 enrichissement décideur (LinkedIn provider à arbitrer Proxycurl/PhantomBuster/Apify)
+- David v2 — répondre aux mails consultants + curiosité comme trait + mémoire conversationnelle
+- Adapter CRM-agnostique (cohérent self-service Prospérenne, écarté Option C boîtes chez le client par Paul 1er mai)
+- Migration entité Prospérenne (Tranche 8)
+- Self-hosted Mem0 souverain (avant commercialisation Prospérenne)
+- Dashboard PWA Pereneo (brief v1 livré SharePoint, à attaquer post-stabilisation pilote)
 
 ---
 
-## 11. Style de communication avec Paul
+## 11. Sécurité
+
+### 11.1 Zéro credentials en clair
+
+- Jamais en code ou commit. `local.settings.json` gitignored
+- Secrets via `az functionapp config appsettings` ou KV reference
+- **Discipline R-CRED** : pour les diags `az ... list`, filtrer `--query` pour exclure `.value` des champs sensibles, ou charger en var shell + masquer en sortie. Patterns à masquer : `AccountKey=`, `?sv=...&sig=`, `Bearer XX...`, function keys, `ANTHROPIC_API_KEY`
+
+### 11.2 Confirmation humaine pour actions destructives
+
+Claude Code ne déploie pas en prod, ne supprime pas de données, ne push pas sur `main` sans **GO explicite Paul**. Règles :
+- `func azure functionapp publish` → GO préalable
+- `git push origin main` → GO préalable (préférer branche feature + PR)
+- Suppression données Pipedrive / Mem0 → GO + détail
+- `rm -rf` sur dossier avec fichiers → interdit sauf GO
+
+### 11.3 Protection pilote — destinataires humains
+
+En phase pilote, **paul.rudler@oseys.fr** (et constantin.picoron@oseys.fr depuis 1er mai PM) sont les seuls destinataires humains autorisés pour les **smokes techniques**. Les **vrais prospects** sont contactés depuis le formulaire consultant (Morgane/Johnny qui briefent → Lead Selector génère → envoi réel via le pipeline normal).
+
+---
+
+## 12. Style de communication avec Paul
 
 Paul préfère :
-- **Tutoiement** systématique
-- **Réponses courtes et directes** — pas de préambule, pas de "je vais faire X, puis Y, puis Z" qui répète la demande
-- **Résultats d'abord, contexte ensuite** — si une commande a échoué, dis-le en premier, explique la cause en second
-- **Aucun emoji** sauf si lui-même en utilise
-- **Pas de listes à puces quand une phrase suffit**
-- **Être proactif sur les risques** — si tu détectes un truc qui va casser en prod, dis-le AVANT de lancer la commande
-- **Honnêteté sur les limites** — si tu ne sais pas, dis-le. Paul préfère une réponse incertaine à une réponse inventée.
-
-Paul est fondateur, formé finance / business, à l'aise avec la technique mais pas développeur pro. Il comprend les enjeux d'archi, ne veut pas être noyé dans les détails d'impl sauf s'ils bloquent une décision.
-
----
-
-## 12. Plan de travail priorisé pour cette session
-
-### Priorité 1 — Validation (pas de déploiement)
-1. Setup env local (§3) et récup secrets (§4)
-2. Validation syntaxique + imports + JSON (§5.1, 5.2, 5.3)
-3. `func start` et vérif que les 8 endpoints montent (§6.1)
-4. Rapport d'audit à Paul
-
-### Priorité 2 — Tests locaux
-5. Smoke tests curl (§6.2) vers paul.rudler@oseys.fr uniquement
-6. Test formulaire local (§6.3)
-7. Si tout passe → validation de Paul avant déploiement
-
-### Priorité 3 — Déploiement
-8. `func azure functionapp publish oseys-mail-sender --javascript`
-9. Smoke tests en prod (§7.4)
-10. Config permissions manquantes (Mail.Read — §8.1)
-
-### Priorité 4 — Configurations externes
-11. Pipeline et custom fields Pipedrive (§8.2)
-12. Activation GitHub Pages (§8.3)
-13. Préparer le warm-up des boîtes Martin/Mila (§8.4)
-
-### Priorité 5 — Itération
-14. CI/CD GitHub Actions (voir README — "prochaines évolutions")
-15. Dashboard de performance
-16. Page web `/forms/choice.html` alternative au mail d'onboarding
+- **Tutoiement** systématique (entre lui et Charli/Claude — pas avec les prospects)
+- **Réponses courtes et directes**
+- **Résultats d'abord, contexte ensuite**
+- **Aucun emoji** sauf s'il en utilise
+- **Honnêteté sur les limites** — réponse incertaine > réponse inventée
+- **Force de proposition DG** : challenger ses idées sans complaire, avec arguments
+- **Pas de demande d'autorisation** pour lectures, runs, smoke tests, vérifications. **Autonomie totale** sur ces actions
+- **Pour les actions prod** (push commit main, deploy FA, modif scope projet) : grouper en bloc cohérent + demander GO bloc, pas atom par atom
 
 ---
 
 ## 13. Contacts et ressources
 
-- **Paul** : paul.rudler@oseys.fr, +33 (0) 6 06 43 98 07
-- **Compte de test consultant** : `constantin.picoron@gmail.com` (ne pas utiliser pour du vrai envoi commercial)
-- **Tenant Microsoft 365 OSEYS** : `70f9e20f-964f-4925-8dc2-b72d62384629`
+- **Paul Rudler** (Président) : `paul.rudler@oseys.fr`, +33 6 06 43 98 07
+- **Constantin Picoron** (DG, tech/data/PilotagePro) : `constantin.picoron@oseys.fr`
+- **Olivier Rudler** (DGA, animation réseau) : `olivier@oseys.fr`
+- **Adresse collégiale projet** : `direction@oseys.fr` (escalations, rapports)
+- **Tenant Microsoft 365** : `70f9e20f-964f-4925-8dc2-b72d62384629`
 - **Pipedrive domain** : `oseys.pipedrive.com`
-- **Anthropic console** : https://console.anthropic.com
-- **Portail Azure** : https://portal.azure.com (tenant OSEYS)
-- **Documentation Pipedrive API** : https://developers.pipedrive.com/docs/api/v1
-- **Documentation Microsoft Graph** : https://learn.microsoft.com/en-us/graph/api/user-sendmail
+- **Anthropic console** : https://console.anthropic.com (compte Pereneo+OSEYS)
+
+**Docs SharePoint** (`Direction OSEYS - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`) :
+- STRATEGY (vision business + pricing + roadmap)
+- MEMO (référentiel opérationnel single source of truth)
+- ARCHITECTURE (architecture technique détaillée)
+- CHARLI (mandat Charli DG)
+- OPERATIONS (collaboration Paul/Constantin/Claude/Charli)
+- CLAUDE_JOURNAL (R-J* + corollaires)
+- CLAUDE_CODE_SETUP (setup environnement Claude Code Paul + Charli mémoire continue)
+- BRIEF_DASHBOARD_PWA_PERENEO_v1 (chantier PWA à venir)
 
 ---
 
 ## 14. En cas de doute
 
-1. **Lire la section concernée de ce fichier ET l'ARCHITECTURE.md avant d'agir**
-2. **Ne pas deviner un secret ou une URL** — les récupérer depuis Azure
+1. **Lire la section concernée + les docs SharePoint référencées** avant d'agir
+2. **Ne pas deviner un secret ou une URL** — récupérer depuis Azure
 3. **Demander à Paul** plutôt que prendre une décision produit à sa place
-4. **Ne pas déployer** sans avoir passé les tests locaux
-5. **Logger abondamment** (context.log dans les Azure Functions) — Application Insights est activé
+4. **Ne pas déployer** sans GO Paul
+5. **Logger via `safeLog`** abondamment — Application Insights actif sur `pereneo-mail-sender`
+6. **Mémoriser dans `user_id=charli` Mem0** (via MCP `mem0-charli`) tout fait stable, décision Paul, ou apprentissage non dérivable du code/git
 
 ---
 
-_Dernière mise à jour : 17 avril 2026, commit d03fbae — rédigé par Claude (conversation projet avec Paul)._
+*Refondu 1er mai 2026 par Charli après lancement officiel pilote David. Drift 17 avril clos. Prochain palier majeur : post-stabilisation pilote (2-3 semaines retour Morgane/Johnny) ou attaque chantier Dashboard PWA selon priorisation Paul.*
