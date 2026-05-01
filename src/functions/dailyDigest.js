@@ -22,6 +22,7 @@ const { app } = require('@azure/functions');
 const { TableClient } = require('@azure/data-tables');
 const { reportToCharli } = require('../../shared/charli-reporter');
 const { parisDateParts } = require('../../shared/holidays');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 // ─── Helpers dates ─────────────────────────────────────────────────────────
 
@@ -233,8 +234,9 @@ function defaultDeps() {
 // ─── Handler core (testable) ───────────────────────────────────────────────
 
 async function handleDailyDigest(myTimer, context, deps = defaultDeps()) {
+  const log = makeSafeLogger(context);
   const yesterday = getYesterdayParisISO();
-  context.log(`dailyDigest tick for ${yesterday}`);
+  log(`dailyDigest tick for ${yesterday}`);
 
   const consultants = deps.consultants || [];
 
@@ -244,13 +246,13 @@ async function handleDailyDigest(myTimer, context, deps = defaultDeps()) {
     try {
       const userId = await deps.findPipedriveUserId(c.email);
       if (!userId) {
-        context.warn(`[dailyDigest] user Pipedrive non trouvé pour ${c.email}, skip`);
+        log.warn(`[dailyDigest] user Pipedrive non trouvé pour ${c.email}, skip`);
         continue;
       }
       const m = await deps.fetchConsultantMetrics(userId, yesterday);
       perConsultant.push({ consultant: c.prenom, ...m });
     } catch (err) {
-      context.warn(`[dailyDigest] metrics partial fail pour ${c.prenom}: ${err.message}`);
+      log.warn(`[dailyDigest] metrics partial fail pour ${c.prenom}: ${err.message}`);
     }
   }
 
@@ -259,13 +261,13 @@ async function handleDailyDigest(myTimer, context, deps = defaultDeps()) {
   try {
     writeRes = await deps.writeDailyMetricsToTable(perConsultant, yesterday, context);
   } catch (err) {
-    context.warn(`[dailyDigest] writeDailyMetricsToTable threw: ${err.message}, continuing to reportToCharli`);
+    log.warn(`[dailyDigest] writeDailyMetricsToTable threw: ${err.message}, continuing to reportToCharli`);
     writeRes = { ok: false, written: 0 };
   }
   if (!writeRes.ok) {
-    context.warn(`[dailyDigest] write Table dégradé (${writeRes.written}/${perConsultant.length}), reportToCharli quand même appelé`);
+    log.warn(`[dailyDigest] write Table dégradé (${writeRes.written}/${perConsultant.length}), reportToCharli quand même appelé`);
   } else {
-    context.log(`[dailyDigest] Table dailyMetrics écrite (${writeRes.written}/${perConsultant.length} entrées)`);
+    log(`[dailyDigest] Table dailyMetrics écrite (${writeRes.written}/${perConsultant.length} entrées)`);
   }
 
   // 3. reportToCharli — fail-open, log seul
@@ -298,9 +300,9 @@ async function handleDailyDigest(myTimer, context, deps = defaultDeps()) {
 
   const reportRes = await deps.reportToCharli(event, context);
   if (!reportRes || !reportRes.ok) {
-    context.warn(`[dailyDigest] reportToCharli failed: ${reportRes && reportRes.error}`);
+    log.warn(`[dailyDigest] reportToCharli failed: ${reportRes && reportRes.error}`);
   } else {
-    context.log(`[dailyDigest] digest posté event_id=${reportRes.eventId}`);
+    log(`[dailyDigest] digest posté event_id=${reportRes.eventId}`);
   }
 }
 

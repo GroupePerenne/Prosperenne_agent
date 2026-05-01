@@ -14,6 +14,7 @@
 const { app } = require('@azure/functions');
 const { sendMail: defaultSendMail } = require('../../shared/graph-mail');
 const { getMem0: defaultGetMem0 } = require('../../shared/adapters/memory/mem0');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -58,6 +59,7 @@ function buildConsultantMemory(brief) {
  * en prod on utilise les implémentations par défaut.
  */
 async function handleQualification(request, context, deps = {}) {
+  const log = makeSafeLogger(context);
   const sendMail = deps.sendMail || defaultSendMail;
   const getMem0 = deps.getMem0 || defaultGetMem0;
   const triggerLeadSelector = deps.triggerLeadSelector || defaultTriggerLeadSelector;
@@ -91,9 +93,7 @@ async function handleQualification(request, context, deps = {}) {
     // question qu'un hoquet Mem0 fasse 500 sur le brief consultant.
     const mem0Task = mem0
       ? mem0.storeConsultant(consultantId, consultantMemory).catch((err) => {
-          if (context && typeof context.warn === 'function') {
-            context.warn(`[mem0] storeConsultant failed: ${err.message}`);
-          }
+          log.warn(`[mem0] storeConsultant failed: ${err.message}`);
           return null;
         })
       : Promise.resolve(null);
@@ -124,9 +124,7 @@ async function handleQualification(request, context, deps = {}) {
     try {
       triggerLeadSelector({ brief, briefId, consultantId, context });
     } catch (err) {
-      if (context && typeof context.warn === 'function') {
-        context.warn(`[leadSelector] trigger sync error: ${err.message}`);
-      }
+      log.warn(`[leadSelector] trigger sync error: ${err.message}`);
     }
 
     return {
@@ -135,9 +133,7 @@ async function handleQualification(request, context, deps = {}) {
       jsonBody: { ok: true, brief_id: briefId },
     };
   } catch (err) {
-    if (context && typeof context.error === 'function') {
-      context.error('onQualification error:', err);
-    }
+    log.error('onQualification error:', err);
     return {
       status: 500,
       headers: CORS_HEADERS,
@@ -174,6 +170,7 @@ module.exports = {
  */
 function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
   if (process.env.LEAD_SELECTOR_DISABLED === '1') return;
+  const log = makeSafeLogger(context);
 
   let enrichAndProfileBatchForConsultant;
   let buildInsufficientBatchMail;
@@ -185,20 +182,13 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
     ({ launchSequenceForConsultant } = require('../../agents/david/orchestrator'));
     ({ sendMail: sendMailLazy } = require('../../shared/graph-mail'));
   } catch (err) {
-    if (context && typeof context.warn === 'function') {
-      context.warn(`[leadSelector] trigger require failed: ${err.message}`);
-    }
+    log.warn(`[leadSelector] trigger require failed: ${err.message}`);
     return;
   }
 
   // La promise n'est volontairement pas await depuis le handler HTTP.
   const startedAt = Date.now();
-  const logInfo = (msg, payload) => {
-    if (!context) return;
-    if (context.log && typeof context.log.info === 'function') context.log.info(msg, payload);
-    else if (typeof context.log === 'function') context.log(msg, payload);
-  };
-  logInfo('leadSelector.trigger.start', { brief_id: briefId, consultantId });
+  log.info('leadSelector.trigger.start', { brief_id: briefId, consultantId });
   (async () => {
     try {
       const beneficiaryId = `oseys-${String(consultantId || '').split('@')[0] || 'unknown'}`;
@@ -210,11 +200,9 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
         context,
       });
 
-      if (context && typeof context.log === 'function') {
-        context.log(
-          `[leadSelector] brief_id=${briefId} status=${result.status} returned=${result.meta && result.meta.returned}`,
-        );
-      }
+      log(
+        `[leadSelector] brief_id=${briefId} status=${result.status} returned=${result.meta && result.meta.returned}`,
+      );
 
       if (result.status === 'ok') {
         const consultant = {
@@ -231,12 +219,10 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
           leads: result.leads,
           context,
         });
-        if (context && typeof context.log === 'function') {
-          const ok = seqResults.filter((r) => !r.error).length;
-          context.log(
-            `[leadSelector] sequence launched for brief_id=${briefId}, ok=${ok}/${seqResults.length}`,
-          );
-        }
+        const ok = seqResults.filter((r) => !r.error).length;
+        log(
+          `[leadSelector] sequence launched for brief_id=${briefId}, ok=${ok}/${seqResults.length}`,
+        );
       } else if (result.status === 'insufficient') {
         // Partielle : on lance tout de même la séquence sur les leads
         // disponibles ET on envoie le mail "base à affiner" en parallèle.
@@ -268,7 +254,7 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
           html: buildInsufficientBatchMail(brief, result),
         });
       }
-      logInfo('leadSelector.trigger.end', {
+      log.info('leadSelector.trigger.end', {
         brief_id: briefId,
         consultantId,
         status: result.status,
@@ -276,10 +262,8 @@ function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
         elapsed_ms: Date.now() - startedAt,
       });
     } catch (err) {
-      if (context && typeof context.error === 'function') {
-        context.error('[leadSelector] fire-and-forget failed', err);
-      }
-      logInfo('leadSelector.trigger.end', {
+      log.error('[leadSelector] fire-and-forget failed', err);
+      log.info('leadSelector.trigger.end', {
         brief_id: briefId,
         consultantId,
         status: 'exception',

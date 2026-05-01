@@ -24,6 +24,7 @@ const { callClaude } = require('../../shared/anthropic');
 const { davidSignatureHtml } = require('../../shared/templates');
 const { parisDateParts } = require('../../shared/holidays');
 const { readEventsSince, summarizeEventsHtml } = require('../../shared/leadSelectorTrace');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 // ─── Helpers dates ─────────────────────────────────────────────────────────
 function getYesterdayParisISO() {
@@ -145,8 +146,9 @@ Pas de signature en bas (ajoutée automatiquement).`;
 app.timer('dailyReport', {
   schedule: '0 0 8 * * 1-5', // 8h00 Paris (via WEBSITE_TIME_ZONE), lun-ven
   handler: async (myTimer, context) => {
+    const log = makeSafeLogger(context);
     const yesterday = getYesterdayParisISO();
-    context.log(`dailyReport tick for ${yesterday}`);
+    log(`dailyReport tick for ${yesterday}`);
 
     const consultants = [
       { email: process.env.MORGANE_EMAIL, prenom: 'Morgane' },
@@ -154,7 +156,7 @@ app.timer('dailyReport', {
     ].filter((c) => c.email);
 
     if (consultants.length === 0) {
-      context.warn('dailyReport: aucun consultant configuré (MORGANE_EMAIL / JOHNNY_EMAIL absents)');
+      log.warn('dailyReport: aucun consultant configuré (MORGANE_EMAIL / JOHNNY_EMAIL absents)');
       return;
     }
 
@@ -162,7 +164,7 @@ app.timer('dailyReport', {
       try {
         const userId = await findPipedriveUserId(consultant.email);
         if (!userId) {
-          context.warn(`dailyReport: user Pipedrive non trouvé pour ${consultant.email}, skip`);
+          log.warn(`dailyReport: user Pipedrive non trouvé pour ${consultant.email}, skip`);
           continue;
         }
 
@@ -176,9 +178,9 @@ app.timer('dailyReport', {
           subject: `Ton point quotidien Prospérenne — ${formatDateFR(yesterday)}`,
           html,
         });
-        context.log(`dailyReport sent to ${consultant.email} — metrics: ${JSON.stringify(metrics)}`);
+        log(`dailyReport sent to ${consultant.email} — metrics: ${JSON.stringify(metrics)}`);
       } catch (err) {
-        context.error(`dailyReport failed for ${consultant.email}: ${err.message}`);
+        log.error(`dailyReport failed for ${consultant.email}: ${err.message}`);
       }
     }
 
@@ -188,22 +190,23 @@ app.timer('dailyReport', {
     try {
       await sendLeadSelectorReport(yesterday, context);
     } catch (err) {
-      context.error(`dailyReport leadSelector section failed: ${err.message}`);
+      log.error(`dailyReport leadSelector section failed: ${err.message}`);
     }
   },
 });
 
 async function sendLeadSelectorReport(yesterday, context) {
+  const log = makeSafeLogger(context);
   const events = await readEventsSince(yesterday);
   if (!events || events.length === 0) {
-    context.log('[dailyReport] no Lead Selector events for the past 24h');
+    log('[dailyReport] no Lead Selector events for the past 24h');
     return;
   }
   const html = summarizeEventsHtml(events, { dateLabel: formatDateFR(yesterday) });
   if (!html) return;
   const to = process.env.ESCALATION_EMAIL || process.env.ADMIN_EMAIL;
   if (!to) {
-    context.warn('[dailyReport] no ESCALATION_EMAIL/ADMIN_EMAIL configured, skipping Lead Selector report');
+    log.warn('[dailyReport] no ESCALATION_EMAIL/ADMIN_EMAIL configured, skipping Lead Selector report');
     return;
   }
   await sendMail({
@@ -212,5 +215,5 @@ async function sendLeadSelectorReport(yesterday, context) {
     subject: `Lead Selector — rapport ${formatDateFR(yesterday)}`,
     html: `<div style="font-family:Arial,sans-serif;color:#1a1714"><p>Bonjour,</p><p>Synthèse des exécutions Lead Selector des dernières 24h.</p>${html}${davidSignatureHtml()}</div>`,
   });
-  context.log(`[dailyReport] Lead Selector report sent to ${to} (${events.length} events)`);
+  log(`[dailyReport] Lead Selector report sent to ${to} (${events.length} events)`);
 }

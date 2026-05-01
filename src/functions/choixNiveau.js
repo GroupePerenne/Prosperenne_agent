@@ -11,11 +11,13 @@
 const { app } = require('@azure/functions');
 const { sendMail } = require('../../shared/graph-mail');
 const { confirmationPage } = require('../../shared/templates');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 app.http('choixNiveau', {
   methods: ['GET'],
   authLevel: 'function',
   handler: async (request, context) => {
+    const log = makeSafeLogger(context);
     const niveau = parseInt(request.query.get('niveau') || '', 10);
     const prospecteur = (request.query.get('prospecteur') || '').toLowerCase();
     const consultantName = request.query.get('consultant') || 'consultant';
@@ -53,7 +55,7 @@ app.http('choixNiveau', {
         });
       }
     } catch (e) {
-      context.error('Accusé consultant échoué:', e.message);
+      log.error('Accusé consultant échoué:', e.message);
     }
 
     try {
@@ -73,7 +75,7 @@ app.http('choixNiveau', {
         });
       }
     } catch (e) {
-      context.error('Alerte admin échouée:', e.message);
+      log.error('Alerte admin échouée:', e.message);
     }
 
     return {
