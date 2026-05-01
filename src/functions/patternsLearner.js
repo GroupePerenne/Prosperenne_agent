@@ -24,27 +24,29 @@
 
 const { app } = require('@azure/functions');
 const { runWeeklyLearn } = require('../../shared/lead-exhauster/patternsLearner');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 app.timer('patternsLearner', {
   // Dimanche 3h UTC = ~5h Paris été / 4h hiver. Heure creuse pour Azure
   // Storage et évite le conflit avec scheduler (qui tourne toutes les 15 min).
   schedule: '0 0 3 * * 0',
   handler: async (myTimer, context) => {
+    const log = makeSafeLogger(context);
     const startedAt = new Date().toISOString();
-    context.log(`patternsLearner tick @ ${startedAt}`);
+    log(`patternsLearner tick @ ${startedAt}`);
 
     try {
       const stats = await runWeeklyLearn();
-      context.log(
+      log(
         `patternsLearner: rowsScanned=${stats.rowsScanned} bucketsFound=${stats.bucketsFound} `
         + `created=${stats.created} updated=${stats.updated} deactivated=${stats.deactivated} `
         + `errors=${stats.errors} elapsed=${stats.elapsedMs}ms`,
       );
       if (stats.deactivated > 0 && Array.isArray(stats.deactivatedKeys)) {
-        context.log(`patternsLearner: deactivated patterns = ${stats.deactivatedKeys.join(', ')}`);
+        log(`patternsLearner: deactivated patterns = ${stats.deactivatedKeys.join(', ')}`);
       }
     } catch (err) {
-      context.error('patternsLearner failed', err);
+      log.error('patternsLearner failed', err);
     }
   },
 });

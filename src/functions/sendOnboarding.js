@@ -8,11 +8,13 @@
 
 const { app } = require('@azure/functions');
 const { sendOnboardingEmail } = require('../../agents/david/onboarding');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 app.http('sendOnboarding', {
   methods: ['POST'],
   authLevel: 'function',
   handler: async (request, context) => {
+    const log = makeSafeLogger(context);
     try {
       const body = await request.json().catch(() => ({}));
       const { prenom, nom, email } = body;
@@ -26,7 +28,7 @@ app.http('sendOnboarding', {
 
       return { status: 200, jsonBody: { ok: true, ...result } };
     } catch (err) {
-      context.error('sendOnboarding error:', err);
+      log.error('sendOnboarding error:', err);
       return { status: 500, jsonBody: { error: err.message } };
     }
   },

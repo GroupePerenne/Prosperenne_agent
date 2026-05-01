@@ -17,23 +17,25 @@ const { app } = require('@azure/functions');
 const { receiveDueRelances, deleteRelance, rescheduleIfNotDue } = require('../../shared/queue');
 const martin = require('../../agents/martin/worker');
 const mila = require('../../agents/mila/worker');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 const AGENTS = { martin, mila };
 
 app.timer('scheduler', {
   schedule: '0 */15 * * * *',
   handler: async (myTimer, context) => {
+    const log = makeSafeLogger(context);
     const startedAt = new Date().toISOString();
-    context.log(`scheduler tick @ ${startedAt}`);
+    log(`scheduler tick @ ${startedAt}`);
 
     try {
       const dueJobs = await receiveDueRelances(16);
       if (dueJobs.length === 0) {
-        context.log('rien à envoyer');
+        log('rien à envoyer');
         return;
       }
 
-      context.log(`${dueJobs.length} message(s) visible(s)`);
+      log(`${dueJobs.length} message(s) visible(s)`);
       const results = [];
 
       for (const job of dueJobs) {
@@ -56,14 +58,14 @@ app.timer('scheduler', {
           await deleteRelance({ messageId, popReceipt });
           results.push({ agent: body.agent, day: body.day, lead: body.lead?.email, ...res });
         } catch (err) {
-          context.error(`échec ${body.agent}/${body.day}/${body.lead?.email}: ${err.message}`);
+          log.error(`échec ${body.agent}/${body.day}/${body.lead?.email}: ${err.message}`);
           results.push({ agent: body.agent, day: body.day, lead: body.lead?.email, error: err.message });
         }
       }
 
-      context.log('résultats:', JSON.stringify(results));
+      log('résultats:', JSON.stringify(results));
     } catch (err) {
-      context.error('scheduler global error:', err);
+      log.error('scheduler global error:', err);
     }
   },
 });

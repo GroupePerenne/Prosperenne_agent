@@ -27,6 +27,7 @@ const { getMem0 } = require('../../shared/adapters/memory/mem0');
 const { enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndProfileBatch');
 const { buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch');
 const { sendMail } = require('../../shared/graph-mail');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 const DEFAULT_BATCH_SIZE = Number(process.env.LEAD_SELECTOR_BATCH_SIZE || 10);
 
@@ -34,6 +35,7 @@ app.http('runLeadSelectorForConsultant', {
   methods: ['POST'],
   authLevel: 'function',
   handler: async (request, context) => {
+    const log = makeSafeLogger(context);
     try {
       const body = await request.json().catch(() => ({}));
       const { consultantId, batchSize = DEFAULT_BATCH_SIZE, dryRun = false } = body;
@@ -74,9 +76,7 @@ app.http('runLeadSelectorForConsultant', {
           subject: 'Lead Selector — base à affiner',
           html: buildInsufficientBatchMail(consultantPayload.originalBrief, result),
         }).catch((err) => {
-          if (context && typeof context.warn === 'function') {
-            context.warn(`[enrichBatch] insufficient mail failed: ${err.message}`);
-          }
+          log.warn(`[enrichBatch] insufficient mail failed: ${err.message}`);
         });
       }
 
@@ -100,9 +100,7 @@ app.http('runLeadSelectorForConsultant', {
         },
       };
     } catch (err) {
-      if (context && typeof context.error === 'function') {
-        context.error('runLeadSelectorForConsultant error', err);
-      }
+      log.error('runLeadSelectorForConsultant error', err);
       return { status: 500, jsonBody: { error: err.message } };
     }
   },

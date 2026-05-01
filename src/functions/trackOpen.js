@@ -12,11 +12,13 @@
 const { app } = require('@azure/functions');
 const pipedrive = require('../../shared/pipedrive');
 const { PIXEL_GIF } = require('../../shared/templates');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 app.http('trackOpen', {
   methods: ['GET'],
   authLevel: 'anonymous',
   handler: async (request, context) => {
+    const log = makeSafeLogger(context);
     try {
       const dealId = parseInt(request.query.get('deal') || '', 10);
       const personId = parseInt(request.query.get('person') || '', 10);
@@ -32,7 +34,7 @@ app.http('trackOpen', {
         });
       }
     } catch (err) {
-      context.warn('trackOpen log failed:', err.message);
+      log.warn('trackOpen log failed:', err.message);
     }
 
     return {

@@ -17,11 +17,13 @@
 
 const { app } = require('@azure/functions');
 const { sendMail } = require('../../shared/graph-mail');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 app.http('sendMail', {
   methods: ['POST'],
   authLevel: 'function',
   handler: async (request, context) => {
+    const log = makeSafeLogger(context);
     try {
       const body = await request.json().catch(() => ({}));
       const { from, to, subject, html } = body;
@@ -51,7 +53,7 @@ app.http('sendMail', {
 
       return { status: 200, jsonBody: { success: true, ...result } };
     } catch (err) {
-      context.error('sendMail error:', err);
+      log.error('sendMail error:', err);
       return { status: 500, jsonBody: { error: err.message } };
     }
   },

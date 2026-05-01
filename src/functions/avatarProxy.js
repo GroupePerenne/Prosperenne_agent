@@ -18,6 +18,7 @@ const path = require('path');
 const fs = require('fs');
 const { app } = require('@azure/functions');
 const { getToken } = require('../../shared/graph-mail');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 const USERS = {
   david: () => process.env.DAVID_EMAIL,
@@ -59,6 +60,7 @@ app.http('avatarProxy', {
   methods: ['GET'],
   authLevel: 'anonymous',
   handler: async (request, context) => {
+    const log = makeSafeLogger(context);
     const user = (request.query.get('user') || '').toLowerCase();
     const variant = (request.query.get('variant') || '').toLowerCase();
     const emailResolver = USERS[user];
@@ -78,7 +80,7 @@ app.http('avatarProxy', {
             body: buf,
           };
         } catch (err) {
-          context.warn(`avatarProxy: local variant ${user}:${variant} missing (${err.message}), falling back to M365 photo`);
+          log.warn(`avatarProxy: local variant ${user}:${variant} missing (${err.message}), falling back to M365 photo`);
           // fallthrough : on tentera la photo M365 standard
         }
       }
@@ -95,13 +97,13 @@ app.http('avatarProxy', {
           body: buf,
         };
       } catch (err) {
-        context.warn(`avatarProxy: local standard ${user} missing (${err.message}), falling back to M365`);
+        log.warn(`avatarProxy: local standard ${user} missing (${err.message}), falling back to M365`);
       }
     }
 
     const email = emailResolver();
     if (!email) {
-      context.warn(`avatarProxy: email env not set for user=${user}`);
+      log.warn(`avatarProxy: email env not set for user=${user}`);
       return placeholderResponse(user.charAt(0).toUpperCase());
     }
 
@@ -113,12 +115,12 @@ app.http('avatarProxy', {
       );
 
       if (res.status === 404) {
-        context.warn(`avatarProxy: Graph 404 for ${user} (${email}) — photo not yet propagated?`);
+        log.warn(`avatarProxy: Graph 404 for ${user} (${email}) — photo not yet propagated?`);
         return placeholderResponse(user.charAt(0).toUpperCase());
       }
       if (!res.ok) {
         const txt = await res.text();
-        context.warn(`avatarProxy: Graph ${res.status} for ${user}: ${txt}`);
+        log.warn(`avatarProxy: Graph ${res.status} for ${user}: ${txt}`);
         return placeholderResponse(user.charAt(0).toUpperCase());
       }
 
@@ -130,7 +132,7 @@ app.http('avatarProxy', {
         body: buf,
       };
     } catch (err) {
-      context.warn(`avatarProxy: error for ${user}: ${err.message}`);
+      log.warn(`avatarProxy: error for ${user}: ${err.message}`);
       return placeholderResponse(user.charAt(0).toUpperCase());
     }
   },

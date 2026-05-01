@@ -14,11 +14,13 @@
 
 const { app } = require('@azure/functions');
 const { launchSequenceForConsultant } = require('../../agents/david/orchestrator');
+const { makeSafeLogger } = require('../../shared/safe-log');
 
 app.http('runSequence', {
   methods: ['POST'],
   authLevel: 'function',
   handler: async (request, context) => {
+    const log = makeSafeLogger(context);
     try {
       const body = await request.json().catch(() => ({}));
       const { consultant, brief, leads } = body;
@@ -32,7 +34,7 @@ app.http('runSequence', {
 
       return { status: 200, jsonBody: { ok_count: ok, error_count: ko, results } };
     } catch (err) {
-      context.error('runSequence error:', err);
+      log.error('runSequence error:', err);
       return { status: 500, jsonBody: { error: err.message } };
     }
   },
