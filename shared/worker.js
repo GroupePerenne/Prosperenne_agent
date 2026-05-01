@@ -199,7 +199,12 @@ function renderUnattributableEmailHtml({ lead, dealLink }) {
 
 // ─── Bootstrap d'une séquence : check leads existants, génère les 5 messages,
 //     envoie J0 (ou le schedule si hors créneau), programme J+4/J+10/J+18/J+28
-async function bootstrapSequence({ agent, consultant, lead, dealId, personId, orgId, context, mem0: mem0Override }) {
+//
+// `prospectProfile` (optionnel) — résultat enrichissement prospect-research
+// (companyProfile + decisionMakerProfile) qui permet à generateSequence de
+// calculer l'angle d'entrée et la modulation DISC. Si absent, fallback
+// 'pas_de_signal' + ton standard (cohérent VP OSEYS socle, cas le plus fréquent).
+async function bootstrapSequence({ agent, consultant, lead, dealId, personId, orgId, context, mem0: mem0Override, prospectProfile }) {
   const identity = loadIdentity(agent);
 
   // 0. Filtrage leads existants : si le prospect est déjà dans un deal actif
@@ -242,6 +247,7 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
     agent: { prenom: identity.prenom, mail: identity.email, signature: identity.signature_html },
     lead,
     enrichments,
+    prospectProfile,
   });
 
   // 2. Détermine le slot J0 (maintenant si on est dans le créneau ouvré
@@ -265,7 +271,11 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
       bcc: consultantBCC ? [consultantBCC] : [],
       subject: j0.objet,
       html,
-      replyTo: process.env.DAVID_EMAIL,
+      // Pas de replyTo explicite : les réponses prospects arrivent
+      // nativement dans la boîte de l'expéditeur (martin@oseys.fr ou
+      // mila@oseys.fr). Cohérence prospect : il échange avec le commercial
+      // qu'il connaît, pas avec un David qu'il n'a jamais vu.
+      // Cf. agents/david/value-proposition.md §8.
     });
     if (dealId || personId) {
       await pipedrive.logEmailSent({
@@ -322,7 +332,7 @@ async function sendScheduledStep(job) {
     bcc: consultantBCC ? [consultantBCC] : [],
     subject: objet,
     html,
-    replyTo: process.env.DAVID_EMAIL,
+    // Pas de replyTo : cf. bootstrapSequence (positionnement éthique).
   });
 
   if (dealId || personId) {

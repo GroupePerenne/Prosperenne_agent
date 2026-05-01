@@ -26,10 +26,24 @@ const CORS_HEADERS = {
  * Construit le schéma de mémoire consultant à partir du brief reçu du
  * formulaire public. Mapping conforme ARCHITECTURE §3.1 type 2.
  *
- * Enrichi (chantier Lead Selector v1.0) avec les champs de ciblage
- * (secteurs_autres, effectif, zone, zone_rayon, adresse, prospecteur, ville,
- * email) pour permettre à selectLeadsForConsultantById de relire le brief
- * depuis Mem0 et déclencher le Lead Selector hors contexte HTTP.
+ * Enrichi v1 chantier Lead Selector : champs de ciblage (secteurs_autres,
+ * effectif, zone, zone_rayon, adresse, prospecteur, ville, email).
+ *
+ * Enrichi v2 chantier VP socle (1er mai 2026, cf. agents/david/value-proposition.md
+ * + shared/oseys-vp/) : 5 nouveaux champs pour permettre à Sonnet 4.6 de
+ * projeter la VP OSEYS de manière personnalisée par consultant :
+ *   - offre_choisie : 'lead' | 'rdv-cale' (offre commerciale distribuée par David)
+ *   - mise_en_copie_consultant : boolean (consultant en CC sur les échanges)
+ *   - cible_specifique : nuance optionnelle de cible (secteur précis, taille,
+ *     persona) que le consultant souhaite indiquer en plus du socle 5-75 sweet
+ *     spot 10-40
+ *   - methode_consultant : sa nuance/spécialité propre (à projeter sans pitcher
+ *     comme un produit)
+ *   - anecdotes_anonymisees : liste d'anecdotes anonymisées qu'il valide pouvoir
+ *     utiliser en in-context (jamais de nom client réel)
+ *
+ * Si non précisés au formulaire, fallback raisonnables (offre lead par défaut,
+ * pas en copie, pas de nuance cible, pas de méthode propre, pas d'anecdotes).
  */
 function buildConsultantMemory(brief) {
   return {
@@ -50,6 +64,14 @@ function buildConsultantMemory(brief) {
     ville: brief.ville || '',
     prospecteur: brief.prospecteur || 'both',
     email: brief.email ? brief.email.toLowerCase() : '',
+    // ─── VP socle enrichissement (chantier 1er mai 2026) ──────────────────
+    offre_choisie: brief.offre_choisie === 'rdv-cale' ? 'rdv-cale' : 'lead',
+    mise_en_copie_consultant: brief.mise_en_copie_consultant === true,
+    cible_specifique: brief.cible_specifique || '',
+    methode_consultant: brief.methode_consultant || '',
+    anecdotes_anonymisees: Array.isArray(brief.anecdotes_anonymisees)
+      ? brief.anecdotes_anonymisees.filter((a) => typeof a === 'string' && a.trim())
+      : (brief.anecdotes_anonymisees ? [String(brief.anecdotes_anonymisees)] : []),
   };
 }
 

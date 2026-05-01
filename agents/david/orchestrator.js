@@ -66,18 +66,44 @@ function extractBouncedAddress(msg) {
 }
 
 // ─── Lecture et routage de l'inbox ─────────────────────────────────────────
-async function handleInboxPoll({ context } = {}) {
-  const mailbox = process.env.DAVID_EMAIL;
-  const unread = await listUnreadMessages({ mailbox, top: 20 });
+//
+// Pollage multi-mailbox : depuis le chantier VP socle 1er mai 2026
+// (cf. agents/david/value-proposition.md §8), les commerciaux IA Martin et
+// Mila opèrent depuis leur propre adresse, replyTo = leur adresse, donc les
+// réponses prospects arrivent désormais dans MARTIN_EMAIL et MILA_EMAIL.
+// David reste la boîte d'orchestration pour : messages consultants directs,
+// escalations, interventions hiérarchiques.
+//
+// Sans paramètre `mailboxes`, fallback sur DAVID_EMAIL seul (back-compat tests).
+// En prod (cf. src/functions/davidInbox.js), les 3 mailboxes sont passées.
+//
+// Chaque message est routé via routeMessage qui décide (prospect/consultant/
+// internal/spam) sans s'appuyer sur la mailbox d'origine — la classification
+// se fait sur le sender, le subject et le body. La mailbox sert juste à savoir
+// où poller et où marquer-comme-lu.
+async function handleInboxPoll({ context, mailboxes } = {}) {
+  const list = Array.isArray(mailboxes) && mailboxes.length > 0
+    ? mailboxes.filter(Boolean)
+    : [process.env.DAVID_EMAIL].filter(Boolean);
 
   const results = [];
-  for (const msg of unread) {
+  for (const mailbox of list) {
+    let unread;
     try {
-      const decision = await routeMessage(msg, { context });
-      results.push({ id: msg.id, subject: msg.subject, ...decision });
-      await markAsRead({ mailbox, messageId: msg.id });
+      unread = await listUnreadMessages({ mailbox, top: 20 });
     } catch (err) {
-      results.push({ id: msg.id, error: err.message });
+      warnLog(context, `[handleInboxPoll] listUnreadMessages failed for ${mailbox}: ${err.message}`);
+      continue;
+    }
+
+    for (const msg of unread) {
+      try {
+        const decision = await routeMessage(msg, { context });
+        results.push({ mailbox, id: msg.id, subject: msg.subject, ...decision });
+        await markAsRead({ mailbox, messageId: msg.id });
+      } catch (err) {
+        results.push({ mailbox, id: msg.id, error: err.message });
+      }
     }
   }
   return results;
