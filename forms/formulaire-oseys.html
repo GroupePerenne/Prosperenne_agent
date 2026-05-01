@@ -308,7 +308,11 @@
       <div class="grid-2">
         <div class="field">
           <label for="f_ville">Adresse principale</label>
-          <input type="text" id="f_ville" name="ville" placeholder="12 rue de la République, 06000 Nice">
+          <div class="naf-search-wrap">
+            <input type="text" id="f_ville" name="ville" placeholder="Tape les premiers chiffres et le nom de la rue…" autocomplete="off">
+            <div id="adresse-suggestions" class="naf-suggestions" hidden></div>
+          </div>
+          <p class="hint">Suggestions Base Adresse Nationale officielle (data.gouv.fr).</p>
         </div>
         <div class="field">
           <label for="f_linkedin">LinkedIn</label>
@@ -992,12 +996,91 @@
     }
   });
 
+  // ─── Autocomplete adresse — API gouv BAN (api-adresse.data.gouv.fr) ──────
+  // Service officiel français Base Adresse Nationale, gratuit, sans clé API,
+  // cohérent doctrine RGPD/souveraineté. Endpoint : /search/?q=<query>&limit=N
+  // Retourne GeoJSON avec features[].properties.label (adresse formatée) +
+  // .context (département+région) + .citycode + geometry.coordinates [lon,lat].
+  function wireAdresseAutocomplete() {
+    const input = document.getElementById('f_ville');
+    const sugg = document.getElementById('adresse-suggestions');
+    if (!input || !sugg) return;
+
+    let debounceTimer = null;
+    let lastQuery = '';
+    let abortController = null;
+
+    const fetchSuggestions = async (q) => {
+      if (q === lastQuery) return;
+      lastQuery = q;
+      if (q.trim().length < 3) { sugg.hidden = true; return; }
+
+      // Annule la requête précédente si encore en vol
+      if (abortController) abortController.abort();
+      abortController = new AbortController();
+
+      try {
+        const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=5&autocomplete=1`;
+        const res = await fetch(url, { signal: abortController.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        renderSuggestions(data.features || []);
+      } catch (err) {
+        if (err.name !== 'AbortError') console.warn('[adresse] fetch failed', err);
+      }
+    };
+
+    const renderSuggestions = (features) => {
+      sugg.innerHTML = '';
+      if (features.length === 0) { sugg.hidden = true; return; }
+      for (const f of features) {
+        const item = document.createElement('div');
+        item.className = 'naf-suggestion';
+        const label = (f.properties && f.properties.label) || '';
+        const context = (f.properties && f.properties.context) || '';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'naf-suggestion-lib';
+        labelEl.textContent = label;
+        item.appendChild(labelEl);
+        if (context) {
+          const ctxEl = document.createElement('span');
+          ctxEl.className = 'naf-suggestion-code';
+          ctxEl.style.fontSize = '10px';
+          ctxEl.textContent = context;
+          item.appendChild(ctxEl);
+        }
+        item.addEventListener('mousedown', (ev) => {
+          ev.preventDefault();
+          input.value = label;
+          sugg.hidden = true;
+          updateProgress();
+        });
+        sugg.appendChild(item);
+      }
+      sugg.hidden = false;
+    };
+
+    input.addEventListener('input', () => {
+      const q = input.value;
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => fetchSuggestions(q), 250);
+    });
+    input.addEventListener('blur', () => {
+      // Délai pour permettre au mousedown de la suggestion de se déclencher
+      setTimeout(() => { sugg.hidden = true; }, 150);
+    });
+    input.addEventListener('focus', () => {
+      if (input.value.trim().length >= 3) input.dispatchEvent(new Event('input'));
+    });
+  }
+
   // ─── Init ────────────────────────────────────────────────────────────────
-  initNafAutocomplete();  // lance le fetch NAF en parallèle (non bloquant)
-  wireNafAutocomplete();  // branche le handler sur l'input de recherche
-  initOffreExample();     // pré-remplit f_offre avec un exemple effaçable
-  loadDraft();            // puis le brouillon local (prime sur l'exemple)
-  applyUrlParams();       // puis les params URL (qui prennent le dessus)
+  initNafAutocomplete();   // lance le fetch NAF en parallèle (non bloquant)
+  wireNafAutocomplete();   // branche le handler sur l'input de recherche NAF
+  wireAdresseAutocomplete(); // branche le handler sur l'input adresse (BAN data.gouv.fr)
+  initOffreExample();      // pré-remplit f_offre avec un exemple effaçable
+  loadDraft();             // puis le brouillon local (prime sur l'exemple)
+  applyUrlParams();        // puis les params URL (qui prennent le dessus)
   updateProgress();
 </script>
 </body>
