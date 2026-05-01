@@ -95,8 +95,8 @@ test('ANTI_PATTERNS_VOCABULAIRE inclut les 7 patterns critiques', () => {
   assert.match(allText, /ia|automatisation/i);
 });
 
-test('REGLES_HONNEUR contient au moins les 7 règles structurelles', () => {
-  assert.ok(vp.REGLES_HONNEUR.length >= 7);
+test('REGLES_HONNEUR contient au moins les 11 règles structurelles', () => {
+  assert.ok(vp.REGLES_HONNEUR.length >= 11);
   const allText = vp.REGLES_HONNEUR.join(' ').toLowerCase();
   assert.match(allText, /jamais inventer/);
   assert.match(allText, /jamais promettre/);
@@ -104,6 +104,11 @@ test('REGLES_HONNEUR contient au moins les 7 règles structurelles', () => {
   assert.match(allText, /jamais mentionner l'ia/);
   assert.match(allText, /jamais usurper/);
   assert.match(allText, /toujours vouvoyer/);
+  assert.match(allText, /jamais présumer/);
+  assert.match(allText, /la démarche commerciale ne doit pas en être une/);
+  assert.match(allText, /en j0.*jamais demander un rdv/);
+  assert.match(allText, /jamais utiliser de formulation template/);
+  assert.match(allText, /toujours terminer par une formule de politesse/);
   assert.match(allText, /escalader|escalation/);
 });
 

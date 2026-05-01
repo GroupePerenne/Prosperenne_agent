@@ -24,18 +24,16 @@ const MODEL = 'claude-sonnet-4-6';
 
 const vp = require('./oseys-vp');
 
-/** Calendrier canonique de la séquence (5 touches sur 28 jours ouvrés) */
+/** Calendrier canonique de la séquence (3 touches sur 28 jours ouvrés —
+ *  espacement validé Paul 1er mai 2026 PM, moins agressif que la cadence
+ *  resserrée historique 5 touches J0/J+4/J+10/J+18/J+28). */
 const SCHEDULE = [
-  { jour: 'J0',   offsetBusinessDays: 0,  role: 'ouverture',
-    brief: 'Message d\'ouverture. Court (4-6 lignes selon DISC). Une accroche naturelle ancrée sur le SIGNAL OBSERVABLE du prospect, une question simple qui invite à répondre. PAS de pitch commercial, PAS de présentation de l\'offre, PAS de chiffrage.' },
-  { jour: 'J+4',  offsetBusinessDays: 4,  role: 'relance_angle',
-    brief: 'Relance avec ANGLE NOUVEAU. 3-5 lignes. Apporter un constat, une observation sectorielle ou une question différente du J0. JAMAIS "je reviens vers vous" ou équivalent.' },
-  { jour: 'J+10', offsetBusinessDays: 10, role: 'valeur',
-    brief: 'Message de valeur. 5-8 lignes. Partager un insight concret, une observation métier utile, sans demander quoi que ce soit. Terminer par une question ouverte. Aucune invention de chiffres, ni de cas clients non sourçables.' },
-  { jour: 'J+18', offsetBusinessDays: 18, role: 'derniere_touche',
-    brief: 'Dernière touche douce. 3-4 lignes. Ton léger, sans pression. Rappel court du sujet, invitation à réagir si le moment est opportun. Laisser le prospect maître de la suite.' },
-  { jour: 'J+28', offsetBusinessDays: 28, role: 'rupture',
-    brief: 'Rupture polie. 3-4 lignes. Annoncer qu\'on arrête de solliciter pour ne pas saturer, laisser la porte explicitement ouverte à un retour du prospect plus tard. Pas de reproche, pas de culpabilisation.' },
+  { jour: 'J0',    offsetBusinessDays: 0,   role: 'ouverture',
+    brief: 'Message d\'ouverture qui doit CATCH PUISSAMMENT. Le prospect doit comprendre concrètement ce qu\'on propose, sentir une vraie proposition de valeur, et avoir envie d\'en savoir plus. Structure cible : (1) ANCRAGE court sur le signal observable du prospect (1-2 phrases), (2) PRÉSENTATION DE LA DÉMARCHE OSEYS en 2-3 phrases concrètes : copilote économique mensuel (sessions 2-3h avec un consultant), lecture continue des marges et arbitrages structurants, soutenue par PilotagePro qui rend visible au quotidien ce que l\'expert-comptable sort une fois par trimestre. (3) TEASER tangible : lien "oseys.fr/dirigeant" pour voir à quoi cette lecture économique ressemble au quotidien. (4) QUESTION OUVERTE qui invite à savoir si l\'approche peut résonner avec sa période. (5) FORMULE DE POLITESSE. INTERDIT : pitch agency ("solution clé en main"), demande RDV/créneau, présentation institutionnelle raide ("Je m\'appelle Martin, Chargé d\'Affaires"), tirets cadratin "—" et "–", formulations présomptueuses ("j\'observe souvent", "ce que je rencontre"), chiffrage, mention IA.' },
+  { jour: 'J+14',  offsetBusinessDays: 14,  role: 'relance_valeur',
+    brief: 'Première relance après 14 jours ouvrés (espacement assumé, on ne harcèle pas). 5-7 lignes. Apporter un ANGLE COMPLÉMENTAIRE : un proof point sourçable (Coface, Banque des Territoires) ou une observation métier qui donne plus d\'épaisseur à la démarche OSEYS. PAS "je reviens vers vous" ni "n\'ayant pas eu de retour". Le prospect peut être occupé, on ne lui en tient pas rigueur. Terminer par une question ouverte différente du J0 et une formule de politesse.' },
+  { jour: 'J+28',  offsetBusinessDays: 28,  role: 'rupture',
+    brief: 'Dernière relance et rupture polie après 28 jours ouvrés. 4-5 lignes. Annoncer respectueusement qu\'on ne reviendra plus pour ne pas saturer. Laisser la porte ouverte (lien oseys.fr/dirigeant rappelé). Pas de reproche, pas de culpabilisation, ton apaisé. Formule de politesse type "Cordialement" ou "Bonne suite à [entreprise]".' },
 ];
 
 /**
@@ -189,16 +187,14 @@ Réponds UNIQUEMENT en JSON valide, aucun texte autour. Format exact :
   "steps": [
     { "objet": "...", "corps": "..." },
     { "objet": "...", "corps": "..." },
-    { "objet": "...", "corps": "..." },
-    { "objet": "...", "corps": "..." },
     { "objet": "...", "corps": "..." }
   ]
 }
-- Les 5 steps dans l'ordre J0, J+4, J+10, J+18, J+28
+- Les 3 steps dans l'ordre J0, J+14, J+28
 - Chaque "corps" utilise \\n pour les sauts de ligne
-- NE METS PAS de signature dans le corps — elle est ajoutée automatiquement
+- NE METS PAS de signature dans le corps, elle est ajoutée automatiquement
 - Utilise vraiment le prénom du lead, pas un "Bonjour [Prénom]" générique
-- Les 5 messages doivent avoir une COHÉRENCE STYLISTIQUE entre eux (même registre, même ton DISC) pour que le prospect ait l'impression d'un même expéditeur sur toute la séquence`;
+- Les 3 messages doivent avoir une COHÉRENCE STYLISTIQUE entre eux (même registre, même ton DISC) pour que le prospect ait l'impression d'un même expéditeur sur toute la séquence`;
 }
 
 // ─── User prompt — données prospect ────────────────────────────────────────

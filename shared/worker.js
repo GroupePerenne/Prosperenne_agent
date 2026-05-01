@@ -60,14 +60,14 @@ function renderEmailHtml({ identity, consultant, corps, dealId, personId, day })
 
   const bodyHtml = corps
     .split('\n\n')
-    .map((p) => `<p style="margin:0 0 14px;line-height:1.6;color:#1a1714">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+    .map((p) => `<p style="margin:0 0 14px;line-height:1.6;color:#1a1714;font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:12pt">${linkify(escapeHtml(p)).replace(/\n/g, '<br>')}</p>`)
     .join('');
 
   const pixel = buildTrackingPixel({ identity, dealId, personId, day });
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;font-family:Arial,sans-serif;color:#1a1714">
+<body style="margin:0;padding:0;font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:12pt;color:#1a1714">
 ${bodyHtml}
 ${signatureHtml}
 ${pixel}
@@ -78,6 +78,18 @@ function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
   );
+}
+
+// Auto-linkify pour rendre les URLs cliquables dans le corps des messages
+// LLM. Cible prioritaire : oseys.fr et ses sous-pages — URL conservée
+// dans le href, mais texte affiché toujours "oseys.fr" court (cohérent
+// avec la signature, cf. décision Paul 1er mai 2026 PM).
+function linkify(s) {
+  return String(s || '')
+    // oseys.fr/dirigeant ou autre sous-page → texte court "oseys.fr", URL complète dans href
+    .replace(/\b(oseys\.fr(?:\/[\w\-/]+)?)\b/g, '<a href="https://$1" style="color:#F39561;text-decoration:underline;font-weight:500">oseys.fr</a>')
+    // autres URLs https:// (fallback générique)
+    .replace(/(?<!href=")(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#F39561;text-decoration:underline">$1</a>');
 }
 
 // ─── Mem0 enrichments (pur, testable en isolation) ─────────────────────────
@@ -299,7 +311,9 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
     results.scheduled.push('J0');
   }
 
-  // 4. J+4, J+10, J+18, J+28 — tous poussés dans la queue, dates relatives à j0Slot
+  // 4. J+14, J+28 (séquencement validé Paul 1er mai 2026 PM, espacement
+  //    plus respectueux que la cadence resserrée historique 5 touches).
+  //    Tous poussés dans la queue, dates relatives à j0Slot.
   for (let i = 1; i < steps.length; i++) {
     const s = steps[i];
     const targetDate = addBusinessDays(j0Slot, s.offsetBusinessDays);

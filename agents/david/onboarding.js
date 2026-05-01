@@ -27,7 +27,7 @@ async function sendOnboardingEmail({ consultant }) {
   // L'URL de base de choixNiveau avec les infos du consultant — on y ajoutera
   // &niveau=X et/ou &prospecteur=Y dans les boutons du template
   const sendMailFuncCode = process.env.CHOIXNIVEAU_FUNC_CODE || '';
-  const choixNiveauHost = process.env.FUNCTION_APP_HOST || 'oseys-mail-sender-c8cveseah3g8a9gs.francecentral-01.azurewebsites.net';
+  const choixNiveauHost = process.env.FUNCTION_APP_HOST || 'pereneo-mail-sender.azurewebsites.net';
   const choixNiveauBase = `https://${choixNiveauHost}/api/choixNiveau?`
     + new URLSearchParams({
       code: sendMailFuncCode,

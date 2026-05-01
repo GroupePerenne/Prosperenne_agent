@@ -42,7 +42,7 @@ function onboardingEmailHtml({ consultantPrenom, formUrl, choixNiveauBase }) {
   // On ajoute juste &niveau=X&prospecteur=Y dans les boutons
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:${CREAM};font-family:Arial,Helvetica,sans-serif;color:${INK}">
+<body style="margin:0;padding:0;background:${CREAM};font-family:Aptos,'Aptos Display',Calibri,Arial,Helvetica,sans-serif;font-size:12pt;color:${INK}">
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:${CREAM};padding:40px 20px">
 <tr><td align="center">
   <table cellpadding="0" cellspacing="0" border="0" width="560" style="background:white;border-radius:16px;padding:40px 36px;max-width:560px">
