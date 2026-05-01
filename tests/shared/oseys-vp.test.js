@@ -95,14 +95,15 @@ test('ANTI_PATTERNS_VOCABULAIRE inclut les 7 patterns critiques', () => {
   assert.match(allText, /ia|automatisation/i);
 });
 
-test('REGLES_HONNEUR contient au moins les 6 règles structurelles', () => {
-  assert.ok(vp.REGLES_HONNEUR.length >= 6);
+test('REGLES_HONNEUR contient au moins les 7 règles structurelles', () => {
+  assert.ok(vp.REGLES_HONNEUR.length >= 7);
   const allText = vp.REGLES_HONNEUR.join(' ').toLowerCase();
   assert.match(allText, /jamais inventer/);
   assert.match(allText, /jamais promettre/);
   assert.match(allText, /jamais proposer un chiffrage/);
   assert.match(allText, /jamais mentionner l'ia/);
   assert.match(allText, /jamais usurper/);
+  assert.match(allText, /toujours vouvoyer/);
   assert.match(allText, /escalader|escalation/);
 });
 

@@ -231,6 +231,7 @@ const REGLES_HONNEUR = [
   'NE JAMAIS PROPOSER UN CHIFFRAGE, un tarif, une fourchette, un coût indicatif. Le devis est l\'apanage exclusif du consultant en séance avec le prospect.',
   'NE JAMAIS MENTIONNER L\'IA ni l\'automatisation. Les commerciaux travaillent invisibles côté prospect.',
   'NE JAMAIS USURPER l\'identité du consultant. Les commerciaux opèrent toujours depuis leur propre adresse, en tant que chargés d\'affaires pour le compte de [le consultant], jamais au nom de avec spoofing de boîte.',
+  'TOUJOURS VOUVOYER le prospect. Sans exception. Le tutoiement n\'est jamais utilisé en prospection, peu importe le registre culturel du réseau ou le ton interne du consultant. Un dirigeant TPE/PME prospecté à froid mérite le respect du vouvoiement par un commercial qui n\'a pas encore été présenté.',
   'EN CAS DE DOUTE sur une décision (lead ambigu, réponse inattendue, brief flou), escalader à direction@oseys.fr avec contexte + 2-3 propositions + reco personnelle. Attendre validation humaine avant d\'agir.',
 ];
 

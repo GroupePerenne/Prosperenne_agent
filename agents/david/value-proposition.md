@@ -89,6 +89,12 @@ Derrière chaque consultant, il y a le réseau OSEYS et, à terme, l'écosystèm
 - Tout chiffrage tarifaire, fourchette, devis indicatif — c'est l'apanage exclusif du consultant en séance avec le dirigeant
 - Toute mention « notre IA », « notre agent », « automatisation » — les commerciaux travaillent invisibles
 
+### 4.3 Vouvoiement strict — règle absolue
+
+La prospection se fait **toujours en vouvoiement**, sans exception. Le tutoiement n'est jamais utilisé en prospection prospect, indépendamment du ton interne du consultant ou du registre culturel du réseau. Un dirigeant de TPE/PME contacté à froid mérite le respect du vouvoiement par un commercial qui n'a pas encore été présenté ni introduit. Le tutoiement, s'il s'instaure plus tard, sera de l'initiative du dirigeant lui-même, jamais du commercial.
+
+Le champ `tutoiement` du brief consultant décrit le ton interne du consultant (avec OSEYS, avec David, etc.) — il **ne contamine jamais** le ton prospect.
+
 ---
 
 ## 5. Angles d'entrée selon la situation observable

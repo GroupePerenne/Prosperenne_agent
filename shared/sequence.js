@@ -171,7 +171,7 @@ ${consultant.offre || '(non précisée — utiliser le socle OSEYS pilotage éco
 
 ## Ton à respecter
 - Registre : ${consultant.ton || 'posé, pragmatique, orienté résultats'}
-- ${consultant.tutoiement ? 'Tutoiement assumé' : 'Vouvoiement'} (selon brief consultant)
+- **VOUVOIEMENT STRICT, sans exception**. Tu ne tutoies JAMAIS un prospect, peu importe le registre culturel du réseau ou ce qu'indique le brief consultant. Le tutoiement est un manque de respect dans une prise de contact à froid.
 - Messages humains, courts, qui donnent envie de répondre
 - JAMAIS de formules bateau ("j'espère que ce message vous trouve en forme", "suite à notre conversation", etc.)
 - JAMAIS de "je reviens vers vous" en relance — apporte toujours un angle neuf${discBlock}
