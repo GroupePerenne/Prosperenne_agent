@@ -14,6 +14,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// Tests handleDailyDigest reposent sur le flag DAILY_REPORT_ENABLED=1 (cf.
+// décision Paul 1er mai 2026 PM : le digest skip silencieusement si flag à 0
+// pour éviter les mails vides avant démarrage pilote opérationnel).
+process.env.DAILY_REPORT_ENABLED = '1';
+
 const {
   handleDailyDigest,
   aggregateMetrics,

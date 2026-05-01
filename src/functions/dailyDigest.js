@@ -235,6 +235,16 @@ function defaultDeps() {
 
 async function handleDailyDigest(myTimer, context, deps = defaultDeps()) {
   const log = makeSafeLogger(context);
+
+  // Flag d'activation pilote (cf. décision Paul 1er mai 2026 PM) : le
+  // dailyDigest vers Charli ne doit tourner qu'une fois la prospection
+  // réellement démarrée. Sinon génère 'rien fait aujourd'hui' qui pollue
+  // la mémoire continue Charli (user_id=charli).
+  if (process.env.DAILY_REPORT_ENABLED !== '1') {
+    log('[dailyDigest] skipped (DAILY_REPORT_ENABLED != 1) — pilote pas encore démarré');
+    return;
+  }
+
   const yesterday = getYesterdayParisISO();
   log(`dailyDigest tick for ${yesterday}`);
 

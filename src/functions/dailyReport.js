@@ -147,6 +147,15 @@ app.timer('dailyReport', {
   schedule: '0 0 8 * * 1-5', // 8h00 Paris (via WEBSITE_TIME_ZONE), lun-ven
   handler: async (myTimer, context) => {
     const log = makeSafeLogger(context);
+
+    // Flag d'activation pilote (cf. décision Paul 1er mai 2026 PM) : le
+    // dailyReport ne doit tourner qu'une fois la prospection réellement
+    // démarrée. Avant ça, pas de données à reporter → mails vides polluants.
+    if (process.env.DAILY_REPORT_ENABLED !== '1') {
+      log('[dailyReport] skipped (DAILY_REPORT_ENABLED != 1) — pilote pas encore démarré');
+      return;
+    }
+
     const yesterday = getYesterdayParisISO();
     log(`dailyReport tick for ${yesterday}`);
 

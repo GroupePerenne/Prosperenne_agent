@@ -474,9 +474,9 @@ async function escalateToDirection({ subject, contexte, extraitMessage, proposit
 function wrapHtml(text) {
   const paragraphs = text
     .split('\n\n')
-    .map((p) => `<p style="margin:0 0 14px;line-height:1.6;color:#1a1714">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+    .map((p) => `<p style="margin:0 0 14px;line-height:1.6;color:#1a1714;font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:12pt">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
-  return `<div style="font-family:Arial,sans-serif;color:#1a1714">${paragraphs}${davidSignatureHtml()}</div>`;
+  return `<div style="font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:12pt;color:#1a1714">${paragraphs}${davidSignatureHtml()}</div>`;
 }
 
 function escapeHtml(s) {
