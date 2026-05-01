@@ -5,7 +5,11 @@
 .claude
 .env
 .env.example
-node_modules
+# node_modules retiré BL-49 : Linux Consumption + WEBSITE_RUN_FROM_PACKAGE
+# monte le ZIP en read-only, Oryx ne peut pas y écrire les deps post-upload.
+# Le ZIP doit donc contenir node_modules pour que le worker boot @azure/functions.
+# Trade-off : ZIP plus gros (~30-50MB) mais auto-suffisant et reproductible.
+# node_modules
 *.log
 coverage
 tests
