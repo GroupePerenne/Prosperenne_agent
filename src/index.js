@@ -8,6 +8,6 @@ require('./functions/scheduler');
 require('./functions/davidInbox');
 require('./functions/avatarProxy');
 require('./functions/dailyReport');
-// TODO: activer quand prêts
-// require('./functions/patternsLearner');
-// require('./functions/runLeadSelectorForConsultant');
+require('./functions/dailyDigest');
+require('./functions/patternsLearner');
+require('./functions/runLeadSelectorForConsultant');
