@@ -210,11 +210,16 @@ test('handleQualification — champs requis manquants : 400 sans appel sendMail 
   assert.equal(mem0Calls.length, 0);
 });
 
-test('handleQualification — sendMail throw : status 500 (erreur non-Mem0 propagée)', async () => {
+test('handleQualification — sendMail throw : status 200 fire-and-forget (refonte 4 mai 2026)', async () => {
+  // Refonte 4 mai 2026 : sendMail est désormais fire-and-forget (catch interne)
+  // pour ne pas bloquer la réponse HTTP au formulaire (Failed to fetch sur
+  // réseau lent observé Morgane/Johnny). L'erreur est swallowée et loggée
+  // en warn, le brief est tout de même tracé en Storage Tables.
   const { mem0 } = makeMem0Stub();
   const deps = makeDeps({ mem0, sendMailThrows: new Error('Graph API 500') });
   const { context } = makeContext();
   const res = await handleQualification(makeRequest(), context, deps);
-  assert.equal(res.status, 500);
-  assert.match(res.jsonBody.error, /Graph API 500/);
+  assert.equal(res.status, 200);
+  assert.equal(res.jsonBody.ok, true);
+  assert.match(res.jsonBody.brief_id, /^brief_/);
 });

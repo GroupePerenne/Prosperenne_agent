@@ -148,36 +148,51 @@ async function handleQualification(request, context, deps = {}) {
       return null;
     });
 
-    await Promise.all([
-      sendMail({
-        from: process.env.DAVID_EMAIL,
-        to: process.env.DAVID_EMAIL,
-        subject: `[Qualification] ${brief.nom} — ${brief.entreprise || 'cabinet non précisé'}`,
-        html: renderBriefEmail(brief, briefId),
-      }),
-      sendMail({
-        from: process.env.DAVID_EMAIL,
-        to: brief.email,
-        subject: 'Brief bien reçu — je reviens vers toi sous 24h',
-        html: `<p>Salut ${brief.nom.split(/\s+/)[0]},</p>
+    // Mails + tâches I/O lancés en fire-and-forget pour ne pas bloquer la
+    // réponse HTTP au formulaire (sinon 2-4s de latence Promise.all → cause
+    // Failed to fetch côté browser sur réseau mobile/lent, observé Morgane/
+    // Johnny le 4 mai 2026 12h00).
+    //
+    // Les 2 sendMail (récap David + accusé consultant) + Mem0 storeConsultant
+    // + recordOnboardingCompleted + recordAction tournent en arrière-plan.
+    // Toute erreur est swallowée par les .catch() de chaque promise. Le brief
+    // est de toute façon tracé dans la Storage Table consultantOnboarding
+    // (best-effort) + dans les logs FA.
+    const sendMailDavid = sendMail({
+      from: process.env.DAVID_EMAIL,
+      to: process.env.DAVID_EMAIL,
+      subject: `[Qualification] ${brief.nom} — ${brief.entreprise || 'cabinet non précisé'}`,
+      html: renderBriefEmail(brief, briefId),
+    }).catch((err) => log.warn(`[sendMail] david récap failed: ${err && err.message}`));
+    const sendMailConsultant = sendMail({
+      from: process.env.DAVID_EMAIL,
+      to: brief.email,
+      subject: 'Brief bien reçu — je reviens vers toi sous 24h',
+      html: `<p>Salut ${brief.nom.split(/\s+/)[0]},</p>
 <p>J'ai bien reçu ton brief. Je relis tout ça et je te reviens sous 24h avec un premier retour et un batch de leads à te proposer.</p>
 <p>Si tu veux ajuster quelque chose avant, réponds simplement à ce mail.</p>
 <p>David</p>`,
-      }),
-      mem0Task,
-      onboardingTask,
-      actionTask,
-    ]);
+    }).catch((err) => log.warn(`[sendMail] consultant accusé failed: ${err && err.message}`));
 
-    // Déclenchement Lead Selector en fire-and-forget. On ne bloque PAS la
-    // réponse HTTP au consultant. Toute erreur est swallowée par la fonction
-    // (defensive). Voir SPEC §9.2 — le piège fire-and-forget Azure Functions
-    // sera traité par bascule queue trigger si on observe des kills.
+    // Déclenchement Lead Selector en fire-and-forget (idem comportement
+    // historique). Inhibé via env LEAD_SELECTOR_DISABLED=1.
     try {
       triggerLeadSelector({ brief, briefId, consultantId, context });
     } catch (err) {
       log.warn(`[leadSelector] trigger sync error: ${err.message}`);
     }
+
+    // Volontairement : on ne fait PAS await sur les promesses ci-dessus.
+    // Sur Linux Consumption v4, l'event loop reste vivant tant que le worker
+    // n'est pas recyclé — les promises continuent en arrière-plan. C'est le
+    // comportement déjà utilisé par triggerLeadSelector. Pour fiabiliser, on
+    // référence les promises pour éviter "unused expression" mais on ne les
+    // attend pas.
+    void sendMailDavid;
+    void sendMailConsultant;
+    void mem0Task;
+    void onboardingTask;
+    void actionTask;
 
     return {
       status: 200,
