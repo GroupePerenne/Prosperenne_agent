@@ -20,6 +20,7 @@
 
 const { app } = require('@azure/functions');
 const { sendMail } = require('../../shared/graph-mail');
+const { recordAction } = require('../../shared/storage-tables/davidActions');
 const { callClaude } = require('../../shared/anthropic');
 const { davidSignatureHtml } = require('../../shared/templates');
 const { parisDateParts } = require('../../shared/holidays');
@@ -188,6 +189,15 @@ app.timer('dailyReport', {
           html,
         });
         log(`dailyReport sent to ${consultant.email} — metrics: ${JSON.stringify(metrics)}`);
+
+        // Best-effort tracking PWA-M Cycle 1 — n'altère pas le flux si KO.
+        await recordAction({
+          consultantEmail: consultant.email,
+          type: 'daily_brief_sent',
+          summary: `Brief quotidien Prospérenne envoyé pour le ${formatDateFR(yesterday)}`,
+          metadata: { date: yesterday, metrics },
+          at: new Date().toISOString(),
+        }).catch(() => null);
       } catch (err) {
         log.error(`dailyReport failed for ${consultant.email}: ${err.message}`);
       }

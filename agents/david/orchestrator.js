@@ -27,6 +27,7 @@ const martin = require('../martin/worker');
 const mila = require('../mila/worker');
 const pipedrive = require('../../shared/pipedrive');
 const { getMem0 } = require('../../shared/adapters/memory/mem0');
+const { recordAction: recordDavidAction } = require('../../shared/storage-tables/davidActions');
 
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -450,6 +451,21 @@ async function alertConsultant(consultantEmail, msg, decision, classe) {
       `Objet du mail original : ${msg.subject}`
     ),
   });
+
+  // Best-effort tracking PWA-M Cycle 1 — n'altère pas le flux mail.
+  await recordDavidAction({
+    consultantEmail,
+    type: classe === 'bounce' ? 'bounce_received' : 'reply_classified',
+    summary: `Réponse "${classe}" de ${fromAddress}${msg.subject ? ` — ${msg.subject}` : ''}`,
+    metadata: {
+      classe,
+      from: fromAddress,
+      subject: msg.subject || '',
+      confidence: decision.confidence,
+      resume: decision.resume_humain || '',
+    },
+    at: new Date().toISOString(),
+  }).catch(() => null);
 }
 
 async function escalateToDirection({ subject, contexte, extraitMessage, propositions, recommendation, consultantEmail }) {
@@ -469,6 +485,23 @@ async function escalateToDirection({ subject, contexte, extraitMessage, proposit
     subject: `[ESCALATION] ${subject}`,
     html: wrapHtml(body),
   });
+
+  // Best-effort tracking PWA-M Cycle 1 — couvre BL-41 (escalations jamais
+  // trackées en table dédiée jusqu'au 4 mai 2026).
+  if (consultantEmail) {
+    await recordDavidAction({
+      consultantEmail,
+      type: 'escalation_sent',
+      summary: `Escalation à direction@ — ${subject}`,
+      metadata: {
+        subject,
+        contexte,
+        propositions,
+        recommendation,
+      },
+      at: new Date().toISOString(),
+    }).catch(() => null);
+  }
 }
 
 function wrapHtml(text) {

@@ -10,6 +10,8 @@
 
 const { sendMail } = require('../../shared/graph-mail');
 const { onboardingEmailHtml } = require('../../shared/templates');
+const { recordOnboardingSent } = require('../../shared/storage-tables/consultantOnboarding');
+const { recordAction } = require('../../shared/storage-tables/davidActions');
 
 /**
  * @param {Object} consultant
@@ -41,12 +43,32 @@ async function sendOnboardingEmail({ consultant }) {
     choixNiveauBase,
   });
 
-  return sendMail({
+  const result = await sendMail({
     from: process.env.DAVID_EMAIL,
     to: consultant.email,
     subject: `Bienvenue dans le réseau OSEYS, ${consultant.prenom}`,
     html,
   });
+
+  // Best-effort tracking PWA-M Cycle 1 — n'altère pas le retour caller.
+  const consultantName = `${consultant.prenom} ${consultant.nom || ''}`.trim();
+  const sentAt = new Date().toISOString();
+  await Promise.all([
+    recordOnboardingSent({
+      consultantEmail: consultant.email,
+      consultantName,
+      sentAt,
+    }).catch(() => null),
+    recordAction({
+      consultantEmail: consultant.email,
+      type: 'onboarding_sent',
+      summary: `Mail d'onboarding David envoyé à ${consultantName}`,
+      metadata: { from: process.env.DAVID_EMAIL || 'david@oseys.fr' },
+      at: sentAt,
+    }).catch(() => null),
+  ]);
+
+  return result;
 }
 
 module.exports = { sendOnboardingEmail };

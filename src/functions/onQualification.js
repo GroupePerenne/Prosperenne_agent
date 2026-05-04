@@ -15,6 +15,10 @@ const { app } = require('@azure/functions');
 const { sendMail: defaultSendMail } = require('../../shared/graph-mail');
 const { getMem0: defaultGetMem0 } = require('../../shared/adapters/memory/mem0');
 const { makeSafeLogger } = require('../../shared/safe-log');
+const {
+  recordOnboardingCompleted: defaultRecordOnboardingCompleted,
+} = require('../../shared/storage-tables/consultantOnboarding');
+const { recordAction: defaultRecordAction } = require('../../shared/storage-tables/davidActions');
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -85,6 +89,8 @@ async function handleQualification(request, context, deps = {}) {
   const sendMail = deps.sendMail || defaultSendMail;
   const getMem0 = deps.getMem0 || defaultGetMem0;
   const triggerLeadSelector = deps.triggerLeadSelector || defaultTriggerLeadSelector;
+  const recordOnboardingCompleted = deps.recordOnboardingCompleted || defaultRecordOnboardingCompleted;
+  const recordAction = deps.recordAction || defaultRecordAction;
 
   if (request.method === 'OPTIONS') {
     return { status: 204, headers: CORS_HEADERS };
@@ -120,6 +126,28 @@ async function handleQualification(request, context, deps = {}) {
         })
       : Promise.resolve(null);
 
+    const completedAt = new Date().toISOString();
+    const onboardingTask = recordOnboardingCompleted({
+      consultantEmail: brief.email,
+      consultantName: brief.nom,
+      briefId,
+      responses: consultantMemory,
+      completedAt,
+    }).catch((err) => {
+      log.warn(`[storage-tables] recordOnboardingCompleted failed: ${err && err.message}`);
+      return null;
+    });
+    const actionTask = recordAction({
+      consultantEmail: brief.email,
+      type: 'onboarding_completed',
+      summary: `Formulaire onboarding complété par ${brief.nom}`,
+      metadata: { briefId, prospecteur: brief.prospecteur || 'both', offre: brief.offre },
+      at: completedAt,
+    }).catch((err) => {
+      log.warn(`[storage-tables] recordAction onboarding_completed failed: ${err && err.message}`);
+      return null;
+    });
+
     await Promise.all([
       sendMail({
         from: process.env.DAVID_EMAIL,
@@ -137,6 +165,8 @@ async function handleQualification(request, context, deps = {}) {
 <p>David</p>`,
       }),
       mem0Task,
+      onboardingTask,
+      actionTask,
     ]);
 
     // Déclenchement Lead Selector en fire-and-forget. On ne bloque PAS la
