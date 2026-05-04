@@ -37,6 +37,7 @@ function makeWebSearchStub({ byStrategy = {}, throwError = null, sleepMs = 0 } =
 }
 
 function makeApiGouvStub() { return { findCandidatesViaApiGouv: async () => [] }; }
+const emptyHeuristic = { findCandidatesViaHeuristic: async () => [] };
 function makeValidatorStub(result = { confidence: 0.99, proofType: 'siren_match', signals: [] }) {
   return { validateCandidate: async () => result };
 }
@@ -93,6 +94,7 @@ test('Mode on_demand — apiGouv 0 + DDG name_city trouve → stratégie name_si
     { siren: '123456789', companyName: 'ACME', ville: 'Lyon', options: { mode: 'on_demand' } },
     {
       apiGouvImpl: makeApiGouvStub(),
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: cache.stub,
@@ -118,6 +120,7 @@ test('Mode on_demand — name_city échoue + name_siren échoue → return null 
     },
     {
       apiGouvImpl: makeApiGouvStub(),
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: cache.stub,
@@ -145,6 +148,7 @@ test('Mode batch — name_city à name_naf_city tous échouent → 5 stratégies
     },
     {
       apiGouvImpl: makeApiGouvStub(),
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: cache.stub,
@@ -182,6 +186,7 @@ test('Mode batch — name_postcode trouve → stratégies suivantes pas appelée
     },
     {
       apiGouvImpl: makeApiGouvStub(),
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: cache.stub,
@@ -209,6 +214,7 @@ test('Mode par défaut — comportement on_demand (pas de mode passé)', async (
     },
     {
       apiGouvImpl: makeApiGouvStub(),
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: makeCacheStub().stub,
@@ -232,6 +238,7 @@ test('Mode invalide ("foo") → fallback on_demand', async () => {
     },
     {
       apiGouvImpl: makeApiGouvStub(),
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: makeCacheStub().stub,
@@ -308,6 +315,7 @@ test('Mode on_demand — politeness budget exhausted → early-exit déterminist
     },
     {
       apiGouvImpl: makeApiGouvStub(),
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: cache.stub,
@@ -341,6 +349,7 @@ test('Mode on_demand — politeness budget exhausted en 1 seul appel cher → st
     },
     {
       apiGouvImpl: makeApiGouvStub(),
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: cache.stub,
@@ -372,6 +381,7 @@ test('Mode on_demand — overall timeout exhausted → cascade stoppée détermi
     },
     {
       apiGouvImpl: makeApiGouvStub(),
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: ws.stub,
       validatorImpl: makeValidatorStub(),
       cacheImpl: cache.stub,

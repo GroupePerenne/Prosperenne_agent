@@ -24,6 +24,7 @@
  */
 
 const { findCandidatesViaApiGouv } = require('./sources/apiGouv');
+const { findCandidatesViaHeuristic } = require('./sources/heuristicUrlGuess');
 const webSearch = require('./sources/webSearch');
 const { validateCandidate } = require('./validation/siteValidator');
 const { fetchPagesForValidation } = require('./utils/pageFetcher');
@@ -34,7 +35,7 @@ const DEFAULT_CONFIDENCE_THRESHOLD = Number(
 );
 const DEFAULT_TIMEOUT_MS = Number(process.env.SITE_FINDER_TIMEOUT_MS || 15000);
 
-const SOURCES_ORDER = ['api_gouv', 'websearch'];
+const SOURCES_ORDER = ['api_gouv', 'heuristic_url_guess', 'websearch'];
 
 /**
  * Mode 'on_demand' : appel interactif avec bornes serrées. Utilisé par le
@@ -147,6 +148,7 @@ async function findWebsite(input = {}, opts = {}) {
 
   const adapters = {
     apiGouv: opts.apiGouvImpl || { findCandidatesViaApiGouv },
+    heuristic: opts.heuristicImpl || { findCandidatesViaHeuristic },
     webSearch: opts.webSearchImpl || webSearch,
     cache: opts.cacheImpl || websitePatternsCache,
     validator: opts.validatorImpl || { validateCandidate },
@@ -241,6 +243,38 @@ async function findWebsite(input = {}, opts = {}) {
   });
 
   let validatedOutput = await tryValidate(apiGouvCandidates, 'api_gouv');
+
+  // ─── Étape 2.5 : source heuristicUrlGuess (T1bis) ────────────────────────
+  // Tentative gratuite et rapide entre apiGouv (souvent vide pour PME) et la
+  // cascade webSearch (consommatrice + risque de blocage backend). On
+  // construit des URLs candidates par slugification du nom et on les probe.
+  // Le validator aval fait la preuve SIREN comme pour les autres sources.
+  if (!validatedOutput && adapters.heuristic && typeof adapters.heuristic.findCandidatesViaHeuristic === 'function') {
+    let heuristicCandidates = [];
+    let heuristicRejectedReason;
+    try {
+      heuristicCandidates = await adapters.heuristic.findCandidatesViaHeuristic(
+        {
+          siren: input.siren,
+          companyName: input.companyName,
+        },
+        { fetchImpl: opts.fetchImpl, timeoutMs },
+      );
+    } catch (err) {
+      heuristicRejectedReason = (err && err.code) || 'error';
+      logger.warn('site-finder.heuristic.error', { err: err && err.message });
+    }
+
+    attempted.push({
+      source: 'heuristic_url_guess',
+      candidates: heuristicCandidates.length,
+      ...(heuristicRejectedReason ? { rejectedReason: heuristicRejectedReason } : {}),
+    });
+
+    if (heuristicCandidates.length > 0) {
+      validatedOutput = await tryValidate(heuristicCandidates, 'heuristic_url_guess');
+    }
+  }
 
   // ─── Étape 3 : cascade webSearch ─────────────────────────────────────────
   // Skippée si apiGouv a déjà validé. Bornée par les limites du mode :
