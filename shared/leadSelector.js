@@ -635,18 +635,30 @@ async function selectCandidatesForConsultant(params = {}) {
 
     const { kept: afterExclusions, excluded } = applyExclusions(rawCandidates);
 
-    // Enrichissement dirigeants via API RNE (recherche-entreprises.api.gouv.fr)
-    // pour combler le trou structurel : LeadBase Constantin a ~85-90% des
-    // entités avec `dirigeants: null` (calibré 4 mai 2026 sur 30 PME effectif
-    // 11). L'API gouv résout 60% des cas. Cache 30j en table DirigeantsCache.
-    const enrichmentStart = Date.now();
-    const dirigeantsEnriched = await enrichBatchInPlace(afterExclusions, { concurrency: 10 }).catch(() => 0);
-    logInfo(context, `[leadSelector] dirigeants enriched ${dirigeantsEnriched}/${afterExclusions.length} via RNE (${Date.now() - enrichmentStart}ms)`);
+    // Pré-tri par distance pour ne enrichir QUE le sous-ensemble qui sera
+    // potentiellement retourné. Sinon enrichir 2000 SIRENs prend > 200s et
+    // tue le worker Linux Consumption (timeout 230s).
+    //
+    // Stratégie :
+    // 1. Tri par distance sur ALL candidats (sans dirigeant filter, sortByDistanceDesc trie)
+    // 2. Enrichir RNE seulement les TOP enrichmentPool (≈ maxCandidates × 4 pour
+    //    compenser ceux qui n'auront pas de dirigeant matchable)
+    // 3. Extraction + filtre noDirigeant sur le sous-ensemble enrichi
+    // 4. Slice final maxCandidates
+    const center = await computeZoneCenter(brief, { context });
+    const allSortedEntities = sortByDistanceDesc(afterExclusions, center);
 
-    // Extraction candidate (sans filtre email)
+    const enrichmentPool = Math.min(allSortedEntities.length, Math.max(maxCandidates * 4, 50));
+    const toEnrich = allSortedEntities.slice(0, enrichmentPool);
+
+    const enrichmentStart = Date.now();
+    const dirigeantsEnriched = await enrichBatchInPlace(toEnrich, { concurrency: 10 }).catch(() => 0);
+    logInfo(context, `[leadSelector] dirigeants enriched ${dirigeantsEnriched}/${toEnrich.length} via RNE (${Date.now() - enrichmentStart}ms, pool=${enrichmentPool})`);
+
+    // Extraction candidate (sans filtre email) sur le pool enrichi triés
     let excludedNoDirigeant = 0;
     const enriched = [];
-    for (const e of afterExclusions) {
+    for (const e of toEnrich) {
       const cand = extractCandidateFromEntity(e);
       if (!cand) {
         excludedNoDirigeant++;
@@ -655,14 +667,8 @@ async function selectCandidatesForConsultant(params = {}) {
       enriched.push({ entity: e, candidate: cand });
     }
 
-    const center = await computeZoneCenter(brief, { context });
-
-    const sortedEntities = sortByDistanceDesc(enriched.map((x) => x.entity), center);
-    const entityToCandidate = new Map();
-    for (const x of enriched) entityToCandidate.set(x.entity, x.candidate);
-
-    const sortedCandidates = sortedEntities.map((e) => entityToCandidate.get(e)).filter(Boolean);
-    const excludedNoGps = sortedEntities.filter((e) => !entityCoords(e)).length;
+    const sortedCandidates = enriched.map((x) => x.candidate);
+    const excludedNoGps = toEnrich.filter((e) => !entityCoords(e)).length;
 
     const selected = sortedCandidates.slice(0, maxCandidates);
 
