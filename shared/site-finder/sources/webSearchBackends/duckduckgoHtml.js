@@ -24,6 +24,7 @@
  */
 
 const { normalize } = require('../../utils/urlNormalizer');
+const { SearchBlockedError, SearchTransientError } = require('./_searchErrors');
 
 const DDG_HTML_URL = process.env.SITE_FINDER_DDG_HTML_URL
   || 'https://html.duckduckgo.com/html/';
@@ -34,25 +35,6 @@ const DEFAULT_USER_AGENT = process.env.SITE_FINDER_WEBSEARCH_USER_AGENT
   + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const BACKEND_ID = 'duckduckgo_html';
-
-class SearchBlockedError extends Error {
-  constructor(reason, status) {
-    super(`web search blocked: ${reason}`);
-    this.name = 'SearchBlockedError';
-    this.code = 'blocked';
-    this.reason = reason;
-    if (status !== undefined) this.status = status;
-  }
-}
-
-class SearchTransientError extends Error {
-  constructor(message, status) {
-    super(message);
-    this.name = 'SearchTransientError';
-    this.code = 'transient';
-    if (status !== undefined) this.status = status;
-  }
-}
 
 /**
  * Lance une recherche DuckDuckGo HTML.

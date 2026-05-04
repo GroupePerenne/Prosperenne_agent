@@ -246,3 +246,111 @@ test('QUERY_STRATEGIES — name_city build forme la query attendue', () => {
   const strategy = QUERY_STRATEGIES.find((s) => s.name === 'name_city');
   assert.equal(strategy.build({ companyName: 'ACME SAS', ville: 'Lyon' }), '"ACME SAS" Lyon');
 });
+
+// ─── Cascade multi-backend ────────────────────────────────────────────────
+
+function makeBackend(BACKEND_ID, behavior) {
+  return {
+    BACKEND_ID,
+    search: async () => {
+      if (typeof behavior === 'function') return behavior();
+      if (behavior instanceof Error) throw behavior;
+      return behavior || [];
+    },
+  };
+}
+
+test('cascade — backend 1 blocked → bascule sur backend 2 qui répond', async () => {
+  _resetPolitenessForTests();
+  const blockedErr = Object.assign(new Error('rate-limited'), { code: 'blocked' });
+  const b1 = makeBackend('b1', blockedErr);
+  const b2 = makeBackend('b2', [{ url: 'https://acme.fr', title: 'ACME', rank: 1 }]);
+  const strategy = QUERY_STRATEGIES.find((s) => s.name === 'name_city');
+  const out = await searchOneStrategy(
+    strategy,
+    { companyName: 'ACME', ville: 'Lyon' },
+    { backend: [b1, b2], politenessDelayMs: 0 },
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].url, 'https://acme.fr');
+  assert.equal(out[0].backend, 'b2');
+});
+
+test('cascade — backend 1 transient → bascule, backend 2 répond', async () => {
+  _resetPolitenessForTests();
+  const transientErr = Object.assign(new Error('http 503'), { code: 'transient' });
+  const b1 = makeBackend('b1', transientErr);
+  const b2 = makeBackend('b2', [{ url: 'https://acme.fr', title: 'ACME', rank: 1 }]);
+  const strategy = QUERY_STRATEGIES.find((s) => s.name === 'name_city');
+  const out = await searchOneStrategy(
+    strategy,
+    { companyName: 'ACME', ville: 'Lyon' },
+    { backend: [b1, b2], politenessDelayMs: 0 },
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].backend, 'b2');
+});
+
+test('cascade — tous blocked → throw blocked (orchestrateur stoppera)', async () => {
+  _resetPolitenessForTests();
+  const blockedErr = Object.assign(new Error('rate-limited'), { code: 'blocked' });
+  const b1 = makeBackend('b1', blockedErr);
+  const b2 = makeBackend('b2', blockedErr);
+  const strategy = QUERY_STRATEGIES.find((s) => s.name === 'name_city');
+  await assert.rejects(
+    () => searchOneStrategy(
+      strategy,
+      { companyName: 'ACME', ville: 'Lyon' },
+      { backend: [b1, b2], politenessDelayMs: 0 },
+    ),
+    (err) => err && err.code === 'blocked',
+  );
+});
+
+test('cascade — premier backend [] → on retient sa reponse, pas de fallback', async () => {
+  _resetPolitenessForTests();
+  const b1 = makeBackend('b1', []);
+  const b2 = makeBackend('b2', [{ url: 'https://should-not-be-called.fr' }]);
+  const strategy = QUERY_STRATEGIES.find((s) => s.name === 'name_city');
+  const out = await searchOneStrategy(
+    strategy,
+    { companyName: 'ACME', ville: 'Lyon' },
+    { backend: [b1, b2], politenessDelayMs: 0 },
+  );
+  // 0 résultats du premier backend = réponse légitime (rien trouvé), on
+  // ne tente PAS le suivant — économie de requêtes.
+  assert.deepEqual(out, []);
+});
+
+test('getDefaultBackends — env override liste de backends', () => {
+  const original = process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
+  process.env.SITE_FINDER_WEBSEARCH_BACKENDS = 'mojeek,ecosia';
+  const out = webSearch.getDefaultBackends();
+  assert.equal(out.length, 2);
+  assert.equal(out[0].BACKEND_ID, 'mojeek');
+  assert.equal(out[1].BACKEND_ID, 'ecosia');
+  if (original === undefined) delete process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
+  else process.env.SITE_FINDER_WEBSEARCH_BACKENDS = original;
+});
+
+test('getDefaultBackends — env avec ID inconnu filtré, garde le valide', () => {
+  const original = process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
+  process.env.SITE_FINDER_WEBSEARCH_BACKENDS = 'unknown_engine,mojeek';
+  const out = webSearch.getDefaultBackends();
+  assert.equal(out.length, 1);
+  assert.equal(out[0].BACKEND_ID, 'mojeek');
+  if (original === undefined) delete process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
+  else process.env.SITE_FINDER_WEBSEARCH_BACKENDS = original;
+});
+
+test('getDefaultBackends — pas d\'env → ordre par défaut (4 backends)', () => {
+  const original = process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
+  delete process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
+  const out = webSearch.getDefaultBackends();
+  assert.equal(out.length, 4);
+  assert.deepEqual(
+    out.map((b) => b.BACKEND_ID),
+    ['duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'],
+  );
+  if (original !== undefined) process.env.SITE_FINDER_WEBSEARCH_BACKENDS = original;
+});
