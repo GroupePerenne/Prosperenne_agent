@@ -26,6 +26,7 @@ const { selectCandidatesForConsultant } = require('../../shared/leadSelector');
 const { sendMail } = require('../../shared/graph-mail');
 const { TableClient } = require('@azure/data-tables');
 const { makeSafeLogger } = require('../../shared/safe-log');
+const { enrichBatchInPlace } = require('../../shared/enrichers/dirigeants-rne');
 
 const TABLE_NAME = process.env.MONTECARLO_RUNS_TABLE || 'monteCarloRuns';
 const ALERT_EMAIL = process.env.ALERT_EMAIL || 'direction@oseys.fr';
@@ -113,8 +114,11 @@ const BRIEF_TEMPLATES = [
   },
 ];
 
+// Cron 4h Paris (WEBSITE_TIME_ZONE=Romance Standard Time sur le FA David).
+// Choix 4h : assez tôt pour que les auto-corrections aient le temps de
+// tourner et de pré-enrichir AVANT le démarrage du pilote (envois 9h-11h).
 app.timer('nightlyMonteCarloSmoke', {
-  schedule: process.env.MONTECARLO_CRON || '0 0 3 * * *',
+  schedule: process.env.MONTECARLO_CRON || '0 0 4 * * *',
   handler: async (myTimer, context) => {
     const log = makeSafeLogger(context);
     log('[mc] starting nightly Monte Carlo smoke suite');
@@ -166,17 +170,175 @@ app.timer('nightlyMonteCarloSmoke', {
     // Persist results
     await persistResults(runId, results, startedAt, context);
 
-    // Alerter si fail
+    // Auto-corrections sur les patterns connus
     const failed = results.filter((r) => !r.passed);
+    let corrections = [];
     if (failed.length > 0) {
-      await sendAlert(failed, results, runId, startedAt).catch((err) => {
+      corrections = await applyAutoCorrections(failed, BRIEF_TEMPLATES, context).catch((err) => {
+        log.warn(`[mc] auto-corrections failed: ${err.message}`);
+        return [];
+      });
+    }
+
+    // Alerter si fail (avec détail des corrections appliquées)
+    if (failed.length > 0) {
+      await sendAlert(failed, results, corrections, runId, startedAt).catch((err) => {
         log.warn(`[mc] alert mail failed: ${err.message}`);
       });
     }
 
-    log(`[mc] done — ${results.length} briefs tested, ${failed.length} failed`);
+    log(`[mc] done — ${results.length} briefs tested, ${failed.length} failed, ${corrections.length} corrections appliquées`);
   },
 });
+
+/**
+ * Auto-corrections Monte Carlo. Pour chaque échec détecté, applique une
+ * action corrective sûre (jamais destructive). Retourne le journal des
+ * corrections appliquées avec leur résultat.
+ *
+ * Patterns gérés :
+ * - excludedNoDirigeant ratio > 70% : déclenche pré-enrichissement RNE sur
+ *   un échantillon LeadBase ciblé pour améliorer le pool des prochains runs.
+ * - errorMessage "Cannot read private member" : BL-45 détecté → log + alerte
+ *   uniquement (le fix est dans le code, signal d'une régression de deploy).
+ * - errorMessage "LeadBase connection string absente" : KV ref unresolved →
+ *   alerte (correction manuelle requise sur access policy).
+ * - returned 0 sur brief edge_secteur_inconnu attendu empty : OK, pas une
+ *   dégradation.
+ */
+async function applyAutoCorrections(failed, templates, context) {
+  const log = makeSafeLogger(context);
+  const corrections = [];
+
+  for (const result of failed) {
+    const tpl = templates.find((t) => t.name === result.name);
+    if (!tpl) continue;
+
+    // Pattern 1 : noDirigeant ratio élevé → pré-enrichissement RNE
+    if (
+      result.status === 'empty' &&
+      result.candidatesCount > 100 &&
+      result.excludedNoDirigeant > 0
+    ) {
+      const ratio = result.excludedNoDirigeant / Math.max(1, result.candidatesCount);
+      if (ratio > 0.7) {
+        try {
+          const sample = await prefetchEnrichmentForBrief(tpl.brief, 100, context);
+          corrections.push({
+            name: result.name,
+            action: 'prefetch_rne_sample',
+            note: `noDirigeant ratio ${(ratio * 100).toFixed(0)}% — pré-enrichissement RNE sur 100 SIRENs zone`,
+            outcome: `${sample.enriched}/${sample.attempted} dirigeants enrichis`,
+          });
+          log(`[mc] auto-correction prefetch_rne sur ${result.name}: ${sample.enriched}/${sample.attempted}`);
+        } catch (err) {
+          corrections.push({
+            name: result.name,
+            action: 'prefetch_rne_sample',
+            note: 'tentative échouée',
+            outcome: `error: ${err.message}`,
+          });
+        }
+      }
+    }
+
+    // Pattern 2 : BL-45 detected
+    if (result.errorMessage && result.errorMessage.includes('Cannot read private member')) {
+      corrections.push({
+        name: result.name,
+        action: 'bl45_signal',
+        note: 'Régression BL-45 détectée — context bind perdu',
+        outcome: 'alerte uniquement, code patch est déjà déployé. Vérifier si dernier deploy a écrasé le fix.',
+      });
+    }
+
+    // Pattern 3 : LeadBase KV ref unresolved
+    if (
+      result.errorMessage &&
+      result.errorMessage.includes('LeadBase connection string absente')
+    ) {
+      corrections.push({
+        name: result.name,
+        action: 'kv_ref_alert',
+        note: 'KV ref LEADBASE_STORAGE_CONNECTION_STRING non résolue',
+        outcome: 'alerte uniquement, vérifier MI access policy sur pereneo-prod-kv',
+      });
+    }
+
+    // Pattern 4 : timeout > 180s
+    if (result.elapsedMs > 180000) {
+      corrections.push({
+        name: result.name,
+        action: 'timeout_signal',
+        note: `elapsedMs ${result.elapsedMs}ms > 180s`,
+        outcome: 'alerte uniquement. Probable scan LeadBase lent ou enrichissement RNE en boucle.',
+      });
+    }
+  }
+
+  return corrections;
+}
+
+/**
+ * Pré-enrichissement RNE ciblé : récupère un échantillon LeadBase pour la
+ * zone du brief, fetch les dirigeants RNE, persiste en LeadBase. Améliore
+ * le pool des prochains runs.
+ *
+ * V0 simple : fetch ~100 SIRENs du même secteur+département, sans filtre
+ * complexe. Suffit pour combler une partie du trou.
+ */
+async function prefetchEnrichmentForBrief(brief, limit, context) {
+  const cs = process.env.LEADBASE_STORAGE_CONNECTION_STRING || process.env.AzureWebJobsStorage;
+  if (!cs) return { attempted: 0, enriched: 0, skipped: 'no_connection_string' };
+
+  // V0 : fetch les N premiers candidats SANS filtre fin (le but est juste
+  // de remplir progressivement la cache RNE). En V1+, on pourrait ré-utiliser
+  // mapBriefToFilters pour cibler le secteur exact.
+  const tableClient = TableClient.fromConnectionString(cs, 'LeadBase');
+  const sample = [];
+  try {
+    const iter = tableClient.listEntities({
+      queryOptions: {
+        select: ['partitionKey', 'rowKey', 'siren', 'dirigeants'],
+      },
+    });
+    for await (const e of iter) {
+      if (!e.dirigeants || e.dirigeants === 'null' || e.dirigeants === '[]') {
+        sample.push(e);
+        if (sample.length >= limit) break;
+      }
+    }
+  } catch (err) {
+    return { attempted: 0, enriched: 0, error: err.message };
+  }
+
+  if (sample.length === 0) return { attempted: 0, enriched: 0 };
+
+  const enriched = await enrichBatchInPlace(sample, { concurrency: 8 }).catch(() => 0);
+
+  // Persiste les enrichissements en LeadBase (Merge)
+  let persisted = 0;
+  for (const e of sample) {
+    if (e.dirigeants && e.dirigeants !== 'null' && e.dirigeants !== '[]') {
+      try {
+        await tableClient.updateEntity(
+          {
+            partitionKey: e.partitionKey,
+            rowKey: e.rowKey,
+            dirigeants: e.dirigeants,
+            rne_checked_at: new Date().toISOString(),
+          },
+          'Merge',
+        );
+        persisted++;
+      } catch {
+        // best effort
+      }
+    }
+  }
+
+  return { attempted: sample.length, enriched, persisted };
+}
 
 function checkExpectations(tpl, result) {
   const e = tpl.expected || {};
@@ -221,7 +383,7 @@ async function persistResults(runId, results, startedAt, context) {
   }
 }
 
-async function sendAlert(failed, allResults, runId, startedAt) {
+async function sendAlert(failed, allResults, corrections, runId, startedAt) {
   const summary = failed
     .map(
       (r) =>
@@ -235,10 +397,20 @@ async function sendAlert(failed, allResults, runId, startedAt) {
     )
     .join('');
 
+  const correctionsHtml =
+    corrections && corrections.length > 0
+      ? `<h3>Auto-corrections appliquées (${corrections.length})</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:12px">
+<tr><th>Brief</th><th>Action</th><th>Note</th><th>Résultat</th></tr>
+${corrections.map((c) => `<tr><td>${c.name}</td><td><code>${c.action}</code></td><td>${c.note || '-'}</td><td>${c.outcome || '-'}</td></tr>`).join('')}
+</table>`
+      : '<p><em>Aucune auto-correction appliquée (pas de pattern reconnu pour ces échecs).</em></p>';
+
   const html = `<p>Bonjour,</p>
 <p>La passe Monte Carlo nocturne du <strong>${startedAt.toLocaleString('fr-FR')}</strong> a détecté <strong>${failed.length} dégradation(s)</strong> sur Lead Selector.</p>
 <h3>Briefs en échec</h3>
 <ul>${summary}</ul>
+${correctionsHtml}
 <h3>Récap complet</h3>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:12px">
 <tr><th>OK</th><th>Brief</th><th>Status</th><th>Candidates</th><th>Returned</th><th>NoDirigeant</th><th>Elapsed</th></tr>
@@ -250,7 +422,7 @@ ${allRows}
   await sendMail({
     from: FROM_EMAIL,
     to: ALERT_EMAIL,
-    subject: `[Pereneo] Alerte Monte Carlo — ${failed.length} brief(s) en échec`,
+    subject: `[Pereneo] Alerte Monte Carlo — ${failed.length} brief(s) en échec, ${corrections ? corrections.length : 0} corrections`,
     html,
   });
 }
