@@ -343,14 +343,14 @@ test('getDefaultBackends — env avec ID inconnu filtré, garde le valide', () =
   else process.env.SITE_FINDER_WEBSEARCH_BACKENDS = original;
 });
 
-test('getDefaultBackends — pas d\'env → ordre par défaut (4 backends)', () => {
+test('getDefaultBackends — pas d\'env → ordre par défaut (5 backends, brave en tête)', () => {
   const original = process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
   delete process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
   const out = webSearch.getDefaultBackends();
-  assert.equal(out.length, 4);
+  assert.equal(out.length, 5);
   assert.deepEqual(
     out.map((b) => b.BACKEND_ID),
-    ['duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'],
+    ['brave', 'duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'],
   );
   if (original !== undefined) process.env.SITE_FINDER_WEBSEARCH_BACKENDS = original;
 });
