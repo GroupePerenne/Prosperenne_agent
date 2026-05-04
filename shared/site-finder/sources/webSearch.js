@@ -1,29 +1,65 @@
 'use strict';
 
 /**
- * Adapter webSearch — cascade de requêtes successives sur un moteur de
- * recherche public, avec filtrage des domaines agrégateurs connus.
+ * Adapter webSearch — cascade de requêtes successives sur des moteurs de
+ * recherche publics, avec filtrage des domaines agrégateurs connus.
  *
  * Architecture T2 :
- *   - Backend pluggable (DuckDuckGo HTML par défaut, SearXNG / Brave plus tard).
+ *   - Cascade de backends pluggables (DDG Lite, Mojeek, Ecosia, DDG HTML
+ *     par défaut). Si un backend throw `blocked` ou `transient`, on bascule
+ *     sur le suivant pour la même stratégie. La diversification multi-moteur
+ *     fait office de résilience anti-blocage.
  *   - 5 stratégies de query ordonnées du plus discriminant au plus large.
  *   - Le caller (orchestrateur findWebsite) a deux modes d'usage :
  *       1. `findCandidatesViaWebSearch(input)` → agrège tous les candidats des
  *          5 stratégies (économie de roundtrip côté caller, mais consomme du
- *          budget DDG inutilement si la stratégie 1 suffisait).
+ *          budget backend inutilement si la stratégie 1 suffisait).
  *       2. `searchOneStrategy(strategy, input)` → exécute une seule stratégie,
  *          le caller peut stopper la cascade dès validation. C'est le mode
- *          recommandé en intégration orchestrateur (cf. T2.5 du brief).
- *   - Filtrage agrégateurs côté webSearch : les URL retournées par DDG qui
- *     pointent vers societe.com / linkedin.com / etc. sont éliminées avant
- *     d'être présentées au validator (économie validator + faux positif).
+ *          recommandé en intégration orchestrateur.
+ *   - Filtrage agrégateurs côté webSearch : les URL retournées qui pointent
+ *     vers societe.com / linkedin.com / etc. sont éliminées avant d'être
+ *     présentées au validator (économie validator + faux positif).
  *
  * Politesse :
  *   - delay configurable entre 2 requêtes au même backend, géré par un
  *     Map<backendId, lastFetchAt> module-scope. Réinitialisable pour tests.
+ *
+ * Ordre des backends configurable via env `SITE_FINDER_WEBSEARCH_BACKENDS`
+ * (liste comma-separated). Par défaut : `ddg_lite,mojeek,ecosia,duckduckgo_html`.
+ * Le 1er backend qui retourne un résultat non-bloqué fournit les candidats
+ * pour cette stratégie. Si tous bloquent → on remonte SearchBlockedError
+ * pour que l'orchestrateur stoppe la cascade strategy globalement.
  */
 
 const duckduckgoHtml = require('./webSearchBackends/duckduckgoHtml');
+const duckduckgoLite = require('./webSearchBackends/duckduckgoLite');
+const mojeek = require('./webSearchBackends/mojeek');
+const ecosia = require('./webSearchBackends/ecosia');
+
+// Map BACKEND_ID → module pour résolution depuis env config.
+const BACKEND_REGISTRY = {
+  [duckduckgoHtml.BACKEND_ID]: duckduckgoHtml,
+  [duckduckgoLite.BACKEND_ID]: duckduckgoLite,
+  [mojeek.BACKEND_ID]: mojeek,
+  [ecosia.BACKEND_ID]: ecosia,
+};
+
+const DEFAULT_BACKENDS_ORDER = ['duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'];
+
+/**
+ * Lit l'ordre des backends depuis env. Filtre les IDs inconnus pour ne
+ * pas crasher si quelqu'un met une typo dans la config Azure.
+ */
+function getDefaultBackends() {
+  const raw = process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
+  if (!raw || typeof raw !== 'string') {
+    return DEFAULT_BACKENDS_ORDER.map((id) => BACKEND_REGISTRY[id]).filter(Boolean);
+  }
+  const ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const out = ids.map((id) => BACKEND_REGISTRY[id]).filter(Boolean);
+  return out.length > 0 ? out : DEFAULT_BACKENDS_ORDER.map((id) => BACKEND_REGISTRY[id]).filter(Boolean);
+}
 
 const DEFAULT_POLITENESS_DELAY_MS = Number(
   process.env.SITE_FINDER_WEBSEARCH_POLITENESS_DELAY_MS || 5000,
@@ -156,12 +192,18 @@ function canApply(strategy, input) {
 }
 
 /**
- * Exécute une seule stratégie. Recommandé pour la cascade dans l'orchestrateur.
+ * Exécute une seule stratégie sur la cascade de backends. Le 1er backend qui
+ * retourne sans blocked fournit les résultats. Si tous les backends sont
+ * bloqués, on remonte SearchBlockedError pour stopper la cascade strategy
+ * globalement (l'orchestrateur ne martèle pas).
  *
  * @param {Object} strategy   Une entrée de QUERY_STRATEGIES
  * @param {Object} input
  * @param {Object} [opts]
- * @param {Object} [opts.backend]            Backend search (défaut DDG HTML)
+ * @param {Object|Array} [opts.backend]      Backend ou array de backends en
+ *                                           cascade. Si non fourni : env
+ *                                           `SITE_FINDER_WEBSEARCH_BACKENDS`
+ *                                           ou DEFAULT_BACKENDS_ORDER.
  * @param {Function} [opts.fetchImpl]
  * @param {number}   [opts.timeoutMs]
  * @param {number}   [opts.maxResults]
@@ -174,31 +216,69 @@ async function searchOneStrategy(strategy, input, opts = {}) {
   const query = strategy.build(input);
   if (!query || typeof query !== 'string' || query.trim().length === 0) return [];
 
-  const backend = opts.backend || duckduckgoHtml;
-  const backendId = (backend && backend.BACKEND_ID) || 'unknown';
+  // Résolution backends : single (rétrocompat tests existants), array (cascade)
+  // ou défaut (env / DEFAULT_BACKENDS_ORDER).
+  let backends;
+  if (Array.isArray(opts.backend)) {
+    backends = opts.backend;
+  } else if (opts.backend) {
+    backends = [opts.backend];
+  } else {
+    backends = getDefaultBackends();
+  }
+  if (!backends || backends.length === 0) {
+    backends = [duckduckgoHtml];
+  }
 
-  await applyPoliteness(backendId, opts);
+  let lastBlockedError = null;
+  let lastTransientError = null;
 
-  const raw = await backend.search(query, {
-    fetchImpl: opts.fetchImpl,
-    timeoutMs: opts.timeoutMs,
-    maxResults: Number.isFinite(opts.maxResults) ? opts.maxResults : DEFAULT_MAX_RESULTS,
-  });
+  for (const backend of backends) {
+    const backendId = (backend && backend.BACKEND_ID) || 'unknown';
+    await applyPoliteness(backendId, opts);
 
-  if (!Array.isArray(raw)) return [];
+    let raw;
+    try {
+      raw = await backend.search(query, {
+        fetchImpl: opts.fetchImpl,
+        timeoutMs: opts.timeoutMs,
+        maxResults: Number.isFinite(opts.maxResults) ? opts.maxResults : DEFAULT_MAX_RESULTS,
+      });
+    } catch (err) {
+      if (err && err.code === 'blocked') {
+        lastBlockedError = err;
+        continue; // bascule sur le backend suivant
+      }
+      if (err && err.code === 'transient') {
+        lastTransientError = err;
+        continue;
+      }
+      throw err;
+    }
 
-  return raw
-    .filter((r) => r && r.url && !isAggregator(r.url))
-    .map((r) => ({
-      url: r.url,
-      source: SOURCE_ID,
-      strategy: strategy.name,
-      backend: backendId,
-      initialConfidence: INITIAL_CONFIDENCE,
-      title: r.title || '',
-      rank: r.rank || 0,
-      signals: [`websearch_${strategy.name}`, `backend_${backendId}`],
-    }));
+    if (!Array.isArray(raw)) continue;
+
+    // Backend a répondu (potentiellement 0 résultat — pas une erreur,
+    // c'est une réponse légitime "rien trouvé").
+    return raw
+      .filter((r) => r && r.url && !isAggregator(r.url))
+      .map((r) => ({
+        url: r.url,
+        source: SOURCE_ID,
+        strategy: strategy.name,
+        backend: backendId,
+        initialConfidence: INITIAL_CONFIDENCE,
+        title: r.title || '',
+        rank: r.rank || 0,
+        signals: [`websearch_${strategy.name}`, `backend_${backendId}`],
+      }));
+  }
+
+  // Tous les backends ont échoué. Si au moins un blocked → remonter blocked
+  // pour stopper la cascade strategy. Sinon transient.
+  if (lastBlockedError) throw lastBlockedError;
+  if (lastTransientError) throw lastTransientError;
+  return [];
 }
 
 /**
@@ -267,6 +347,9 @@ module.exports = {
   QUERY_STRATEGIES,
   AGGREGATOR_DOMAINS,
   SOURCE_ID,
+  BACKEND_REGISTRY,
+  DEFAULT_BACKENDS_ORDER,
+  getDefaultBackends,
   // Exposés pour tests :
   _resetPolitenessForTests,
   _internals: {
