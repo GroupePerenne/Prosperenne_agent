@@ -36,16 +36,21 @@ const duckduckgoHtml = require('./webSearchBackends/duckduckgoHtml');
 const duckduckgoLite = require('./webSearchBackends/duckduckgoLite');
 const mojeek = require('./webSearchBackends/mojeek');
 const ecosia = require('./webSearchBackends/ecosia');
+const braveApi = require('./webSearchBackends/braveApi');
 
 // Map BACKEND_ID → module pour résolution depuis env config.
 const BACKEND_REGISTRY = {
+  [braveApi.BACKEND_ID]: braveApi,
   [duckduckgoHtml.BACKEND_ID]: duckduckgoHtml,
   [duckduckgoLite.BACKEND_ID]: duckduckgoLite,
   [mojeek.BACKEND_ID]: mojeek,
   [ecosia.BACKEND_ID]: ecosia,
 };
 
-const DEFAULT_BACKENDS_ORDER = ['duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'];
+// Brave en tête : qualité élevée + index propre. Kill-switch local quota
+// dans braveApi → si on dépasse 950 req/mois, throw blocked, cascade
+// bascule sur les backends gratuits (DDG Lite → Mojeek → Ecosia → DDG HTML).
+const DEFAULT_BACKENDS_ORDER = ['brave', 'duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'];
 
 /**
  * Lit l'ordre des backends depuis env. Filtre les IDs inconnus pour ne
