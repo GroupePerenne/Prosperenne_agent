@@ -12,8 +12,9 @@
  * Free tier "Data for Search" : 1000 req/mois (cf. Paul 4 mai 2026). Au-delà,
  * facturation au volume. Pour rester dans le tier gratuit, on impose un
  * kill-switch local via `_braveQuota` qui compte les requêtes du mois courant
- * en Storage Table. Si le compteur >= `SITE_FINDER_BRAVE_QUOTA_LIMIT` (950
- * par défaut, 50 de buffer pour les races), on throw SearchBlockedError
+ * en Storage Table. Si le compteur >= `SITE_FINDER_BRAVE_QUOTA_LIMIT` (990
+ * par défaut, 10 de buffer — confirmation Paul 4 mai 2026 : on peut aller
+ * jusqu'à 990 sans débordement), on throw SearchBlockedError
  * (`quota_exhausted_local`) → le caller webSearch.js bascule sur le backend
  * suivant de la cascade (DDG Lite, Mojeek, Ecosia).
  *
@@ -37,7 +38,7 @@ const ENDPOINT = process.env.SITE_FINDER_BRAVE_API_URL
   || 'https://api.search.brave.com/res/v1/web/search';
 const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_RESULTS = 10;
-const DEFAULT_QUOTA_LIMIT = Number(process.env.SITE_FINDER_BRAVE_QUOTA_LIMIT || 950);
+const DEFAULT_QUOTA_LIMIT = Number(process.env.SITE_FINDER_BRAVE_QUOTA_LIMIT || 990);
 
 const BACKEND_ID = 'brave';
 
