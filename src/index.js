@@ -11,3 +11,4 @@ require('./functions/dailyReport');
 require('./functions/dailyDigest');
 require('./functions/patternsLearner');
 require('./functions/runLeadSelectorForConsultant');
+require('./functions/nightlyMonteCarloSmoke');
