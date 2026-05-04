@@ -28,8 +28,11 @@ const { enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndPr
 const { buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch');
 const { sendMail } = require('../../shared/graph-mail');
 const { makeSafeLogger } = require('../../shared/safe-log');
+const { QueueClient, QueueServiceClient } = require('@azure/storage-queue');
+const { randomUUID } = require('node:crypto');
 
 const DEFAULT_BATCH_SIZE = Number(process.env.LEAD_SELECTOR_BATCH_SIZE || 10);
+const QUEUE_NAME = 'lead-selector-jobs';
 
 app.http('runLeadSelectorForConsultant', {
   methods: ['POST'],
@@ -38,12 +41,42 @@ app.http('runLeadSelectorForConsultant', {
     const log = makeSafeLogger(context);
     try {
       const body = await request.json().catch(() => ({}));
-      const { consultantId, batchSize = DEFAULT_BATCH_SIZE, dryRun = false } = body;
+      const { consultantId, batchSize = DEFAULT_BATCH_SIZE, dryRun = false, async: asyncMode = false } = body;
       if (!consultantId) {
         return {
           status: 400,
           jsonBody: { error: 'consultantId requis (email lowercased)' },
         };
+      }
+
+      // Mode async : poste le job en queue et retourne 202 immédiatement.
+      // Recommandé pour les pipelines longs (>200s) qui timeoutaient en mode
+      // synchrone HTTP. Le handler queue trigger leadSelectorJobQueue
+      // consomme et exécute en background (timeout 10 min).
+      if (asyncMode === true) {
+        const jobId = `job-${Date.now()}-${randomUUID().slice(0, 8)}`;
+        try {
+          const queueClient = new QueueClient(process.env.AzureWebJobsStorage, QUEUE_NAME);
+          await queueClient.createIfNotExists();
+          const message = JSON.stringify({ jobId, consultantId, batchSize, dryRun });
+          // Azure Storage Queue requires base64 by default
+          await queueClient.sendMessage(Buffer.from(message).toString('base64'));
+          log(`[runLeadSelector] async job queued jobId=${jobId} consultantId=${consultantId}`);
+          return {
+            status: 202,
+            jsonBody: {
+              accepted: true,
+              jobId,
+              consultantId,
+              batchSize,
+              dryRun,
+              statusEndpoint: `/api/leadSelectorJobs?jobId=${jobId}`,
+            },
+          };
+        } catch (err) {
+          log.error(`[runLeadSelector] queue post failed: ${err.message}`, err);
+          return { status: 500, jsonBody: { error: 'queue_post_failed', detail: err.message } };
+        }
       }
 
       const consultantPayload = await rebuildConsultantFromMem0(consultantId, context);

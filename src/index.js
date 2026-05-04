@@ -12,3 +12,4 @@ require('./functions/dailyDigest');
 require('./functions/patternsLearner');
 require('./functions/runLeadSelectorForConsultant');
 require('./functions/nightlyMonteCarloSmoke');
+require('./functions/leadSelectorJobQueue');

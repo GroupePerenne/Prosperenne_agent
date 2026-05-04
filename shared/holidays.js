@@ -41,7 +41,7 @@ const HOLIDAYS = new Set([
 
 const PARIS_TZ = 'Europe/Paris';
 const BUSINESS_START_HOUR = 9;   // créneau d'envoi ouvre à 9h Paris
-const BUSINESS_END_HOUR = 11;    // et se ferme à 11h Paris
+const BUSINESS_END_HOUR = 18;    // et se ferme à 18h Paris (correction Paul 4 mai 2026 PM, vs 11h ancienne doctrine)
 
 /** Extrait date ISO (yyyy-mm-dd), heure et weekday d'une Date en heure Paris */
 function parisDateParts(date) {

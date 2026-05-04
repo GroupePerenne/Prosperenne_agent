@@ -1,0 +1,183 @@
+/**
+ * Queue trigger leadSelectorJobQueue — exécute le pipeline Lead Selector
+ * complet en background, sans contrainte HTTP timeout (230s Front Door).
+ *
+ * Né de l'incident 4 mai 2026 PM : runLeadSelectorForConsultant en mode
+ * synchrone HTTP timeout 504 sur les vrais runs (scan LeadBase + Dropcontact
+ * + sequence Martin/Mila > 230s pour les briefs grandes zones).
+ *
+ * Pattern :
+ *   1. PWA / endpoint HTTP poste un message JSON dans la queue
+ *      lead-selector-jobs : { jobId, consultantId, batchSize, dryRun }
+ *   2. Ce handler queue trigger consomme, exécute le pipeline, persiste
+ *      le résultat en Storage Table leadSelectorJobs.
+ *   3. Linux Consumption timeout queue trigger = 10 min par défaut
+ *      (fonction host.json functionTimeout 5min couvre largement).
+ *   4. La PWA peut polller GET /api/getLeadSelectorJobStatus?jobId=X.
+ */
+
+'use strict';
+
+const { app } = require('@azure/functions');
+const { TableClient } = require('@azure/data-tables');
+const { enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndProfileBatch');
+const { buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch');
+const { launchSequenceForConsultant } = require('../../agents/david/orchestrator');
+const { sendMail } = require('../../shared/graph-mail');
+const { parseBriefFromMemories } = require('../../shared/leadSelector');
+const { getMem0 } = require('../../shared/adapters/memory/mem0');
+const { makeSafeLogger } = require('../../shared/safe-log');
+
+const TABLE_NAME = 'leadSelectorJobs';
+
+app.storageQueue('leadSelectorJobQueue', {
+  queueName: 'lead-selector-jobs',
+  connection: 'AzureWebJobsStorage',
+  handler: async (queueItem, context) => {
+    const log = makeSafeLogger(context);
+    let job;
+    try {
+      job = typeof queueItem === 'string' ? JSON.parse(queueItem) : queueItem;
+    } catch (err) {
+      log.warn(`[lead-selector-job] cannot parse queue item: ${err.message}`);
+      return;
+    }
+    const { jobId, consultantId, batchSize = 10, dryRun = false } = job;
+    if (!jobId || !consultantId) {
+      log.warn('[lead-selector-job] jobId/consultantId requis');
+      return;
+    }
+
+    log(`[lead-selector-job] starting jobId=${jobId} consultantId=${consultantId} batch=${batchSize} dryRun=${dryRun}`);
+    const tableClient = getJobsTable();
+    if (tableClient) await markStatus(tableClient, jobId, 'running');
+
+    try {
+      const consultantPayload = await rebuildConsultantFromMem0(consultantId, context);
+      if (!consultantPayload) {
+        await markStatus(tableClient, jobId, 'error', { error: 'consultant_not_found_in_mem0' });
+        return;
+      }
+
+      const result = await enrichAndProfileBatchForConsultant({
+        brief: consultantPayload.originalBrief,
+        beneficiaryId: consultantPayload.beneficiaryId,
+        batchSize,
+        dryRun: Boolean(dryRun),
+        consultantId,
+        context,
+      });
+
+      const summary = {
+        status: result.status,
+        candidatesConsidered: result.meta?.candidatesConsidered || 0,
+        leadsCount: (result.leads || []).length,
+        resolutionOk: result.meta?.resolutionOk || 0,
+        unresolvable: result.meta?.resolutionUnresolvable || 0,
+        costCentsTotal: result.meta?.costCentsTotal || 0,
+      };
+
+      if (dryRun || result.status === 'error' || result.status === 'empty') {
+        await markStatus(tableClient, jobId, 'done', { ...summary, sequenceLaunched: false });
+        return;
+      }
+
+      // Mail "base à affiner" si insufficient
+      if (result.status === 'insufficient') {
+        await sendMail({
+          from: process.env.DAVID_EMAIL,
+          to: consultantPayload.consultant.email,
+          subject: 'Lead Selector — base à affiner',
+          html: buildInsufficientBatchMail(consultantPayload.originalBrief, result),
+        }).catch((err) => log.warn(`[lead-selector-job] insufficient mail failed: ${err.message}`));
+      }
+
+      // Lancement séquence Martin/Mila sur les leads enrichis
+      const seqResults = await launchSequenceForConsultant({
+        consultant: consultantPayload.consultant,
+        brief: consultantPayload.brief,
+        leads: result.leads,
+        context,
+      });
+      const okCount = seqResults.filter((r) => !r.error).length;
+      const errorCount = seqResults.length - okCount;
+
+      log(`[lead-selector-job] done jobId=${jobId} → ${okCount} ok / ${errorCount} errors / ${result.leads.length} leads`);
+      await markStatus(tableClient, jobId, 'done', {
+        ...summary,
+        sequenceLaunched: true,
+        sequenceOk: okCount,
+        sequenceErrors: errorCount,
+      });
+    } catch (err) {
+      log.error(`[lead-selector-job] exception: ${err.message}`, err);
+      await markStatus(tableClient, jobId, 'error', { error: err.message });
+    }
+  },
+});
+
+function getJobsTable() {
+  const cs = process.env.AzureWebJobsStorage;
+  if (!cs) return null;
+  try {
+    return TableClient.fromConnectionString(cs, TABLE_NAME);
+  } catch {
+    return null;
+  }
+}
+
+async function markStatus(tableClient, jobId, status, extra = {}) {
+  if (!tableClient) return;
+  try {
+    await tableClient.createTable().catch(() => {});
+    await tableClient.upsertEntity(
+      {
+        partitionKey: new Date().toISOString().slice(0, 10),
+        rowKey: jobId,
+        jobId,
+        status,
+        updatedAt: new Date().toISOString(),
+        ...flattenForTable(extra),
+      },
+      'Merge',
+    );
+  } catch {
+    // best effort
+  }
+}
+
+function flattenForTable(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'object') out[k] = JSON.stringify(v).slice(0, 32000);
+    else out[k] = v;
+  }
+  return out;
+}
+
+async function rebuildConsultantFromMem0(consultantId, context) {
+  const mem0 = getMem0(context);
+  if (!mem0) return null;
+  let memories;
+  try {
+    memories = await mem0.retrieveConsultant(consultantId);
+  } catch {
+    return null;
+  }
+  if (!memories || memories.length === 0) return null;
+  const originalBrief = parseBriefFromMemories(memories);
+  if (!originalBrief) return null;
+  return {
+    consultant: {
+      nom: originalBrief.nom,
+      email: originalBrief.email,
+      offre: originalBrief.offre,
+      ton: originalBrief.registre,
+      tutoiement: originalBrief.vouvoiement === 'tu',
+    },
+    brief: { prospecteur: originalBrief.prospecteur || 'both' },
+    originalBrief,
+    beneficiaryId: `oseys-${String(consultantId || '').split('@')[0] || 'unknown'}`,
+  };
+}
