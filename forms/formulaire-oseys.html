@@ -978,20 +978,48 @@
         .filter(Boolean);
     }
 
+    // Submit avec retry exponential backoff (3 tentatives) + diagnostic
+    // détaillé en cas d'échec persistant. Refonte 4 mai 2026 après incident
+    // Failed to fetch Morgane/Johnny.
+    async function submitWithRetry(payload, maxAttempts = 3) {
+      let lastErr;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const res = await fetch(SUBMIT_ENDPOINT, {
+            method: 'POST',
+            mode: 'cors',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return await res.json();
+        } catch (err) {
+          lastErr = err;
+          console.warn(`[submit] tentative ${attempt}/${maxAttempts} échouée :`, err.name, '-', err.message, err);
+          if (attempt < maxAttempts) {
+            const wait = 800 * attempt; // 800ms, 1600ms
+            await new Promise(r => setTimeout(r, wait));
+          }
+        }
+      }
+      throw lastErr;
+    }
+
     try {
-      const res = await fetch(SUBMIT_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
+      await submitWithRetry(payload, 3);
       localStorage.removeItem(STORAGE_KEY);
       document.getElementById('success').classList.add('show');
       btn.textContent = 'Envoyé';
       document.getElementById('success').scrollIntoView({ behavior: 'smooth' });
     } catch (err) {
       btn.disabled = false; btn.textContent = 'Envoyer à David';
-      alert('Erreur d\'envoi : ' + err.message + '\nTon brouillon est sauvegardé localement.');
+      const errType = err.name || 'Error';
+      const errMsg = err.message || 'inconnu';
+      const detailLine = errType === 'TypeError'
+        ? '\n\nSi ce message persiste, ça vient probablement de ton réseau (proxy entreprise, VPN, antivirus, extension navigateur) qui bloque la connexion vers nos serveurs Azure. Essaye en partage de connexion 4G ou un autre navigateur.'
+        : '';
+      alert('Erreur d\'envoi : ' + errMsg + ' (' + errType + ')\nTon brouillon est sauvegardé localement.' + detailLine + '\n\nTu peux aussi écrire directement à david@oseys.fr en attachant un screenshot de cette erreur.');
       saveDraft();
     }
   });
