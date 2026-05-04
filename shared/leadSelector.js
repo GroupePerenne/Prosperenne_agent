@@ -51,16 +51,37 @@ function uniqSorted(arr) {
   return [...new Set(arr)].sort();
 }
 
+// Helpers de log safe-bind (BL-45 — InvocationContext.log perd son binding
+// privé quand le context est conservé entre invocations FA Linux Consumption).
+// On wrappe en try/catch + fallback console.* pour ne JAMAIS throw sur log.
 function logWarn(context, message) {
-  if (!context) return;
-  if (typeof context.warn === 'function') context.warn(message);
-  else if (typeof context.log === 'function') context.log(`[warn] ${message}`);
+  try {
+    if (context && typeof context.warn === 'function') return context.warn(message);
+    if (context && typeof context.log === 'function') return context.log(`[warn] ${message}`);
+  } catch {
+    // BL-45 : context.warn lève "Cannot read private member..." quand binding perdu
+  }
+  try { console.warn(`[leadSelector] ${message}`); } catch {}
 }
 
 function logInfo(context, message, payload) {
-  if (!context) return;
-  if (typeof context.info === 'function') context.info(message, payload);
-  else if (typeof context.log === 'function') context.log(message, payload);
+  try {
+    if (context && typeof context.info === 'function') return context.info(message, payload);
+    if (context && typeof context.log === 'function') return context.log(message, payload);
+  } catch {
+    // BL-45
+  }
+  try { console.log(`[leadSelector] ${message}`, payload || ''); } catch {}
+}
+
+function logError(context, message, err) {
+  try {
+    if (context && typeof context.error === 'function') return context.error(message, err);
+    if (context && typeof context.log === 'function') return context.log(`[error] ${message}`, err);
+  } catch {
+    // BL-45
+  }
+  try { console.error(`[leadSelector] ${message}`, err); } catch {}
 }
 
 // ─── mapBriefToFilters ─────────────────────────────────────────────────────
@@ -409,7 +430,9 @@ async function selectLeadsForConsultant(params = {}) {
     consultantId,
   } = params;
 
-  const leadBase = adapters.leadBase || new LeadBaseAdapter({ logger: context && context.log });
+  // BL-45 : on ne passe PAS context.log direct (perdu .bind() entre invocations).
+  // Le LeadBaseAdapter loggera via console.* en interne sans logger fourni.
+  const leadBase = adapters.leadBase || new LeadBaseAdapter({});
   const trace = adapters.trace || recordLeadSelectorEvent;
 
   try {
@@ -508,7 +531,7 @@ async function selectLeadsForConsultant(params = {}) {
     Promise.resolve(trace({ status: result.status, meta: result.meta, briefId, consultantId })).catch(() => {});
     return result;
   } catch (err) {
-    if (context && typeof context.error === 'function') context.error('[leadSelector] failed', err);
+    logError(context, '[leadSelector] failed', err);
     const errResult = {
       status: 'error',
       leads: [],
@@ -568,7 +591,9 @@ async function selectCandidatesForConsultant(params = {}) {
     consultantId,
   } = params;
 
-  const leadBase = adapters.leadBase || new LeadBaseAdapter({ logger: context && context.log });
+  // BL-45 : on ne passe PAS context.log direct (perdu .bind() entre invocations).
+  // Le LeadBaseAdapter loggera via console.* en interne sans logger fourni.
+  const leadBase = adapters.leadBase || new LeadBaseAdapter({});
   const trace = adapters.trace || recordLeadSelectorEvent;
 
   const maxCandidates = Math.max(batchSize, batchSize * candidateMultiplier);
@@ -673,7 +698,7 @@ async function selectCandidatesForConsultant(params = {}) {
     Promise.resolve(trace({ status: result.status, meta: result.meta, briefId, consultantId })).catch(() => {});
     return result;
   } catch (err) {
-    if (context && typeof context.error === 'function') context.error('[leadSelector] selectCandidates failed', err);
+    logError(context, '[leadSelector] selectCandidates failed', err);
     const errResult = {
       status: 'error',
       candidates: [],
