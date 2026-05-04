@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template launchctl pour faire tourner enrich-leadbase-continuous.js
+  en service H24 sur le MacBook Air dédié (worker Constantin Pereneo).
+
+  Installation :
+    1. Copier ce fichier en ~/Library/LaunchAgents/com.pereneo.enrich-leadbase.plist
+    2. Personnaliser les chemins {USER_HOME} et {REPO_PATH}
+    3. launchctl load ~/Library/LaunchAgents/com.pereneo.enrich-leadbase.plist
+    4. Le service démarre automatiquement et redémarre si crash
+    5. Logs : /tmp/pereneo-enrich-leadbase.{out,err}.log
+    6. Arrêt : launchctl unload ~/Library/LaunchAgents/com.pereneo.enrich-leadbase.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pereneo.enrich-leadbase</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <string>{REPO_PATH}/scripts/enrich-leadbase-continuous.js</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{REPO_PATH}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <key>NODE_ENV</key>
+        <string>production</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/pereneo-enrich-leadbase.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/pereneo-enrich-leadbase.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>Nice</key>
+    <integer>5</integer>
+</dict>
+</plist>
