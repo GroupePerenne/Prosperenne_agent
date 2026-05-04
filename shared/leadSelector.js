@@ -27,6 +27,7 @@ const { getMem0 } = require('./adapters/memory/mem0');
 const { recordLeadSelectorEvent } = require('./leadSelectorTrace');
 
 const SECTORS_TO_NAF = require('./mappings/secteurs-to-naf.json');
+const { enrichBatchInPlace } = require('./enrichers/dirigeants-rne');
 const EFFECTIF_TO_TRANCHE = require('./mappings/effectif-to-tranche-insee.json');
 const NAF_EXCLUSIONS = require('./mappings/naf-exclusions.json');
 
@@ -633,6 +634,14 @@ async function selectCandidatesForConsultant(params = {}) {
     const candidatesCount = rawCandidates.length;
 
     const { kept: afterExclusions, excluded } = applyExclusions(rawCandidates);
+
+    // Enrichissement dirigeants via API RNE (recherche-entreprises.api.gouv.fr)
+    // pour combler le trou structurel : LeadBase Constantin a ~85-90% des
+    // entités avec `dirigeants: null` (calibré 4 mai 2026 sur 30 PME effectif
+    // 11). L'API gouv résout 60% des cas. Cache 30j en table DirigeantsCache.
+    const enrichmentStart = Date.now();
+    const dirigeantsEnriched = await enrichBatchInPlace(afterExclusions, { concurrency: 10 }).catch(() => 0);
+    logInfo(context, `[leadSelector] dirigeants enriched ${dirigeantsEnriched}/${afterExclusions.length} via RNE (${Date.now() - enrichmentStart}ms)`);
 
     // Extraction candidate (sans filtre email)
     let excludedNoDirigeant = 0;
