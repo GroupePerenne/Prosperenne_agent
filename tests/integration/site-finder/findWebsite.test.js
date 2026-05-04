@@ -23,6 +23,15 @@ const emptyWebSearch = {
   searchOneStrategy: async () => [],
 };
 
+/**
+ * heuristicImpl neutre : 0 candidat → l'étape T1bis se termine immédiatement
+ * sans probe HTTP. À utiliser dans tous les tests T1 qui ne testent pas la
+ * source heuristique (sinon l'orchestrateur tomberait sur fetch réel).
+ */
+const emptyHeuristic = {
+  findCandidatesViaHeuristic: async () => [],
+};
+
 function makeApiGouvStub(candidates = []) {
   const calls = [];
   return {
@@ -101,7 +110,7 @@ test('findWebsite — cache hit récent court-circuite, pas d\'appel apiGouv', a
   });
   const out = await findWebsite(
     { siren: '123456789', companyName: 'ACME' },
-    { apiGouvImpl: apiGouv.stub, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
+    { apiGouvImpl: apiGouv.stub, heuristicImpl: emptyHeuristic, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
   );
   assert.equal(out.siteUrl, 'https://acme.fr');
   assert.equal(out.source, 'cache');
@@ -125,7 +134,7 @@ test('findWebsite — cache miss + candidat validé → cache.put + return valid
   const cache = makeCacheStub();
   const out = await findWebsite(
     { siren: '123456789', companyName: 'ACME', ville: 'Lyon' },
-    { apiGouvImpl: apiGouv.stub, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
+    { apiGouvImpl: apiGouv.stub, heuristicImpl: emptyHeuristic, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
   );
   assert.equal(out.siteUrl, 'https://acme.fr');
   assert.equal(out.confidence, 0.99);
@@ -146,7 +155,7 @@ test('findWebsite — cache miss + 0 candidat → recordFailure + null', async (
   const cache = makeCacheStub();
   const out = await findWebsite(
     { siren: '123456789', companyName: 'ACME' },
-    { apiGouvImpl: apiGouv.stub, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
+    { apiGouvImpl: apiGouv.stub, heuristicImpl: emptyHeuristic, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
   );
   assert.equal(out.siteUrl, null);
   assert.equal(out.confidence, 0);
@@ -170,7 +179,7 @@ test('findWebsite — candidat rejeté par validator → recordFailure + null', 
   const cache = makeCacheStub();
   const out = await findWebsite(
     { siren: '123456789', companyName: 'ACME' },
-    { apiGouvImpl: apiGouv.stub, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
+    { apiGouvImpl: apiGouv.stub, heuristicImpl: emptyHeuristic, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
   );
   assert.equal(out.siteUrl, null);
   assert.equal(out.proofType, 'siren_mismatch');
@@ -205,7 +214,7 @@ test('findWebsite — forceRefresh=true ignore cache, refait appels', async () =
   });
   const out = await findWebsite(
     { siren: '123456789', companyName: 'ACME', options: { forceRefresh: true } },
-    { apiGouvImpl: apiGouv.stub, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
+    { apiGouvImpl: apiGouv.stub, heuristicImpl: emptyHeuristic, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
   );
   assert.equal(out.siteUrl, 'https://acme.fr');
   assert.equal(apiGouv.calls.length, 1);
@@ -224,7 +233,7 @@ test('findWebsite — skipCache=true ne lit ni n\'écrit le cache', async () => 
   const cache = makeCacheStub();
   const out = await findWebsite(
     { siren: '123456789', companyName: 'ACME', options: { skipCache: true } },
-    { apiGouvImpl: apiGouv.stub, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
+    { apiGouvImpl: apiGouv.stub, heuristicImpl: emptyHeuristic, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
   );
   assert.equal(out.siteUrl, 'https://acme.fr');
   assert.equal(cache.calls.get.length, 0);
@@ -242,11 +251,12 @@ test('findWebsite — apiGouv throw → attempted.rejectedReason défini, output
   const cache = makeCacheStub();
   const out = await findWebsite(
     { siren: '123456789', companyName: 'ACME' },
-    { apiGouvImpl: apiGouv.stub, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
+    { apiGouvImpl: apiGouv.stub, heuristicImpl: emptyHeuristic, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
   );
   assert.equal(out.siteUrl, null);
-  assert.equal(out.attempted.length, 1);
-  assert.equal(out.attempted[0].rejectedReason, 'transient');
+  const apiGouvAttempt = out.attempted.find((a) => a.source === 'api_gouv');
+  assert.ok(apiGouvAttempt);
+  assert.equal(apiGouvAttempt.rejectedReason, 'transient');
 });
 
 // ─── Cas 8 : siren invalide ────────────────────────────────────────────────
@@ -257,7 +267,7 @@ test('findWebsite — siren invalide → output null, signal invalid_siren, pas 
   const cache = makeCacheStub();
   const out = await findWebsite(
     { siren: '12345', companyName: 'ACME' },
-    { apiGouvImpl: apiGouv.stub, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
+    { apiGouvImpl: apiGouv.stub, heuristicImpl: emptyHeuristic, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
   );
   assert.equal(out.siteUrl, null);
   assert.ok(out.signals.includes('invalid_siren'));
@@ -280,7 +290,7 @@ test('findWebsite — threshold abaissé permet validation par signaux faibles',
   const cache = makeCacheStub();
   const out = await findWebsite(
     { siren: '123456789', companyName: 'ACME', options: { confidenceThreshold: 0.65 } },
-    { apiGouvImpl: apiGouv.stub, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
+    { apiGouvImpl: apiGouv.stub, heuristicImpl: emptyHeuristic, webSearchImpl: emptyWebSearch, validatorImpl: validator.stub, cacheImpl: cache.stub },
   );
   assert.equal(out.siteUrl, 'https://acme.fr');
   assert.equal(out.confidence, 0.70);
@@ -341,6 +351,7 @@ test('findWebsite — apiGouv 0 + DDG name_city valide → source=websearch_name
     { siren: '123456789', companyName: 'ACME', ville: 'Lyon' },
     {
       apiGouvImpl: apiGouv.stub,
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: webSearchStub.stub,
       validatorImpl: validator.stub,
       cacheImpl: cache.stub,
@@ -352,7 +363,8 @@ test('findWebsite — apiGouv 0 + DDG name_city valide → source=websearch_name
   assert.equal(cache.calls.put.length, 1);
   // attempted contient api_gouv puis websearch_name_city
   assert.equal(out.attempted[0].source, 'api_gouv');
-  assert.equal(out.attempted[1].source, 'websearch_name_city');
+  const wsAttempt = out.attempted.find((a) => a.source === 'websearch_name_city');
+  assert.ok(wsAttempt);
 });
 
 // Cas T2.2 : name_city 0 utile + name_siren valide → cascade jusqu'à la 3e stratégie
@@ -397,6 +409,7 @@ test('findWebsite — cascade name_city → name_postcode → name_siren validé
     },
     {
       apiGouvImpl: apiGouv.stub,
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: webSearchStub.stub,
       validatorImpl: validator.stub,
       cacheImpl: cache.stub,
@@ -410,8 +423,13 @@ test('findWebsite — cascade name_city → name_postcode → name_siren validé
     webSearchStub.calls.map((c) => c.strategy),
     ['name_city', 'name_postcode', 'name_siren'],
   );
-  // attempted contient api_gouv + 3 websearch
-  assert.equal(out.attempted.length, 4);
+  // attempted contient api_gouv + heuristic_url_guess + 3 websearch
+  const wsAttempts = out.attempted.filter((a) => a.source.startsWith('websearch_'));
+  assert.equal(wsAttempts.length, 3);
+  assert.deepEqual(
+    wsAttempts.map((a) => a.source),
+    ['websearch_name_city', 'websearch_name_postcode', 'websearch_name_siren'],
+  );
 });
 
 // Cas T2.3 : apiGouv valide → court-circuit, DDG jamais appelé
@@ -428,6 +446,7 @@ test('findWebsite — apiGouv valide → DDG jamais appelé (économie ressource
     { siren: '123456789', companyName: 'ACME', ville: 'Lyon' },
     {
       apiGouvImpl: apiGouv.stub,
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: webSearchStub.stub,
       validatorImpl: validator.stub,
       cacheImpl: cache.stub,
@@ -450,6 +469,7 @@ test('findWebsite — DDG SearchBlockedError → cascade stoppée, recordFailure
     { siren: '123456789', companyName: 'ACME', ville: 'Lyon', codePostal: '69001', siren: '123456789' },
     {
       apiGouvImpl: apiGouv.stub,
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: webSearchStub.stub,
       validatorImpl: validator.stub,
       cacheImpl: cache.stub,
@@ -482,6 +502,7 @@ test('findWebsite — résultats agrégateurs filtrés en amont, validator pas a
     { siren: '123456789', companyName: 'ACME', ville: 'Lyon' },
     {
       apiGouvImpl: apiGouv.stub,
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: webSearchStub.stub,
       validatorImpl: validator.stub,
       cacheImpl: cache.stub,
@@ -527,6 +548,7 @@ test('findWebsite — DDG transient sur 1 stratégie → continue les autres', a
     },
     {
       apiGouvImpl: apiGouv.stub,
+      heuristicImpl: emptyHeuristic,
       webSearchImpl: webSearchStub.stub,
       validatorImpl: validator.stub,
       cacheImpl: cache.stub,
@@ -534,4 +556,145 @@ test('findWebsite — DDG transient sur 1 stratégie → continue les autres', a
   );
   assert.equal(out.siteUrl, 'https://acme.fr');
   assert.equal(out.source, 'websearch_name_postcode');
+});
+
+// ─── T1bis : source heuristicUrlGuess ──────────────────────────────────────
+
+function makeHeuristicStub(candidates = [], throwError = null) {
+  const calls = [];
+  return {
+    stub: {
+      findCandidatesViaHeuristic: async (input, opts) => {
+        calls.push({ input, opts });
+        if (throwError) throw throwError;
+        if (typeof candidates === 'function') return candidates(input);
+        return candidates;
+      },
+    },
+    calls,
+  };
+}
+
+test('findWebsite — apiGouv 0 + heuristic 1 valide → source heuristic_url_guess + DDG jamais appelé', async () => {
+  const apiGouv = makeApiGouvStub([]);
+  const heuristic = makeHeuristicStub([
+    {
+      url: 'https://acme.fr',
+      source: 'heuristic_url_guess',
+      initialConfidence: 0.70,
+      signals: ['heuristic_slug:ACME'],
+    },
+  ]);
+  const webSearchStub = makeWebSearchStub({
+    byStrategy: { name_city: [{ url: 'https://should-not-be-called.fr' }] },
+  });
+  const validator = makeValidatorStub({
+    confidence: 0.99,
+    proofType: 'siren_match',
+    proofDetails: { matchedSirenOn: 'https://acme.fr/mentions-legales' },
+    signals: ['siren_match'],
+  });
+  const cache = makeCacheStub();
+  const out = await findWebsite(
+    { siren: '123456789', companyName: 'ACME SAS', ville: 'Lyon' },
+    {
+      apiGouvImpl: apiGouv.stub,
+      heuristicImpl: heuristic.stub,
+      webSearchImpl: webSearchStub.stub,
+      validatorImpl: validator.stub,
+      cacheImpl: cache.stub,
+    },
+  );
+  assert.equal(out.siteUrl, 'https://acme.fr');
+  assert.equal(out.source, 'heuristic_url_guess');
+  assert.equal(out.confidence, 0.99);
+  assert.equal(cache.calls.put.length, 1);
+  assert.equal(webSearchStub.calls.length, 0, 'websearch ne doit pas être appelé');
+  // attempted : api_gouv puis heuristic_url_guess
+  assert.equal(out.attempted[0].source, 'api_gouv');
+  assert.equal(out.attempted[1].source, 'heuristic_url_guess');
+  assert.equal(out.attempted[1].candidates, 1);
+});
+
+test('findWebsite — apiGouv 0 + heuristic 0 → fallback websearch cascade', async () => {
+  const apiGouv = makeApiGouvStub([]);
+  const heuristic = makeHeuristicStub([]);
+  const webSearchStub = makeWebSearchStub({
+    byStrategy: {
+      name_city: [
+        {
+          url: 'https://acme.fr', source: 'websearch', strategy: 'name_city',
+          backend: 'duckduckgo_html', initialConfidence: 0.65,
+          signals: ['websearch_name_city'], rank: 1,
+        },
+      ],
+    },
+  });
+  const validator = makeValidatorStub({
+    confidence: 0.99,
+    proofType: 'siren_match',
+    signals: ['siren_match'],
+  });
+  const cache = makeCacheStub();
+  const out = await findWebsite(
+    { siren: '123456789', companyName: 'ACME', ville: 'Lyon' },
+    {
+      apiGouvImpl: apiGouv.stub,
+      heuristicImpl: heuristic.stub,
+      webSearchImpl: webSearchStub.stub,
+      validatorImpl: validator.stub,
+      cacheImpl: cache.stub,
+    },
+  );
+  assert.equal(out.siteUrl, 'https://acme.fr');
+  assert.equal(out.source, 'websearch_name_city');
+  assert.equal(heuristic.calls.length, 1);
+  assert.equal(webSearchStub.calls.length, 1);
+  // attempted : api_gouv (0), heuristic_url_guess (0), websearch_name_city (1)
+  assert.equal(out.attempted[0].source, 'api_gouv');
+  assert.equal(out.attempted[1].source, 'heuristic_url_guess');
+  assert.equal(out.attempted[1].candidates, 0);
+  assert.equal(out.attempted[2].source, 'websearch_name_city');
+});
+
+test('findWebsite — heuristic throw → rejectedReason posé, websearch tenté quand même', async () => {
+  const apiGouv = makeApiGouvStub([]);
+  const heuristicErr = new Error('heuristic crashed');
+  heuristicErr.code = 'transient';
+  const heuristic = makeHeuristicStub([], heuristicErr);
+  const webSearchStub = makeWebSearchStub({
+    byStrategy: {
+      name_city: [
+        {
+          url: 'https://acme.fr', source: 'websearch', strategy: 'name_city',
+          backend: 'duckduckgo_html', initialConfidence: 0.65,
+          signals: ['websearch_name_city'], rank: 1,
+        },
+      ],
+    },
+  });
+  const validator = makeValidatorStub({
+    confidence: 0.99,
+    proofType: 'siren_match',
+    signals: ['siren_match'],
+  });
+  const cache = makeCacheStub();
+  const out = await findWebsite(
+    { siren: '123456789', companyName: 'ACME', ville: 'Lyon' },
+    {
+      apiGouvImpl: apiGouv.stub,
+      heuristicImpl: heuristic.stub,
+      webSearchImpl: webSearchStub.stub,
+      validatorImpl: validator.stub,
+      cacheImpl: cache.stub,
+    },
+  );
+  assert.equal(out.siteUrl, 'https://acme.fr');
+  assert.equal(out.source, 'websearch_name_city');
+  // attempted contient le rejectedReason transient sur heuristic
+  const heur = out.attempted.find((a) => a.source === 'heuristic_url_guess');
+  assert.ok(heur);
+  assert.equal(heur.rejectedReason, 'transient');
+  // Cascade webSearch a continué malgré l'échec heuristic
+  assert.equal(webSearchStub.calls.length, 1);
 });
