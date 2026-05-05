@@ -21,9 +21,7 @@
 const { app } = require('@azure/functions');
 const { TableClient } = require('@azure/data-tables');
 const { enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndProfileBatch');
-const { buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch');
 const { launchSequenceForConsultant } = require('../../agents/david/orchestrator');
-const { sendMail } = require('../../shared/graph-mail');
 const { parseBriefFromMemories } = require('../../shared/leadSelector');
 const { getMem0 } = require('../../shared/adapters/memory/mem0');
 const { makeSafeLogger } = require('../../shared/safe-log');
@@ -78,19 +76,18 @@ app.storageQueue('leadSelectorJobQueue', {
       };
 
       if (dryRun || result.status === 'error' || result.status === 'empty') {
+        // empty / error → no-op silencieux. Le worker MacBook Air enrichit
+        // LeadBase en parallèle (RNE H24) et le timer dailyLeadSelectorRefresh
+        // re-déclenche chaque matin L-V. On agit avec ce qu'on a, sinon on
+        // attend demain. Pas de mail "base à affiner" au consultant
+        // (directive Paul 5 mai 2026 : David ne raconte pas sa vie).
         await markStatus(tableClient, jobId, 'done', { ...summary, sequenceLaunched: false });
         return;
       }
 
-      // Mail "base à affiner" si insufficient
-      if (result.status === 'insufficient') {
-        await sendMail({
-          from: process.env.DAVID_EMAIL,
-          to: consultantPayload.consultant.email,
-          subject: 'Lead Selector — base à affiner',
-          html: buildInsufficientBatchMail(consultantPayload.originalBrief, result),
-        }).catch((err) => log.warn(`[lead-selector-job] insufficient mail failed: ${err.message}`));
-      }
+      // insufficient → on lance la séquence sur les leads partiels
+      // disponibles (David agit avec ce qu'il a). Pas de mail "base à
+      // affiner" au consultant — directive Paul 5 mai 2026.
 
       // Lancement séquence Martin/Mila sur les leads enrichis
       const seqResults = await launchSequenceForConsultant({

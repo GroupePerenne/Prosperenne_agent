@@ -25,10 +25,8 @@ const { parseBriefFromMemories } = require('../../shared/leadSelector');
 const { launchSequenceForConsultant } = require('../../agents/david/orchestrator');
 const { getMem0 } = require('../../shared/adapters/memory/mem0');
 const { enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndProfileBatch');
-const { buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch');
-const { sendMail } = require('../../shared/graph-mail');
 const { makeSafeLogger } = require('../../shared/safe-log');
-const { QueueClient, QueueServiceClient } = require('@azure/storage-queue');
+const { QueueClient } = require('@azure/storage-queue');
 const { randomUUID } = require('node:crypto');
 
 const DEFAULT_BATCH_SIZE = Number(process.env.LEAD_SELECTOR_BATCH_SIZE || 10);
@@ -97,21 +95,16 @@ app.http('runLeadSelectorForConsultant', {
       });
 
       if (dryRun || result.status === 'error' || result.status === 'empty') {
+        // empty / error → renvoie le résultat sans rien envoyer. Le worker
+        // MacBook Air enrichit LeadBase en parallèle et le timer quotidien
+        // dailyLeadSelectorRefresh retente chaque matin L-V.
+        // Pas de mail "base à affiner" — directive Paul 5 mai 2026 (David
+        // agit avec ce qu'il a, ne raconte pas sa vie).
         return { status: 200, jsonBody: { enrichment: result } };
       }
 
-      // Si insuffisant : mail "base à affiner" envoyé au consultant (point
-      // Paul #1 Jalon 3). Best effort — ne bloque pas la séquence partielle.
-      if (result.status === 'insufficient') {
-        await sendMail({
-          from: process.env.DAVID_EMAIL,
-          to: consultantPayload.consultant.email,
-          subject: 'Lead Selector — base à affiner',
-          html: buildInsufficientBatchMail(consultantPayload.originalBrief, result),
-        }).catch((err) => {
-          log.warn(`[enrichBatch] insufficient mail failed: ${err.message}`);
-        });
-      }
+      // insufficient → séquence partielle sur les leads disponibles, pas
+      // de mail "base à affiner" au consultant (directive Paul 5 mai 2026).
 
       // Lancement séquence sur les leads enrichis (ok + insufficient)
       const seqResults = await launchSequenceForConsultant({
