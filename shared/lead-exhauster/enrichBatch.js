@@ -28,6 +28,7 @@ const { selectCandidatesForConsultant } = require('../leadSelector');
 const { leadExhauster } = require('./index');
 const { recordUnresolvable } = require('./unresolvableTrace');
 const { DEFAULT_CONFIDENCE_THRESHOLD } = require('./schemas');
+const { DropcontactAdapter } = require('./adapters/dropcontact');
 const { findWebsite } = require('../site-finder');
 const { writeSiteFinderResultToLeadBase } = require('../site-finder/writers/leadbaseWriter');
 
@@ -75,6 +76,21 @@ async function enrichBatchForConsultant(params = {}) {
   // Sprint 2 — site-finder injectables
   const siteFinder = adapters.findWebsite || findWebsite;
   const siteFinderWriter = adapters.writeSiteFinderResultToLeadBase || writeSiteFinderResultToLeadBase;
+  // Cascade Dropcontact (Jalon 3) — wiring de l'adapter en prod. L'adapter
+  // pioche sa config depuis process.env (DROPCONTACT_API_KEY/_ENABLED/_API_URL/
+  // _MONTHLY_BUDGET_CENTS/_TIMEOUT_MS). Bypass pour tests via
+  // adapters.dropcontact.
+  const dropcontactAdapter = (adapters.dropcontact !== undefined)
+    ? adapters.dropcontact
+    : (() => {
+        try {
+          return new DropcontactAdapter({ logger: context });
+        } catch (err) {
+          logWarn(context, `[enrichBatch] DropcontactAdapter init failed: ${err && err.message}`);
+          return null;
+        }
+      })();
+  const exhausterAdapters = { ...adapters, dropcontact: dropcontactAdapter };
 
   if (!beneficiaryId) {
     return errorResult(started, 'missing_beneficiary_id');
@@ -221,7 +237,7 @@ async function enrichBatchForConsultant(params = {}) {
         experimentsContext,
         simulated: Boolean(dryRun),
       },
-      { adapters, context },
+      { adapters: exhausterAdapters, context },
     ).catch((err) => {
       logWarn(context, `[enrichBatch] exhauster throw for ${cand.siren}: ${err && err.message}`);
       return { status: 'error', email: null, signals: ['exception'] };
