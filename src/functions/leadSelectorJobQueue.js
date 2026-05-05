@@ -75,12 +75,15 @@ app.storageQueue('leadSelectorJobQueue', {
         costCentsTotal: result.meta?.costCentsTotal || 0,
       };
 
+      log(`[lead-selector-job] enrich-summary jobId=${jobId} status=${summary.status} candidatesConsidered=${summary.candidatesConsidered} leadsCount=${summary.leadsCount} resolutionOk=${summary.resolutionOk} unresolvable=${summary.unresolvable} costCents=${summary.costCentsTotal}`);
+
       if (dryRun || result.status === 'error' || result.status === 'empty') {
         // empty / error → no-op silencieux. Le worker MacBook Air enrichit
         // LeadBase en parallèle (RNE H24) et le timer dailyLeadSelectorRefresh
         // re-déclenche chaque matin L-V. On agit avec ce qu'on a, sinon on
         // attend demain. Pas de mail "base à affiner" au consultant
         // (directive Paul 5 mai 2026 : David ne raconte pas sa vie).
+        log(`[lead-selector-job] done jobId=${jobId} branch=empty_or_error status=${result.status} sequenceLaunched=false`);
         await markStatus(tableClient, jobId, 'done', { ...summary, sequenceLaunched: false });
         return;
       }
@@ -90,6 +93,7 @@ app.storageQueue('leadSelectorJobQueue', {
       // affiner" au consultant — directive Paul 5 mai 2026.
 
       // Lancement séquence Martin/Mila sur les leads enrichis
+      log(`[lead-selector-job] launching-sequence jobId=${jobId} status=${result.status} leads=${(result.leads||[]).length}`);
       const seqResults = await launchSequenceForConsultant({
         consultant: consultantPayload.consultant,
         brief: consultantPayload.brief,
