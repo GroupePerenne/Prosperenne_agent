@@ -355,6 +355,13 @@ async function findWebsite(input = {}, opts = {}) {
         logger.warn('site-finder.cache.put.error', { err: err && err.message });
       }
     }
+    logger.info('site-finder.cascade.summary', {
+      siren: input.siren,
+      outcome: 'resolved',
+      source: validatedOutput.source,
+      confidence: validatedOutput.confidence,
+      attempted: attempted.map((a) => ({ source: a.source, candidates: a.candidates, rejectedReason: a.rejectedReason })),
+    });
     return validatedOutput;
   }
 
@@ -379,6 +386,12 @@ async function findWebsite(input = {}, opts = {}) {
     }
   }
 
+  logger.info('site-finder.cascade.summary', {
+    siren: input.siren,
+    outcome: 'unresolved',
+    bestRejectedConfidence: bestRejected ? bestRejected.result.confidence : 0,
+    attempted: attempted.map((a) => ({ source: a.source, candidates: a.candidates, rejectedReason: a.rejectedReason })),
+  });
   return failureOutput;
 }
 
