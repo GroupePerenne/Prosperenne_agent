@@ -815,8 +815,8 @@ async function main() {
   console.log('');
 
   const ETA_FULL_LEADBASE = 12_800_000;
-  if (sirens.length > 100 && counters.processed > 0) {
-    const estRate = counters.processed / (t2ms / 1000);
+  if (candidateCount > 100 && t2ms > 0) {
+    const estRate = candidateCount / (t2ms / 1000);
     if (estRate > 0) {
       const etaMs = (ETA_FULL_LEADBASE / estRate) * 1000;
       const h = Math.floor(etaMs / 3600000);
