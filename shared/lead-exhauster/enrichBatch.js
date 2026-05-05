@@ -217,6 +217,8 @@ async function enrichBatchForConsultant(params = {}) {
     }
   }
 
+  logInfo(context, '[enrichBatch] site-finder.prepass.summary', siteFinderMeta);
+
   // ─── Étape 2 : boucle exhauster parallèle (concurrency=3) ──────────
   // Concurrency 3 par défaut : exhauster est I/O-heavy (Dropcontact poll
   // ~90s + scraping multi-pages). Au-delà de 3 on sature Dropcontact API
@@ -272,6 +274,17 @@ async function enrichBatchForConsultant(params = {}) {
       return { status: 'error', email: null, signals: ['exception'] };
     });
 
+    logInfo(context, '[enrichBatch] candidate.outcome', {
+      siren: cand.siren,
+      status: enrichment && enrichment.status || 'unknown',
+      email_present: Boolean(enrichment && enrichment.email),
+      confidence: (enrichment && enrichment.confidence) || null,
+      source: (enrichment && enrichment.source) || null,
+      signals: Array.isArray(enrichment && enrichment.signals) ? enrichment.signals.slice(0, 6) : [],
+      cost_cents: (enrichment && enrichment.cost_cents) || 0,
+      had_company_domain: Boolean(companyDomain),
+    });
+
     return { cand, enrichment };
   });
 
@@ -317,6 +330,20 @@ async function enrichBatchForConsultant(params = {}) {
     : leads.length < batchSize
       ? 'insufficient'
       : 'ok';
+
+  logInfo(context, '[enrichBatch] batch.summary', {
+    beneficiaryId,
+    status,
+    requested: batchSize,
+    returned: leads.length,
+    candidatesConsidered: candidates.length,
+    resolutionAttempts,
+    resolutionOk,
+    resolutionUnresolvable,
+    costCentsTotal,
+    elapsedMs: Date.now() - started,
+    ...siteFinderMeta,
+  });
 
   return {
     status,
@@ -501,6 +528,14 @@ function logWarn(context, message) {
   if (!context) return;
   if (typeof context.warn === 'function') context.warn(message);
   else if (typeof context.log === 'function') context.log(message);
+}
+
+function logInfo(context, message, payload) {
+  if (!context) return;
+  const out = payload === undefined ? message : `${message} ${JSON.stringify(payload)}`;
+  if (typeof context.info === 'function') context.info(out);
+  else if (context.log && typeof context.log.info === 'function') context.log.info(out);
+  else if (typeof context.log === 'function') context.log(out);
 }
 
 module.exports = {
