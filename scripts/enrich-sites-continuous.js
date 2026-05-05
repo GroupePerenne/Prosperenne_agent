@@ -186,7 +186,10 @@ function logProgress() {
 }
 
 async function* iteratePartition(dept) {
-  const filter = `PartitionKey eq '${dept.replace(/'/g, "''")}'`;
+  const pk = dept.replace(/'/g, "''");
+  // Filtrer server-side sur les tranches cibles — évite de paginer des millions
+  // d'entrées hors-cible (ex: partition 75 = 1M+ entrées dont 98% tranche NN).
+  const filter = `PartitionKey eq '${pk}' and (trancheEffectif eq '11' or trancheEffectif eq '12' or trancheEffectif eq '21')`;
   const iter = tableClient.listEntities({
     queryOptions: {
       filter,
