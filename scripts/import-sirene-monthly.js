@@ -79,10 +79,10 @@ const DOWNLOAD_DIR = process.env.SIRENE_DOWNLOAD_DIR || '/tmp';
 const BATCH_WRITE_SIZE = 100;
 const PROGRESS_INTERVAL = 500;
 
-// URL du stock SIRENE complet (mis à jour ~1er de chaque mois par data.gouv.fr)
+// URLs stock SIRENE complet (mis à jour ~1er de chaque mois par data.gouv.fr)
+// Dataset : https://www.data.gouv.fr/api/1/datasets/5b7ffc618b4c4169d30727e0/
 const SIRENE_STOCK_URL = 'https://object.files.data.gouv.fr/data-pipeline-open/siren/stock/StockUniteLegale_utf8.zip';
-// Dataset API data.gouv.fr pour récupérer l'URL courante si le pattern change :
-// https://www.data.gouv.fr/api/1/datasets/5b7ffc618b4c4169d30727e0/
+const SIRENE_ETABLISSEMENTS_STOCK_URL = 'https://object.files.data.gouv.fr/data-pipeline-open/siren/stock/StockEtablissement_utf8.zip';
 
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 // ─── Régions → départements ───────────────────────────────────────────────────
@@ -106,6 +106,7 @@ function parseArgs(argv) {
   const args = {
     input: null,
     download: false,
+    etablissements: null, // chemin local StockEtablissement_utf8.csv (mode sans API)
     dryRun: false,
     limit: null,
     tranches: ['11', '12', '21'],
@@ -120,6 +121,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--input') args.input = argv[++i];
     else if (a === '--download') args.download = true;
+    else if (a === '--etablissements') args.etablissements = argv[++i];
     else if (a === '--regions') {
       const rnames = argv[++i].split(',').map((s) => s.trim().toLowerCase());
       const depts = new Set();
@@ -371,9 +373,19 @@ function buildSireneFilter(args) {
   };
 }
 
+/**
+ * Mode API (legacy) : retourne un tableau de SIRENs strings.
+ * Mode CSV join : retourne une Map<siren, {siren, nom, codeNaf, tranche}>.
+ * Le même streaming est utilisé dans les deux cas ; la différence est dans
+ * ce qu'on stocke par entrée retenue.
+ */
 async function collectFilteredSirens(csvPath, args) {
   const passesFilter = buildSireneFilter(args);
-  const sirens = [];
+  // En mode CSV join on stocke le row complet (nom, codeNaf, tranche).
+  // En mode API on stocke juste le siren (mémoire minimale).
+  const csvMode = Boolean(args.etablissements);
+  const sirenMap = csvMode ? new Map() : null;
+  const sirens = csvMode ? null : [];
   let totalLines = 0;
   let headers = null;
 
@@ -389,13 +401,29 @@ async function collectFilteredSirens(csvPath, args) {
         return;
       }
       totalLines++;
+      const count = csvMode ? sirenMap.size : sirens.length;
       if (totalLines % 1_000_000 === 0) {
-        process.stdout.write(`\r  Lecture CSV : ${(totalLines / 1_000_000).toFixed(1)}M lignes, ${sirens.length} retenus...`);
+        process.stdout.write(`\r  Lecture CSV : ${(totalLines / 1_000_000).toFixed(1)}M lignes, ${count} retenus...`);
       }
       const values = parseCsvLine(line);
       if (values.length !== headers.length) return;
       const row = Object.fromEntries(headers.map((h, i) => [h, values[i]]));
-      if (passesFilter(row)) {
+      if (!passesFilter(row)) return;
+
+      if (csvMode) {
+        const nom = (row.denominationUniteLegale || '').trim()
+          || [row.prenom1UniteLegale, row.nomUniteLegale].map((s) => (s || '').trim()).filter(Boolean).join(' ');
+        sirenMap.set(row.siren, {
+          siren: row.siren,
+          nom,
+          codeNaf: (row.activitePrincipaleUniteLegale || '').trim(),
+          tranche: (row.trancheEffectifsUniteLegale || '').trim(),
+        });
+        if (args.limit && sirenMap.size >= args.limit) {
+          rl.close();
+          rl.removeAllListeners();
+        }
+      } else {
         sirens.push(row.siren);
         if (args.limit && sirens.length >= args.limit) {
           rl.close();
@@ -409,7 +437,151 @@ async function collectFilteredSirens(csvPath, args) {
   });
 
   if (totalLines >= 1000) process.stdout.write('\n');
-  return { sirens, totalLines };
+  return { sirens, sirenMap, totalLines };
+}
+
+/**
+ * Construit une Map<siren, {dept, ville, codePostal}> depuis le fichier
+ * StockEtablissement_utf8.csv, en ne gardant que les établissements siège
+ * dont le siren est dans sirenSet.
+ *
+ * Utilise le streaming pour limiter l'empreinte mémoire malgré le fichier
+ * ~4GB / 35M lignes.
+ */
+async function buildLocationMap(csvPath, sirenSet) {
+  const map = new Map();
+  let totalLines = 0;
+  let headers = null;
+
+  console.log(`  Lecture ${csvPath}...`);
+
+  await new Promise((resolve, reject) => {
+    const rl = readline.createInterface({
+      input: fs.createReadStream(csvPath, { encoding: 'utf8' }),
+      crlfDelay: Infinity,
+    });
+
+    rl.on('line', (line) => {
+      if (!headers) {
+        headers = parseCsvLine(line);
+        return;
+      }
+      totalLines++;
+      if (totalLines % 2_000_000 === 0) {
+        process.stdout.write(`\r  StockEtablissement : ${(totalLines / 1_000_000).toFixed(1)}M lignes, ${map.size} sièges retenus...`);
+      }
+      // Optimisation : lire seulement les colonnes dont on a besoin.
+      // Si les headers ne sont pas encore indexés, on indexe une fois.
+      if (!headers._idx) {
+        headers._idx = {};
+        headers.forEach((h, i) => { headers._idx[h] = i; });
+      }
+      const idx = headers._idx;
+      // Colonne etablissementSiege : skip si pas siège
+      const rawLine = line; // On parse uniquement si nécessaire
+      const values = parseCsvLine(rawLine);
+      if (values.length < 5) return;
+
+      const siren = values[idx.siren] || '';
+      if (!sirenSet.has(siren)) return;
+
+      const siege = (values[idx.etablissementSiege] || '').toLowerCase();
+      if (siege !== 'true' && siege !== 'o') return; // 'true' ou 'O' selon les millésimes
+
+      if (map.has(siren)) return; // déjà un siège pour ce siren, on garde le premier
+
+      const commune = values[idx.codeCommuneEtablissement] || '';
+      const dept = departementFromCommune(commune);
+      if (!dept) return;
+
+      map.set(siren, {
+        dept,
+        ville: (values[idx.libelleCommuneEtablissement] || '').trim(),
+        codePostal: (values[idx.codePostalEtablissement] || '').trim(),
+      });
+    });
+
+    rl.on('close', resolve);
+    rl.on('error', reject);
+  });
+
+  if (totalLines >= 1000) process.stdout.write('\n');
+  console.log(`  ${map.size.toLocaleString('fr-FR')} sièges localisés sur ${sirenSet.size.toLocaleString('fr-FR')} candidats`);
+  return map;
+}
+
+/**
+ * Mode CSV join : construit les entités depuis sirenMap + locationMap,
+ * sans aucun appel API. Filtre par région si args.regions est défini.
+ */
+async function processFromCsvJoin(sirenMap, locationMap, client, args) {
+  const counters = {
+    processed: 0,
+    upserted: 0,
+    noAddress: 0,
+    outOfRegion: 0,
+    writeError: 0,
+  };
+
+  const toWrite = [];
+  for (const [siren, sirenData] of sirenMap) {
+    counters.processed++;
+    const loc = locationMap.get(siren);
+    if (!loc) { counters.noAddress++; continue; }
+    if (args.regions && !args.regions.has(loc.dept)) { counters.outOfRegion++; continue; }
+
+    toWrite.push({
+      partitionKey: loc.dept,
+      rowKey: siren,
+      siren,
+      nom: sirenData.nom || '',
+      codeNaf: sirenData.codeNaf || '',
+      ville: loc.ville || '',
+      codePostal: loc.codePostal || '',
+      trancheEffectif: sirenData.tranche || '',
+      importedAt: new Date().toISOString(),
+      source: 'sirene-csv',
+    });
+  }
+
+  console.log(`  ${toWrite.length.toLocaleString('fr-FR')} entités à écrire en base...`);
+  if (args.dryRun) {
+    counters.upserted = toWrite.length;
+    return counters;
+  }
+
+  // Regrouper par PartitionKey pour submitTransaction
+  const byPk = new Map();
+  for (const entity of toWrite) {
+    if (!byPk.has(entity.partitionKey)) byPk.set(entity.partitionKey, []);
+    byPk.get(entity.partitionKey).push(entity);
+  }
+
+  let written = 0;
+  for (const [pk, entities] of byPk) {
+    for (let j = 0; j < entities.length; j += BATCH_WRITE_SIZE) {
+      const chunk = entities.slice(j, j + BATCH_WRITE_SIZE);
+      try {
+        await client.submitTransaction(chunk.map((e) => ['upsert', e]));
+        counters.upserted += chunk.length;
+      } catch {
+        for (const e of chunk) {
+          try {
+            await client.upsertEntity(e, 'Merge');
+            counters.upserted++;
+          } catch {
+            counters.writeError++;
+          }
+        }
+      }
+      written += chunk.length;
+      if (written % 5000 < BATCH_WRITE_SIZE) {
+        process.stdout.write(`\r  Écriture : ${written.toLocaleString('fr-FR')} / ${toWrite.length.toLocaleString('fr-FR')} (dept ${pk})...`);
+      }
+    }
+  }
+  if (toWrite.length > 0) process.stdout.write('\n');
+  return counters;
 }
 
 // Parseur CSV minimal RFC 4180 (gère les guillemets).
@@ -433,7 +605,7 @@ function parseCsvLine(line) {
   return out;
 }
 
-// ─── Pipeline principal ──────────────────────────────────────────────────────
+// ─── Pipeline principal (mode API — legacy) ───────────────────────────────────
 async function processInBatches(sirens, client, args) {
   const counters = {
     processed: 0,
@@ -571,46 +743,74 @@ async function main() {
   }
 
   // 1. Lecture + filtrage CSV
-  console.log('Étape 1 — Lecture CSV SIRENE...');
+  const modeCsv = Boolean(args.etablissements);
+  console.log(`Étape 1 — Lecture CSV SIRENE (${modeCsv ? 'mode CSV-join, sans API' : 'mode API'})...`);
   const t1 = Date.now();
-  const { sirens, totalLines } = await collectFilteredSirens(args.input, args);
+  const { sirens, sirenMap, totalLines } = await collectFilteredSirens(args.input, args);
   const t1ms = Date.now() - t1;
+  const candidateCount = modeCsv ? sirenMap.size : sirens.length;
   console.log(`  ${totalLines.toLocaleString('fr-FR')} lignes lues en ${(t1ms / 1000).toFixed(1)}s`);
-  console.log(`  ${sirens.length.toLocaleString('fr-FR')} SIRENs retenus (filtrage SIRENE : tranche + NAF + état)`);
-  if (args.regions) console.log(`  (filtre région appliqué à l'étape 2 après résolution adresse)`);
+  console.log(`  ${candidateCount.toLocaleString('fr-FR')} SIRENs retenus (tranche + NAF + état)`);
+  if (!modeCsv && args.regions) console.log(`  (filtre région appliqué à l'étape 2 après résolution adresse via API)`);
 
-  if (sirens.length === 0) {
+  if (candidateCount === 0) {
     console.log('\nAucune entreprise à importer. Fin.');
     process.exit(0);
   }
 
-  // 2. Enrichissement + upsert
-  if (args.dryRun) {
-    console.log(`\nDRY-RUN terminé. ${sirens.length.toLocaleString('fr-FR')} SIRENs passeraient l'étape 2 (API + upsert).`);
+  if (args.dryRun && !modeCsv) {
+    console.log(`\nDRY-RUN terminé. ${candidateCount.toLocaleString('fr-FR')} SIRENs passeraient l'étape 2 (API + upsert).`);
     console.log('Relancer sans --dry-run pour effectuer l\'import réel.');
     process.exit(0);
   }
 
-  console.log(`\nÉtape 2 — Enrichissement API + upsert (concurrence ${CONCURRENCY}, sleep ${SLEEP_MS}ms)...`);
+  // 2. Résolution adresse + upsert
   const t2 = Date.now();
-  const counters = await processInBatches(sirens, client, args);
-  const t2ms = Date.now() - t2;
+  let counters;
 
-  const rate = counters.processed > 0 ? (counters.processed / (t2ms / 1000)).toFixed(1) : '0';
+  if (modeCsv) {
+    // Mode CSV-join : lecture StockEtablissement, join local, upsert sans API
+    console.log('\nÉtape 2 — Lecture StockEtablissement + join + upsert (sans appel API)...');
+    const locationMap = await buildLocationMap(args.etablissements, new Set(sirenMap.keys()));
+
+    if (args.dryRun) {
+      // Simuler le join pour le dry-run
+      let inRegion = 0;
+      for (const [siren] of sirenMap) {
+        const loc = locationMap.get(siren);
+        if (!loc) continue;
+        if (args.regions && !args.regions.has(loc.dept)) continue;
+        inRegion++;
+      }
+      console.log(`\nDRY-RUN terminé. ${inRegion.toLocaleString('fr-FR')} entités seraient upsertées en base.`);
+      console.log('Relancer sans --dry-run pour effectuer l\'import réel.');
+      process.exit(0);
+    }
+
+    counters = await processFromCsvJoin(sirenMap, locationMap, client, args);
+  } else {
+    // Mode API (legacy) : enrichissement via recherche-entreprises.api.gouv.fr
+    console.log(`\nÉtape 2 — Enrichissement API + upsert (concurrence ${CONCURRENCY}, sleep ${SLEEP_MS}ms)...`);
+    counters = await processInBatches(sirens, client, args);
+  }
+
+  const t2ms = Date.now() - t2;
+  const rate = (candidateCount / (t2ms / 1000)).toFixed(1);
 
   // 3. Rapport
   console.log('');
   console.log('═'.repeat(72));
   console.log('  RAPPORT');
   console.log('═'.repeat(72));
-  console.log(`  SIRENs filtrés      : ${sirens.length.toLocaleString('fr-FR')}`);
-  console.log(`  Traités             : ${counters.processed.toLocaleString('fr-FR')}`);
+  console.log(`  SIRENs filtrés      : ${candidateCount.toLocaleString('fr-FR')}`);
+  if (!modeCsv) console.log(`  Traités             : ${(counters.processed || 0).toLocaleString('fr-FR')}`);
   console.log(`  Upsertés en base    : ${counters.upserted.toLocaleString('fr-FR')} ${args.dryRun ? '(dry-run)' : ''}`);
-  console.log(`  Sans adresse API    : ${counters.noAddress}`);
-  console.log(`  Erreurs API         : ${counters.apiError}`);
-  console.log(`  Erreurs écriture    : ${counters.writeError}`);
-  console.log(`  Skippés (inactifs)  : ${counters.skipped}`);
-  if (counters.outOfRegion > 0) console.log(`  Hors région         : ${counters.outOfRegion}`);
+  console.log(`  Sans adresse        : ${counters.noAddress || 0}`);
+  if (!modeCsv) console.log(`  Erreurs API         : ${counters.apiError || 0}`);
+  console.log(`  Erreurs écriture    : ${counters.writeError || 0}`);
+  if (!modeCsv && counters.skipped) console.log(`  Skippés (inactifs)  : ${counters.skipped}`);
+  if ((counters.outOfRegion || 0) > 0) console.log(`  Hors région         : ${counters.outOfRegion}`);
+  console.log(`  Mode                : ${modeCsv ? 'CSV-join (sans API)' : 'API recherche-entreprises'}`);
   console.log(`  Durée étape 2       : ${(t2ms / 1000).toFixed(1)}s (${rate} siren/s)`);
   console.log('');
 
