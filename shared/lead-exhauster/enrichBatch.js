@@ -249,6 +249,9 @@ async function enrichBatchForConsultant(params = {}) {
       leads.push(buildLeadFromCandidate(cand, enrichment));
     } else {
       resolutionUnresolvable++;
+      // Trace explicite signals pour diag (5 mai 2026 PM)
+      const sig = Array.isArray(enrichment.signals) ? enrichment.signals.join(',') : '';
+      logWarn(context, `[enrichBatch] unresolvable siren=${cand.siren} firstName=${cand.firstName} lastName=${cand.lastName} domain=${companyDomain || 'none'} signals=[${sig}]`);
       unresolvablePromises.push(
         Promise.resolve(
           unresolvableWriter({
