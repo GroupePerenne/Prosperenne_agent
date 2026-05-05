@@ -32,6 +32,7 @@ const { DropcontactAdapter } = require('./adapters/dropcontact');
 const { isAggregator } = require('../site-finder/aggregators');
 const { findWebsite } = require('../site-finder');
 const { writeSiteFinderResultToLeadBase } = require('../site-finder/writers/leadbaseWriter');
+const { pMapLimit } = require('../utils/p-map-limit');
 
 /**
  * Enrichit un brief en batch prêt pour launchSequenceForConsultant.
@@ -216,16 +217,26 @@ async function enrichBatchForConsultant(params = {}) {
     }
   }
 
-  // ─── Étape 2 : boucle exhauster séquentielle ────────────────────────
-  const leads = [];
+  // ─── Étape 2 : boucle exhauster parallèle (concurrency=3) ──────────
+  // Concurrency 3 par défaut : exhauster est I/O-heavy (Dropcontact poll
+  // ~90s + scraping multi-pages). Au-delà de 3 on sature Dropcontact API
+  // et on génère du throttling DDG/Brave. En deçà on perd le bénéfice
+  // (selectCandidates est déjà coûteux 4-5 min, il faut compresser
+  // l'étape exhauster pour tenir dans la fenêtre 10 min Consumption).
+  // Override possible via env EXHAUSTER_CONCURRENCY.
+  //
+  // Surcout assumé : on enrichit candidateMultiplier × batchSize candidates
+  // en parallèle alors qu'on coupe à batchSize au build leads ; les surplus
+  // sont mis en cache LeadContacts pour les runs suivantes, pas de gaspillage net.
+  const EXHAUSTER_CONCURRENCY = Math.max(1, Number(process.env.EXHAUSTER_CONCURRENCY) || 3);
+
   let resolutionAttempts = 0;
   let resolutionOk = 0;
   let resolutionUnresolvable = 0;
   let costCentsTotal = 0;
   const unresolvablePromises = [];
 
-  for (const cand of candidates) {
-    if (leads.length >= batchSize) break;
+  const enrichmentsRaw = await pMapLimit(candidates, EXHAUSTER_CONCURRENCY, async (cand) => {
     resolutionAttempts++;
 
     const experimentsContext = await buildCtx({
@@ -261,7 +272,21 @@ async function enrichBatchForConsultant(params = {}) {
       return { status: 'error', email: null, signals: ['exception'] };
     });
 
-    if (enrichment.status === 'ok' && enrichment.email) {
+    return { cand, enrichment };
+  });
+
+  // Build leads en ordre, stop dès batchSize atteint. Les enrichments au-delà
+  // ont déjà été persistés en cache LeadContacts par l'exhauster (réutilisés
+  // par les prochaines runs).
+  const leads = [];
+  for (const item of enrichmentsRaw) {
+    if (leads.length >= batchSize) break;
+    if (!item || item.error) {
+      resolutionUnresolvable++;
+      continue;
+    }
+    const { cand, enrichment } = item;
+    if (enrichment && enrichment.status === 'ok' && enrichment.email) {
       resolutionOk++;
       costCentsTotal += Number(enrichment.cost_cents) || 0;
       leads.push(buildLeadFromCandidate(cand, enrichment));
@@ -272,8 +297,8 @@ async function enrichBatchForConsultant(params = {}) {
           unresolvableWriter({
             beneficiaryId,
             siren: cand.siren,
-            reason: enrichment.status === 'error' ? 'error' : 'unresolvable',
-            signalsExhausted: Array.isArray(enrichment.signals) ? enrichment.signals : [],
+            reason: enrichment && enrichment.status === 'error' ? 'error' : 'unresolvable',
+            signalsExhausted: Array.isArray(enrichment && enrichment.signals) ? enrichment.signals : [],
             firstName: cand.firstName,
             lastName: cand.lastName,
             companyName: cand.companyName,
