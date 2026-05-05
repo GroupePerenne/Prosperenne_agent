@@ -45,10 +45,13 @@ const QUALIFICATION_MAP = Object.freeze({
 const DEFAULT_API_URL = 'https://api.dropcontact.io/batch';
 // Dropcontact API V1 : "Request not ready yet, try again in 30 seconds"
 // Validation terrain 2026-04-24 : batch processing ~30-60s réel.
-// Poll initial à 30s (consigne provider), puis 15s pour capter le
-// résultat dès disponibilité (meilleur behavior moyen que 30/30/15).
-const DEFAULT_TIMEOUT_MS = 90_000;
-const DEFAULT_POLL_DELAYS_MS = [30_000, 15_000, 15_000, 15_000]; // 75s cumulés
+// Polls 30s × 5 = 150s cumulés. Dropcontact répond fréquemment "Request
+// not ready yet, try again in 30 seconds" sur les premiers polls pour les
+// requêtes batch. 75s cumulés (V1) était trop court → poll exhausted
+// observé en prod 5 mai 2026 PM. Le timeout global 220s couvre submit
+// (~5s) + 5 polls espacés + marge transport.
+const DEFAULT_TIMEOUT_MS = 220_000;
+const DEFAULT_POLL_DELAYS_MS = [30_000, 30_000, 30_000, 30_000, 30_000];
 const DEFAULT_COST_PER_LOOKUP_CENTS = 3; // Starter plan ~2.4c/lookup, arrondi 3
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_OPEN_MS = 10 * 60 * 1000; // 10 min

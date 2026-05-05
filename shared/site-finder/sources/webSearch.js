@@ -114,75 +114,13 @@ const QUERY_STRATEGIES = [
 ];
 
 /**
- * Domaines agrégateurs connus à filtrer des résultats (le module ne valide
- * jamais une URL qui pointe vers un de ces domaines, parce que ce ne sont pas
- * des sites d'entreprise).
- *
- * Liste fermée — extensible au fil de l'observation terrain. Pas d'ajout
- * spéculatif (R-J6).
+ * Domaines agrégateurs : centralisés dans `shared/site-finder/aggregators.js`
+ * pour partage entre webSearch (filtre URLs candidates) et lead-exhauster
+ * (filtre companyDomain à un agrégateur). Si on ne filtre pas dans le
+ * lead-exhauster, on génère des patterns absurdes type
+ * `prenom.nom@rubypayeur.com`.
  */
-const AGGREGATOR_DOMAINS = new Set([
-  'societe.com',
-  'verif.com',
-  'pappers.fr',
-  'pagesjaunes.fr',
-  'linkedin.com',
-  'fr.linkedin.com',
-  'facebook.com',
-  'fr-fr.facebook.com',
-  'wikipedia.org',
-  'fr.wikipedia.org',
-  'infogreffe.fr',
-  'annuaire-mairie.fr',
-  'mairie.com',
-  'xerfi.com',
-  'entreprises.lefigaro.fr',
-  'bilansgratuits.fr',
-  'score3.fr',
-  'b-reputation.com',
-  'pages-pro.com',
-  'fr.kompany.com',
-  'dnb.com',
-  'bvdinfo.com',
-  'corporama.com',
-  'entreprises.lagazettefrance.fr',
-  'lagazettefrance.fr',
-  'verif-siren.com',
-  'siren-info.com',
-  'societe-info.com',
-  'manageo.fr',
-  'kompass.com',
-  'fr.kompass.com',
-  'europages.fr',
-  'annuaire-entreprises.data.gouv.fr',
-  'data.gouv.fr',
-  'insee.fr',
-  'bodacc.fr',
-  'duckduckgo.com',
-  'google.com',
-  'bing.com',
-]);
-
-/**
- * Vérifie si une URL appartient à un domaine agrégateur connu.
- * Le check est insensitive sur le préfixe `www.` et la casse.
- */
-function isAggregator(url) {
-  if (typeof url !== 'string' || !url) return false;
-  let host;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  if (host.startsWith('www.')) host = host.slice(4);
-  if (AGGREGATOR_DOMAINS.has(host)) return true;
-  // Match aussi les sous-domaines (ex: blog.linkedin.com)
-  for (const aggr of AGGREGATOR_DOMAINS) {
-    if (host.endsWith(`.${aggr}`)) return true;
-  }
-  return false;
-}
+const { AGGREGATOR_DOMAINS, isAggregator } = require('../aggregators');
 
 /**
  * Vérifie si une stratégie est applicable à un input donné.

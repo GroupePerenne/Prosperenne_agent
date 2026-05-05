@@ -29,6 +29,7 @@ const { leadExhauster } = require('./index');
 const { recordUnresolvable } = require('./unresolvableTrace');
 const { DEFAULT_CONFIDENCE_THRESHOLD } = require('./schemas');
 const { DropcontactAdapter } = require('./adapters/dropcontact');
+const { isAggregator } = require('../site-finder/aggregators');
 const { findWebsite } = require('../site-finder');
 const { writeSiteFinderResultToLeadBase } = require('../site-finder/writers/leadbaseWriter');
 
@@ -176,6 +177,23 @@ async function enrichBatchForConsultant(params = {}) {
     if (result.source === 'cache') siteFinderMeta.siteFinderCacheHits++;
     siteFinderMeta.siteFinderCostCents += Number(result.costCents) || 0;
 
+    // Filtre annuaires : si site-finder retourne un agrégateur (rubypayeur,
+    // datalegal, e-pro...), on n'écrit PAS companyDomain. Le pipeline
+    // continue sans domaine validé : Dropcontact pourra chercher via
+    // SIREN+companyName, ce qui est plus fiable qu'un pattern absurde sur
+    // un faux domaine. Tracé pour audit.
+    if (isAggregator(result.siteUrl)) {
+      siteFinderMeta.siteFinderAggregatorSkipped = (siteFinderMeta.siteFinderAggregatorSkipped || 0) + 1;
+      cand.siteFinderResult = {
+        siteUrl: result.siteUrl,
+        confidence: result.confidence,
+        source: result.source,
+        proofType: result.proofType,
+        skippedAggregator: true,
+      };
+      continue;
+    }
+
     // Enrichit le candidate : `companyDomain` sera consommé par l'exhauster
     // ligne ~136 (hintedEmail prioritaire mais ici hintedEmail est null
     // puisqu'on a skip dès que présent).
@@ -249,9 +267,6 @@ async function enrichBatchForConsultant(params = {}) {
       leads.push(buildLeadFromCandidate(cand, enrichment));
     } else {
       resolutionUnresolvable++;
-      // Trace explicite signals pour diag (5 mai 2026 PM)
-      const sig = Array.isArray(enrichment.signals) ? enrichment.signals.join(',') : '';
-      logWarn(context, `[enrichBatch] unresolvable siren=${cand.siren} firstName=${cand.firstName} lastName=${cand.lastName} domain=${companyDomain || 'none'} signals=[${sig}]`);
       unresolvablePromises.push(
         Promise.resolve(
           unresolvableWriter({
