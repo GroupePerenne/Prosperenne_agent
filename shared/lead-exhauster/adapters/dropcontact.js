@@ -149,8 +149,14 @@ class DropcontactAdapter {
   static qualificationToConfidence(q) {
     if (!q || typeof q !== 'string') return 0;
     const key = q.toLowerCase().trim();
-    const v = QUALIFICATION_MAP[key];
-    return typeof v === 'number' ? v : 0;
+    // Format Dropcontact V1 : "nominative", "catch_all", "role"
+    if (typeof QUALIFICATION_MAP[key] === 'number') return QUALIFICATION_MAP[key];
+    // Format Dropcontact V2 (observé 2026-05-05 sur fichier exemple app.dropcontact.com) :
+    // "nominative@pro", "catch-all@pro", "role@pro" — préfixe sémantique avant '@',
+    // tirets normalisés en underscore pour matcher la map.
+    const prefix = key.split('@')[0].replace(/-/g, '_');
+    if (typeof QUALIFICATION_MAP[prefix] === 'number') return QUALIFICATION_MAP[prefix];
+    return 0;
   }
 
   /**

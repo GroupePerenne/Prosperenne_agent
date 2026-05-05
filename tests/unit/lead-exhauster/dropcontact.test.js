@@ -107,6 +107,19 @@ test('qualificationToConfidence — qualifs inconnues → 0', () => {
   assert.equal(DropcontactAdapter.qualificationToConfidence(null), 0);
 });
 
+test('qualificationToConfidence — format Dropcontact V2 avec suffix @pro', () => {
+  // Format observé 2026-05-05 sur fichier exemple app.dropcontact.com
+  assert.equal(DropcontactAdapter.qualificationToConfidence('nominative@pro'), 0.95);
+  assert.equal(DropcontactAdapter.qualificationToConfidence('catch-all@pro'), 0.50);
+  assert.equal(DropcontactAdapter.qualificationToConfidence('role@pro'), 0.30);
+  assert.equal(DropcontactAdapter.qualificationToConfidence('NOMINATIVE@PRO'), 0.95);
+  assert.equal(DropcontactAdapter.qualificationToConfidence('nominative_verified@pro'), 0.98);
+});
+
+test('qualificationToConfidence — V2 ne casse pas si seulement préfixe inconnu', () => {
+  assert.equal(DropcontactAdapter.qualificationToConfidence('foobar@pro'), 0);
+});
+
 test('QUALIFICATION_MAP — figé, pas mutable', () => {
   assert.throws(() => { QUALIFICATION_MAP.nominative = 0.01; });
 });
