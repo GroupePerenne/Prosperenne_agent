@@ -10,11 +10,13 @@
  *   4. Si UN AUTRE SIREN trouvé (≠ cible) → confidence 0.0, proofType
  *      'siren_mismatch'. Rejet ferme : un site qui revendique un autre SIREN
  *      n'est pas le bon, point.
- *   5. Si aucun SIREN trouvé → cumul de signaux faibles bornés (max 0.80).
- *
- * Le cumul faible est pensé pour ne JAMAIS dépasser le seuil par défaut (0.85)
- * sans preuve forte. Les sites validés sans SIREN nécessitent donc soit un
- * threshold abaissé explicite, soit un override caller. Choix produit Paul.
+ *   5. Si aucun SIREN trouvé → cumul de signaux faibles.
+ *      - Cas général (Option C) : max 0.80, jamais au-dessus du seuil 0.85.
+ *      - Bonus combinatoire name_city : si domain_resembles_name + ville_in_text
+ *        (ou domain_resembles_name + company_name_in_title), confidence = 0.87.
+ *        Décision Paul : nom de société dans le domaine + localité confirmée =
+ *        preuve suffisante pour alimenter Dropcontact. Faux positif → email
+ *        non délivré, pas de dommage prospect.
  */
 
 const { containsTargetSiren, extractSirens } = require('./sirenExtractor');
@@ -22,6 +24,9 @@ const { fetchPagesForValidation } = require('../utils/pageFetcher');
 
 const BASE_WEAK_CONFIDENCE = 0.40;
 const MAX_WEAK_CONFIDENCE = 0.80;
+// Confidence accordée quand domain_resembles_name + ville_in_text (ou name_in_title).
+// Au-dessus du seuil par défaut (0.85) → validé sans SIREN (Option C).
+const NAME_CITY_MATCH_CONFIDENCE = 0.87;
 const SIGNAL_WEIGHT_NAME_IN_TITLE = 0.15;
 const SIGNAL_WEIGHT_VILLE = 0.10;
 const SIGNAL_WEIGHT_CODE_POSTAL = 0.05;
@@ -129,7 +134,7 @@ async function validateCandidate(input = {}, opts = {}) {
 
   return {
     confidence: weak.confidence,
-    proofType: 'weak_signals',
+    proofType: weak.nameCityMatch ? 'name_city_match' : 'weak_signals',
     proofDetails: { weakSignals: weak.signals },
     signals: ['no_siren_found', ...weak.signals],
     pagesFetched: reachable.map((p) => ({ url: p.url, status: p.status })),
@@ -152,18 +157,17 @@ function computeWeakSignals({ concatenated, homePage, companyName, ville, codePo
   let confidence = BASE_WEAK_CONFIDENCE;
   const signals = [];
 
-  if (companyName && homePage && homePage.text) {
-    if (companyNameInTitleOrH1(homePage.text, companyName)) {
-      confidence += SIGNAL_WEIGHT_NAME_IN_TITLE;
-      signals.push('company_name_in_title');
-    }
+  const nameInTitle = companyName && homePage && homePage.text
+    && companyNameInTitleOrH1(homePage.text, companyName);
+  if (nameInTitle) {
+    confidence += SIGNAL_WEIGHT_NAME_IN_TITLE;
+    signals.push('company_name_in_title');
   }
 
-  if (ville && concatenated) {
-    if (textContainsTokenLoose(concatenated, ville)) {
-      confidence += SIGNAL_WEIGHT_VILLE;
-      signals.push('ville_in_text');
-    }
+  const villeInText = ville && concatenated && textContainsTokenLoose(concatenated, ville);
+  if (villeInText) {
+    confidence += SIGNAL_WEIGHT_VILLE;
+    signals.push('ville_in_text');
   }
 
   if (codePostal && concatenated) {
@@ -173,16 +177,28 @@ function computeWeakSignals({ concatenated, homePage, companyName, ville, codePo
     }
   }
 
-  if (companyName && siteUrl) {
-    if (domainResemblesName(siteUrl, companyName)) {
-      confidence += SIGNAL_WEIGHT_DOMAIN_LIKE_NAME;
-      signals.push('domain_resembles_name');
-    }
+  const domainMatches = companyName && siteUrl && domainResemblesName(siteUrl, companyName);
+  if (domainMatches) {
+    confidence += SIGNAL_WEIGHT_DOMAIN_LIKE_NAME;
+    signals.push('domain_resembles_name');
+  }
+
+  // Bonus combinatoire Option C : domaine ressemble au nom + ancrage géo ou
+  // nom dans le titre → preuve suffisante sans SIREN pour alimenter Dropcontact.
+  const nameCityMatch = domainMatches && (villeInText || nameInTitle);
+  if (nameCityMatch) {
+    signals.push('name_city_match_bonus');
+    return {
+      confidence: NAME_CITY_MATCH_CONFIDENCE,
+      signals,
+      nameCityMatch: true,
+    };
   }
 
   return {
     confidence: Math.min(confidence, MAX_WEAK_CONFIDENCE),
     signals,
+    nameCityMatch: false,
   };
 }
 
@@ -272,6 +288,7 @@ module.exports = {
     levenshtein,
     BASE_WEAK_CONFIDENCE,
     MAX_WEAK_CONFIDENCE,
+    NAME_CITY_MATCH_CONFIDENCE,
     SIREN_MATCH_CONFIDENCE,
     SIREN_MISMATCH_CONFIDENCE,
   },

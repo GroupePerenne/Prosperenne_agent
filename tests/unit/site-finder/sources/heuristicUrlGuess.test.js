@@ -113,13 +113,14 @@ test('buildSlugs — déduplication slugs identiques', () => {
 
 // ─── buildCandidateUrls ───────────────────────────────────────────────────
 
-test('buildCandidateUrls — .fr avant .com, max 8', () => {
+test('buildCandidateUrls — .fr avant .com avant .eu, max 12', () => {
   const slugs = ['acme', 'acme-plomberie', 'acmeplomberie', 'autre', 'cinq'];
   const urls = buildCandidateUrls(slugs);
-  assert.ok(urls.length <= 8);
+  assert.ok(urls.length <= 12);
   assert.equal(urls[0], 'https://acme.fr');
   assert.equal(urls[1], 'https://acme.com');
-  assert.equal(urls[2], 'https://acme-plomberie.fr');
+  assert.equal(urls[2], 'https://acme.eu');
+  assert.equal(urls[3], 'https://acme-plomberie.fr');
 });
 
 test('buildCandidateUrls — slugs vides → []', () => {

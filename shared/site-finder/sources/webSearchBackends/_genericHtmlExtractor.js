@@ -43,6 +43,28 @@ const BLOCKED_MARKERS = [
 
 const ANCHOR_RE = /<a\b[^>]*\bhref="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
 
+// Patterns d'URLs publicitaires/tracking à exclure des résultats de recherche.
+// Les moteurs comme DDG Lite et Mojeek incluent parfois les liens sponsorisés
+// avant les résultats organiques dans le HTML, sans redirection interne filtrable.
+const AD_URL_PATTERNS = [
+  /[?&]gclid=/i,           // Google Ads click ID
+  /[?&]fbclid=/i,          // Facebook Ads click ID
+  /[?&]msclkid=/i,         // Microsoft/Bing Ads click ID
+  /\/aclk\b/i,             // Google Ads click redirect path
+  /\/pagead\//i,            // Google display ads
+  /bing\.com\/ck\/a\b/i,   // Bing Ads click redirect
+  /yahoo\.com\/rd\//i,     // Yahoo ads redirect
+  /doubleclick\.net/i,
+  /googlesyndication\.com/i,
+];
+
+function looksLikeAd(url) {
+  for (const re of AD_URL_PATTERNS) {
+    if (re.test(url)) return true;
+  }
+  return false;
+}
+
 /**
  * Détecte si un body HTML correspond à un challenge anti-bot transverse.
  */
@@ -93,6 +115,7 @@ function extractResults(body, { excludeHostSuffixes = [], maxResults = 10 } = {}
     const host = parsed.hostname.toLowerCase();
     if (!host) continue;
     if (isInternalHost(host, exclude)) continue;
+    if (looksLikeAd(rawHref)) continue;
 
     const normalized = normalize(rawHref);
     if (!normalized) continue;
@@ -140,7 +163,9 @@ module.exports = {
   // Exposés pour tests :
   _internals: {
     BLOCKED_MARKERS,
+    AD_URL_PATTERNS,
     isInternalHost,
+    looksLikeAd,
     stripTags,
     decodeEntities,
   },
