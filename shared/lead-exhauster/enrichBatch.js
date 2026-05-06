@@ -188,10 +188,21 @@ async function enrichBatchForConsultant(params = {}) {
   let resolutionOk = 0;
   let resolutionUnresolvable = 0;
   let costCentsTotal = 0;
+  let preResolvedByAirworker = 0;
   const unresolvablePromises = [];
 
   for (const cand of candidates) {
     if (leads.length >= batchSize) break;
+
+    // Fast path : email pré-résolu par l'AirWorker (site-finder continu).
+    // Skip exhauster + Dropcontact entièrement → coût zéro.
+    if (cand.emailDirigeant) {
+      resolutionOk++;
+      preResolvedByAirworker++;
+      leads.push(buildLeadFromPreResolvedEmail(cand));
+      continue;
+    }
+
     resolutionAttempts++;
 
     const experimentsContext = await buildCtx({
@@ -274,6 +285,7 @@ async function enrichBatchForConsultant(params = {}) {
       costCentsTotal,
       dryRun: Boolean(dryRun),
       elapsedMs: Date.now() - started,
+      preResolvedByAirworker,
       ...siteFinderMeta,
     },
   };
@@ -322,6 +334,32 @@ function buildLeadFromCandidate(cand, enrichment) {
       cost_cents: enrichment.cost_cents,
       resolvedDomain: enrichment.resolvedDomain,
       experimentsApplied: enrichment.experimentsApplied,
+    },
+  };
+}
+
+/**
+ * Construit un Lead depuis un candidate dont l'email a été pré-résolu par
+ * l'AirWorker (stocké dans emailDirigeant de la LeadBase). Aucune résolution
+ * exhauster ni Dropcontact — coût nul.
+ */
+function buildLeadFromPreResolvedEmail(cand) {
+  return {
+    siren: cand.siren,
+    prenom: cand.firstName || '',
+    nom: cand.lastName || '',
+    entreprise: cand.companyName,
+    email: cand.emailDirigeant,
+    secteur: cand.codeNaf || '',
+    ville: cand.ville || '',
+    contexte: cand.contexte || '',
+    contact: {
+      email: cand.emailDirigeant,
+      confidence: cand.emailDirigeantConfidence || 0,
+      source: 'airworker_preresolved',
+      cost_cents: 0,
+      resolvedDomain: null,
+      experimentsApplied: [],
     },
   };
 }

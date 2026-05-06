@@ -51,7 +51,11 @@ if (!CONNECTION) {
 
 const { TableClient } = require('@azure/data-tables');
 const { findWebsite } = require('../shared/site-finder/index');
-const { writeSiteFinderResultToLeadBase } = require('../shared/site-finder/writers/leadbaseWriter');
+const {
+  writeSiteFinderResultToLeadBase,
+  writeEmailResultToLeadBase,
+} = require('../shared/site-finder/writers/leadbaseWriter');
+const { scrapeDomain, isJunkEmail } = require('../shared/lead-exhauster/scraping');
 
 const TABLE_NAME = process.env.LEADBASE_TABLE || 'LeadBase';
 const CONCURRENCY = Number(process.env.SITE_ENRICH_CONCURRENCY || 8);
@@ -93,6 +97,9 @@ const stats = {
   found: 0,
   notFound: 0,
   errors: 0,
+  emailsFound: 0,
+  emailsNotFound: 0,
+  emailErrors: 0,
 };
 
 function nowIso() {
@@ -119,6 +126,61 @@ function extractDirigeantName(dirigeantsJson) {
   } catch {
     return null;
   }
+}
+
+function extractDirigeantParts(dirigeantsJson) {
+  if (!dirigeantsJson) return { firstName: '', lastName: '' };
+  try {
+    const arr = JSON.parse(dirigeantsJson);
+    if (!Array.isArray(arr) || arr.length === 0) return { firstName: '', lastName: '' };
+    const d = arr[0];
+    return {
+      firstName: String(d.prenoms || '').trim(),
+      lastName: String(d.nom || '').trim(),
+    };
+  } catch {
+    return { firstName: '', lastName: '' };
+  }
+}
+
+async function scrapeEmailForSite(siren, siteUrl, entity, pk) {
+  let domain;
+  try {
+    domain = new URL(siteUrl).hostname;
+  } catch {
+    stats.emailErrors++;
+    return;
+  }
+
+  const { firstName, lastName } = extractDirigeantParts(entity.dirigeants);
+
+  let scrapeResult;
+  try {
+    scrapeResult = await scrapeDomain(
+      { domain, firstName, lastName },
+      { globalTimeoutMs: 12000, pageTimeoutMs: 4000, maxEmails: 10 },
+    );
+  } catch (err) {
+    stats.emailErrors++;
+    console.warn(`[enrich-sites] scrapeDomain error ${siren}: ${err.message}`);
+    return;
+  }
+
+  const emails = Array.isArray(scrapeResult.emails) ? scrapeResult.emails : [];
+  const best = emails.find((e) => !isJunkEmail(e.email));
+  if (!best) {
+    stats.emailsNotFound++;
+    return;
+  }
+
+  const ok = await writeEmailResultToLeadBase(siren, {
+    email: best.email,
+    confidence: best.confidence,
+    source: 'airworker_scrape',
+  }, { partitionKey: pk });
+
+  if (ok) stats.emailsFound++;
+  else stats.emailErrors++;
 }
 
 async function processOne(entity) {
@@ -160,8 +222,12 @@ async function processOne(entity) {
     stats.errors++;
     return;
   }
-  if (result && result.siteUrl) stats.found++;
-  else stats.notFound++;
+  if (result && result.siteUrl) {
+    stats.found++;
+    await scrapeEmailForSite(siren, result.siteUrl, entity, pk);
+  } else {
+    stats.notFound++;
+  }
 }
 
 async function processBatch(entities) {
@@ -178,10 +244,12 @@ function logProgress() {
   const elapsed = (Date.now() - stats.startedAt.getTime()) / 1000;
   const rate = stats.attempted / Math.max(elapsed, 1);
   const findRate = stats.attempted > 0 ? Math.round(100 * stats.found / stats.attempted) : 0;
+  const emailRate = stats.found > 0 ? Math.round(100 * stats.emailsFound / stats.found) : 0;
   console.log(
     `[${nowIso()}] scanned=${stats.scanned} attempted=${stats.attempted}` +
     ` found=${stats.found} (${findRate}%) notFound=${stats.notFound}` +
-    ` skipped=${stats.skipped} errors=${stats.errors} rate=${rate.toFixed(2)} req/s`,
+    ` skipped=${stats.skipped} errors=${stats.errors} rate=${rate.toFixed(2)} req/s` +
+    ` | emails: found=${stats.emailsFound} (${emailRate}% of sites) notFound=${stats.emailsNotFound} errors=${stats.emailErrors}`,
   );
 }
 

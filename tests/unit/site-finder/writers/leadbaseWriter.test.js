@@ -4,7 +4,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const writer = require('../../../../shared/site-finder/writers/leadbaseWriter');
-const { writeSiteFinderResultToLeadBase, _setClientForTests, _resetForTests } = writer;
+const {
+  writeSiteFinderResultToLeadBase,
+  writeEmailResultToLeadBase,
+  _setClientForTests,
+  _resetForTests,
+} = writer;
 
 function makeTableClientStub() {
   const updates = [];
@@ -177,6 +182,60 @@ test('writeSiteFinderResultToLeadBase — siteUrl null (failure cache) → écri
     assert.equal(ok, true);
     assert.equal(updates[0].entity.siteWeb, null);
     assert.equal(updates[0].entity.siteWebConfidence, 0);
+  } finally {
+    _resetForTests();
+  }
+});
+
+// ─── writeEmailResultToLeadBase ────────────────────────────────────────────
+
+test('writeEmailResultToLeadBase — write Merge avec champs email', async () => {
+  const { stub, updates } = makeTableClientStub();
+  _setClientForTests(stub);
+  try {
+    const ok = await writeEmailResultToLeadBase(
+      '123456789',
+      { email: 'jean.dupont@acme.fr', confidence: 0.75, source: 'airworker_scrape' },
+      { partitionKey: 'A' },
+    );
+    assert.equal(ok, true);
+    assert.equal(updates.length, 1);
+    const u = updates[0];
+    assert.equal(u.mode, 'Merge');
+    assert.equal(u.entity.partitionKey, 'A');
+    assert.equal(u.entity.rowKey, '123456789');
+    assert.equal(u.entity.emailDirigeant, 'jean.dupont@acme.fr');
+    assert.equal(u.entity.emailDirigeantSource, 'airworker_scrape');
+    assert.equal(u.entity.emailDirigeantConfidence, 0.75);
+    assert.ok(u.entity.emailDirigeantAt);
+    assert.equal(u.entity.emailDirigeantVersion, 'v1');
+  } finally {
+    _resetForTests();
+  }
+});
+
+test('writeEmailResultToLeadBase — email null → écrit quand même (reset)', async () => {
+  const { stub, updates } = makeTableClientStub();
+  _setClientForTests(stub);
+  try {
+    const ok = await writeEmailResultToLeadBase(
+      '123456789',
+      { email: null, confidence: 0, source: 'airworker_scrape' },
+      { partitionKey: 'A' },
+    );
+    assert.equal(ok, true);
+    assert.equal(updates[0].entity.emailDirigeant, null);
+  } finally {
+    _resetForTests();
+  }
+});
+
+test('writeEmailResultToLeadBase — siren invalide → false', async () => {
+  const { stub, updates } = makeTableClientStub();
+  _setClientForTests(stub);
+  try {
+    assert.equal(await writeEmailResultToLeadBase('12345', { email: 'a@b.fr' }, { partitionKey: 'A' }), false);
+    assert.equal(updates.length, 0);
   } finally {
     _resetForTests();
   }

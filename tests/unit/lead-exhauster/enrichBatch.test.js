@@ -292,3 +292,48 @@ test('enrichBatch — buildDirigeantName combine firstName et lastName', async (
   assert.equal(calls.findWebsite[1].input.dirigeantName, 'Dupont');
   assert.equal(calls.findWebsite[2].input.dirigeantName, 'Jean Dupont');
 });
+
+// ─── Fast path AirWorker pré-résolu ────────────────────────────────────────
+
+test('enrichBatch — emailDirigeant présent → exhauster skippé, lead direct, preResolvedByAirworker++', async () => {
+  const cand = {
+    ...makeCandidate({ siren: '444444444' }),
+    emailDirigeant: 'jean.dupont@acme.fr',
+    emailDirigeantConfidence: 0.75,
+  };
+  const { calls, adapters } = makeAdapters({ candidates: [cand] });
+  const result = await enrichBatchForConsultant({
+    brief: {},
+    beneficiaryId: 'oseys-test',
+    batchSize: 1,
+    adapters,
+  });
+  // site-finder pas appelé (pas de hintedEmail, mais emailDirigeant court-circuite avant l'exhauster)
+  // NB: site-finder est quand même appelé car le skip exhauster est APRÈS la pré-passe site-finder
+  // On vérifie surtout que l'exhauster n'est PAS appelé
+  assert.equal(calls.exhauster.length, 0, 'exhauster ne doit pas être appelé');
+  assert.equal(result.leads.length, 1);
+  assert.equal(result.leads[0].email, 'jean.dupont@acme.fr');
+  assert.equal(result.leads[0].contact.source, 'airworker_preresolved');
+  assert.equal(result.leads[0].contact.cost_cents, 0);
+  assert.equal(result.meta.preResolvedByAirworker, 1);
+  assert.equal(result.meta.resolutionOk, 1);
+});
+
+test('enrichBatch — mix : 1 emailDirigeant, 1 normal → exhauster appelé 1 fois', async () => {
+  const cands = [
+    { ...makeCandidate({ siren: '111111111' }), emailDirigeant: 'pre@acme.fr', emailDirigeantConfidence: 0.8 },
+    makeCandidate({ siren: '222222222' }),
+  ];
+  const { calls, adapters } = makeAdapters({ candidates: cands });
+  const result = await enrichBatchForConsultant({
+    brief: {},
+    beneficiaryId: 'oseys-test',
+    batchSize: 2,
+    adapters,
+  });
+  assert.equal(calls.exhauster.length, 1);
+  assert.equal(calls.exhauster[0].siren, '222222222');
+  assert.equal(result.meta.preResolvedByAirworker, 1);
+  assert.equal(result.leads.length, 2);
+});
