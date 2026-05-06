@@ -47,6 +47,7 @@ const SIREN_MISMATCH_CONFIDENCE = 0.0;
  * @param {Object} [opts]
  * @param {Function} [opts.fetcherImpl]     Override de fetchPagesForValidation
  * @param {number}   [opts.timeoutMs]       Total budget pour fetcher
+ * @param {boolean}  [opts.extendedPaths]   AirWorker uniquement — propagé au pageFetcher
  * @returns {Promise<{
  *   confidence: number,
  *   proofType: 'siren_match' | 'siren_mismatch' | 'weak_signals' | 'unverified' | null,
@@ -72,6 +73,7 @@ async function validateCandidate(input = {}, opts = {}) {
   const pages = await fetcher(url, {
     totalTimeoutMs: opts.timeoutMs,
     fetchImpl: opts.fetchImpl,
+    extendedPaths: Boolean(opts.extendedPaths),
   });
 
   // Toutes les pages 0/4xx/5xx → site injoignable

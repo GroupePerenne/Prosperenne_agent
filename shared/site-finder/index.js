@@ -177,6 +177,7 @@ async function findWebsite(input = {}, opts = {}) {
   const validatorOpts = {
     timeoutMs,
     fetcherImpl: opts.fetcherImpl ? adapters.fetcher : undefined,
+    extendedPaths: mode === 'batch',
   };
 
   // Helper : valide une liste de candidats, retourne le 1er validé ou met à

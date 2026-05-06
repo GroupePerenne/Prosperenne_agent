@@ -28,24 +28,31 @@
  * c'est `siteValidator.js` qui décide par comparaison stricte.
  */
 
-// Préfixes qui indiquent explicitement qu'un SIREN/SIRET suit. Ordre du plus
-// long au plus court pour que l'alternance regex matche le plus spécifique.
-// Liste fermée — pas d'extrapolation R-J6.
+// Préfixes qui indiquent explicitement qu’un SIREN/SIRET suit. Ordre du plus
+// long au plus court pour que l’alternance regex matche le plus spécifique.
+// Liste fermée — pas d’extrapolation R-J6.
+// Toutes les strings délimitées par guillemets doubles pour éviter toute
+// confusion avec les apostrophes typographiques dans les patterns internes.
 const SIREN_LABEL_PATTERNS = [
-  // Avec apostrophe : N° d'identification, n° d'identification (case-insensitive
+  // Formulations libres fréquentes sur les sites PME générés par CMS (Wix,
+  // WordPress, OVHcloud site builder) qui n’utilisent pas les labels standard.
+  "immatricul[eé]e?\\s+sous\\s+le\\s+num",
+  "enregistr[eé]e?\\s+sous\\s+le\\s+num",
+  "inscri[ts]e?\\s+au\\s+RCS",
+  // Avec apostrophe : N° d’identification, n° d’identification (case-insensitive
   // dans la regex composée plus bas)
-  "N°\\s*d['’]identification",
-  "Numéro\\s*d['’]identification",
+  "N°\\s*d[‘’]identification",
+  "Numéro\\s*d[‘’]identification",
   // Avec espace dans "n° SIREN"
   "N°\\s*SIREN",
   "n°\\s*SIREN",
   "N°\\s*SIRET",
   "n°\\s*SIRET",
   // Préfixés "RCS Ville"
-  'RCS(?:\\s+[A-ZÀ-Ÿa-zà-ÿ-]+)?',
+  "RCS(?:\\s+[A-ZÀ-Ÿa-zà-ÿ-]+)?",
   // Bruts
-  'SIREN',
-  'SIRET',
+  "SIREN",
+  "SIRET",
 ];
 
 const LABEL_GROUP = SIREN_LABEL_PATTERNS.join('|');
