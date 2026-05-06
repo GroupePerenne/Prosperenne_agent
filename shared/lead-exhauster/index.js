@@ -375,13 +375,17 @@ function isFreshCacheHit(row) {
   if (!Number.isFinite(last)) return false;
   const ageDays = (Date.now() - last) / (24 * 3600 * 1000);
   if (ageDays > DEFAULT_CACHE_TTL_DAYS) return false;
-  // Skip negative cache hits (email=null && source='none') — ces entries
-  // proviennent de tentatives antérieures où aucun maillon n'a résolu un
-  // email exploitable. Avant le 5 mai 2026 PM, Dropcontact n'était pas
-  // câblé (Jalon 3 incomplet) donc ces "none" sont des faux unresolvable.
-  // On les retente : Dropcontact a son propre circuit breaker + budget
-  // guard, et le résultat positif/négatif sera ré-écrit en cache normal.
-  if (!row.email && row.source === 'none') return false;
+  // Cache négatif intelligent (6 mai 2026, fix burn nuit du 5→6 mai) :
+  // les rows "none" (email absent, source=none) sont retentés APRES une
+  // fenêtre LEADCONTACTS_NEGATIVE_RETRY_DAYS (default 7j). Sans cette
+  // fenêtre, chaque run du Lead Selector retente toute la cascade webSearch
+  // + Anthropic sur des leads structurellement non-résolvables → burn massif.
+  // 7j permet l'effet d'une nouvelle brique (SMTP probe, nouveau provider)
+  // ou d'une recovery api.gouv/Brave/etc. sans monopoliser le budget.
+  if (!row.email && row.source === 'none') {
+    const retryDays = Number(process.env.LEADCONTACTS_NEGATIVE_RETRY_DAYS || 7);
+    return ageDays < retryDays; // skip retent tant qu'on est dans la fenêtre
+  }
   return true;
 }
 

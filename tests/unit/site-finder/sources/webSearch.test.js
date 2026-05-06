@@ -343,14 +343,27 @@ test('getDefaultBackends — env avec ID inconnu filtré, garde le valide', () =
   else process.env.SITE_FINDER_WEBSEARCH_BACKENDS = original;
 });
 
-test('getDefaultBackends — pas d\'env → ordre par défaut (5 backends, brave en tête)', () => {
+test('getDefaultBackends — pas d\'env → ordre par défaut (4 backends gratuits, sans brave depuis 6 mai 2026)', () => {
   const original = process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
   delete process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
   const out = webSearch.getDefaultBackends();
-  assert.equal(out.length, 5);
+  assert.equal(out.length, 4);
   assert.deepEqual(
     out.map((b) => b.BACKEND_ID),
-    ['brave', 'duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'],
+    ['duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'],
   );
   if (original !== undefined) process.env.SITE_FINDER_WEBSEARCH_BACKENDS = original;
+});
+
+test('getDefaultBackends — env override avec brave reste possible (réactivation)', () => {
+  const original = process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
+  process.env.SITE_FINDER_WEBSEARCH_BACKENDS = 'brave,mojeek';
+  const out = webSearch.getDefaultBackends();
+  assert.equal(out.length, 2);
+  assert.deepEqual(
+    out.map((b) => b.BACKEND_ID),
+    ['brave', 'mojeek'],
+  );
+  if (original === undefined) delete process.env.SITE_FINDER_WEBSEARCH_BACKENDS;
+  else process.env.SITE_FINDER_WEBSEARCH_BACKENDS = original;
 });

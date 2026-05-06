@@ -47,10 +47,11 @@ const BACKEND_REGISTRY = {
   [ecosia.BACKEND_ID]: ecosia,
 };
 
-// Brave en tête : qualité élevée + index propre. Kill-switch local quota
-// dans braveApi → si on dépasse 950 req/mois, throw blocked, cascade
-// bascule sur les backends gratuits (DDG Lite → Mojeek → Ecosia → DDG HTML).
-const DEFAULT_BACKENDS_ORDER = ['brave', 'duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'];
+// Brave retiré du défaut le 6 mai 2026 (décision Paul — crédit Brave épuisé,
+// pas de renouvellement). Cascade gratuits uniquement : DDG Lite → Mojeek →
+// Ecosia → DDG HTML. Le module braveApi reste dans le registry pour pouvoir
+// le réactiver via env SITE_FINDER_WEBSEARCH_BACKENDS si crédit revient.
+const DEFAULT_BACKENDS_ORDER = ['duckduckgo_lite', 'mojeek', 'ecosia', 'duckduckgo_html'];
 
 /**
  * Lit l'ordre des backends depuis env. Filtre les IDs inconnus pour ne
