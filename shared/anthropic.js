@@ -26,6 +26,14 @@ const MODEL_SONNET = 'claude-sonnet-4-6';
 const MODEL_HAIKU = 'claude-haiku-4-5';
 const MODEL_DEFAULT = MODEL_SONNET;
 
+// Phase 1 observability : hardstop budget Pereneo + tracking dépenses + log structuré
+const {
+  assertDailyBudget,
+  trackSpend,
+  estimateAnthropicCostCents,
+  BudgetExceededError,
+} = require('./pereneo-budget');
+
 // ─── Mode mock (tests) ──────────────────────────────────────────────────────
 
 let _mockResponder = defaultMockResponder;
@@ -73,7 +81,12 @@ function resetMockResponder() {
  * @param {string} [opts.model]      Modèle (défaut: claude-sonnet-4-6)
  * @param {number} [opts.maxTokens]  Défaut 2000
  * @param {number} [opts.temperature] Défaut 0.7
- * @returns {Promise<{ text: string, raw?: object, mocked?: boolean }>}
+ * @param {string} [opts.operation]  Label métier (companyProfile, pitch, classify…) pour KQL filter
+ * @param {object} [opts.context]    InvocationContext FA (pour log via context.log)
+ * @param {object} [opts.budgetImpl] Override pour tests (canSpend/addSpend mocks)
+ * @param {object} [opts.fetchImpl]  Override fetch pour tests
+ * @returns {Promise<{ text: string, raw?: object, mocked?: boolean, usage?: object, cost_cents?: number }>}
+ * @throws {BudgetExceededError} si pereneo-total daily budget dépassé
  */
 async function callClaude({
   system,
@@ -81,7 +94,11 @@ async function callClaude({
   model = MODEL_DEFAULT,
   maxTokens = 2000,
   temperature = 0.7,
-}) {
+  operation,
+  context,
+  budgetImpl,
+  fetchImpl,
+} = {}) {
   if (isMockMode()) {
     const res = await _mockResponder({ system, messages, model, maxTokens, temperature });
     if (!res || typeof res.text !== 'string') {
@@ -93,7 +110,11 @@ async function callClaude({
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY non défini');
 
-  const res = await fetch(API_URL, {
+  // Hardstop budget Pereneo GLOBAL (10€/jour par défaut). Throw avant l'appel réseau.
+  await assertDailyBudget({ budgetImpl });
+
+  const fetchFn = fetchImpl || fetch;
+  const res = await fetchFn(API_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -119,7 +140,29 @@ async function callClaude({
     .map((b) => b.text)
     .join('');
 
-  return { text, raw: data };
+  // Tracking dépense (best effort, ne throw pas) + log structuré pour AI/KQL
+  const usage = (data && data.usage) || { input_tokens: 0, output_tokens: 0 };
+  const costCents = estimateAnthropicCostCents({
+    input_tokens: usage.input_tokens || 0,
+    output_tokens: usage.output_tokens || 0,
+    model,
+  });
+  await trackSpend({ provider: 'anthropic', cost_cents: costCents, budgetImpl });
+
+  const logFn = context && typeof context.log === 'function' ? context.log : console.log;
+  try {
+    logFn('anthropic.call ' + JSON.stringify({
+      operation: operation || 'unknown',
+      model,
+      input_tokens: usage.input_tokens || 0,
+      output_tokens: usage.output_tokens || 0,
+      cost_cents: Math.round(costCents * 100) / 100,
+    }));
+  } catch {
+    // logging best effort, ne casse pas l'appel
+  }
+
+  return { text, raw: data, usage, cost_cents: costCents };
 }
 
 /**
@@ -136,6 +179,7 @@ module.exports = {
   MODEL_SONNET,
   MODEL_HAIKU,
   MODEL_DEFAULT,
+  BudgetExceededError,
   // Exposés pour les tests uniquement
   isMockMode,
   setMockResponder,

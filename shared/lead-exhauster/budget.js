@@ -1,22 +1,22 @@
 'use strict';
 
 /**
- * Compteur mensuel de dépenses par provider externe (Dropcontact en V1).
+ * Compteur de dépenses par provider externe avec période monthly ou daily.
  *
  * Schéma table `Budgets` (schemas.js) :
- *   PartitionKey : provider (ex. 'dropcontact')
- *   RowKey       : monthKey 'YYYYMM'
+ *   PartitionKey : provider (ex. 'dropcontact', 'anthropic')
+ *   RowKey       : periodKey — 'YYYYMM' (monthly) ou 'YYYYMMDD' (daily)
  *   Colonnes     : spent_cents, budget_cents, calls, lastUpdatedAt
  *
- * Stratégie concurrence V1 : update avec optimistic concurrency (If-Match ETag).
- * Si conflict 412, on relit + retry (max 3 fois). C'est acceptable vu le débit
- * (quelques appels Dropcontact/min en régime normal).
+ * Période par défaut : monthly (rétrocompat Dropcontact V1).
+ * Daily ajouté Phase 1 observability pour cap quotidien Anthropic ($25/jour).
+ *
+ * Stratégie concurrence : update avec optimistic concurrency (If-Match ETag).
+ * Si conflict 412, on relit + retry (max 3 fois).
  *
  * Graceful degradation : si AzureWebJobsStorage indisponible, readSpent()
  * retourne 0 et addSpend() no-op. Le caller doit avoir son propre flag
  * "budget_check_failed" dans ce cas.
- *
- * SPEC : SPEC_LEAD_EXHAUSTER §5.3 "Monthly budget check".
  */
 
 const { TableClient } = require('@azure/data-tables');
@@ -50,21 +50,33 @@ function currentMonthKey(date = new Date()) {
   return `${y}${m}`;
 }
 
+function currentDayKey(date = new Date()) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
+
+function periodKey(period, date = new Date()) {
+  return period === 'daily' ? currentDayKey(date) : currentMonthKey(date);
+}
+
 /**
- * Lit les dépenses mensuelles pour un provider. Retourne 0 si absent/erreur.
+ * Lit les dépenses pour un provider sur la période courante. Retourne 0 si absent/erreur.
  *
  * @param {string} provider
  * @param {Object} [opts]
  * @param {Date} [opts.date]
+ * @param {'monthly'|'daily'} [opts.period]  Default 'monthly'
  * @returns {Promise<{ spent_cents:number, budget_cents:number, calls:number, exists:boolean, etag?:string }>}
  */
 async function readSpent(provider, opts = {}) {
   const client = getClient();
-  const monthKey = currentMonthKey(opts.date);
+  const key = periodKey(opts.period || 'monthly', opts.date);
   const empty = { spent_cents: 0, budget_cents: 0, calls: 0, exists: false };
   if (!client) return empty;
   try {
-    const entity = await client.getEntity(provider, monthKey);
+    const entity = await client.getEntity(provider, key);
     return {
       spent_cents: Number(entity.spent_cents) || 0,
       budget_cents: Number(entity.budget_cents) || 0,
@@ -85,8 +97,9 @@ async function readSpent(provider, opts = {}) {
  *
  * @param {string} provider
  * @param {number} costCents        Coût prévu
- * @param {number} budgetCents      Plafond mensuel
+ * @param {number} budgetCents      Plafond sur la période
  * @param {Object} [opts]
+ * @param {'monthly'|'daily'} [opts.period]  Default 'monthly'
  * @returns {Promise<{ ok:boolean, spent:number, budget:number, reason?:string }>}
  */
 async function canSpend(provider, costCents, budgetCents, opts = {}) {
@@ -107,21 +120,22 @@ async function canSpend(provider, costCents, budgetCents, opts = {}) {
 }
 
 /**
- * Incrémente le compteur de dépenses mensuel. Best effort avec retry sur
- * conflit 412. Retourne true si persisté, false sinon.
+ * Incrémente le compteur de dépenses sur la période courante. Best effort avec
+ * retry sur conflit 412. Retourne true si persisté, false sinon.
  *
  * @param {string} provider
  * @param {number} costCents
  * @param {Object} [opts]
  * @param {number} [opts.budgetCents]  Inscrit dans la ligne si création
  * @param {Date}   [opts.date]
+ * @param {'monthly'|'daily'} [opts.period]  Default 'monthly'
  * @param {number} [opts.retries]
  * @returns {Promise<boolean>}
  */
 async function addSpend(provider, costCents, opts = {}) {
   const client = getClient();
   if (!client) return false;
-  const monthKey = currentMonthKey(opts.date);
+  const key = periodKey(opts.period || 'monthly', opts.date);
   const budget = Number.isFinite(opts.budgetCents) ? opts.budgetCents : 0;
   const maxRetries = Number.isFinite(opts.retries) ? opts.retries : 3;
 
@@ -133,7 +147,7 @@ async function addSpend(provider, costCents, opts = {}) {
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const cur = await client.getEntity(provider, monthKey).catch((err) => {
+      const cur = await client.getEntity(provider, key).catch((err) => {
         if (err && (err.statusCode === 404 || /ResourceNotFound/i.test(err.message || ''))) {
           return null;
         }
@@ -143,9 +157,10 @@ async function addSpend(provider, costCents, opts = {}) {
         const now = new Date().toISOString();
         await client.createEntity({
           partitionKey: provider,
-          rowKey: monthKey,
+          rowKey: key,
           provider,
-          monthKey,
+          periodKey: key,
+          period: opts.period || 'monthly',
           spent_cents: costCents,
           budget_cents: budget,
           calls: 1,
@@ -155,7 +170,7 @@ async function addSpend(provider, costCents, opts = {}) {
       }
       const updated = {
         partitionKey: provider,
-        rowKey: monthKey,
+        rowKey: key,
         spent_cents: (Number(cur.spent_cents) || 0) + costCents,
         calls: (Number(cur.calls) || 0) + 1,
         lastUpdatedAt: new Date().toISOString(),
@@ -182,5 +197,7 @@ module.exports = {
   canSpend,
   addSpend,
   currentMonthKey,
+  currentDayKey,
+  periodKey,
   _resetForTests,
 };
