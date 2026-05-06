@@ -134,33 +134,108 @@ async function fetchPage(url, opts = {}) {
 // ─── Extraction emails ───────────────────────────────────────────────────
 
 /**
+ * Décode un email obfusqué par Cloudflare Email Protection.
+ * Cloudflare encode l'email dans l'attribut data-cfemail avec un XOR :
+ *   data-cfemail="RRXXXX..." — premier octet = clé XOR, reste = payload.
+ * Retourne null si l'attribut est absent ou malformé.
+ */
+function decodeCloudflareEmail(cfemail) {
+  if (!cfemail || typeof cfemail !== 'string') return null;
+  const hex = cfemail.replace(/\s/g, '');
+  if (hex.length < 4 || hex.length % 2 !== 0) return null;
+  try {
+    const key = parseInt(hex.slice(0, 2), 16);
+    let email = '';
+    for (let i = 2; i < hex.length; i += 2) {
+      email += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key);
+    }
+    // Validation minimale : doit ressembler à un email
+    if (!email.includes('@') || !email.includes('.')) return null;
+    return email.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extrait les emails depuis les blocs JSON-LD (Schema.org @type Person,
+ * Organization, LocalBusiness). Couvre les CMS modernes (Wix, Squarespace,
+ * WordPress Yoast) qui génèrent du JSON-LD avec un champ "email".
+ */
+function extractEmailsFromJsonLd(html) {
+  if (!html) return [];
+  const out = [];
+  const JSONLD_RE = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = JSONLD_RE.exec(html)) !== null) {
+    try {
+      const data = JSON.parse(m[1]);
+      collectEmailsFromObj(data, out);
+    } catch { /* JSON malformé — on ignore */ }
+  }
+  return out;
+}
+
+function collectEmailsFromObj(obj, out) {
+  if (!obj || typeof obj !== 'object') return;
+  if (Array.isArray(obj)) { obj.forEach((x) => collectEmailsFromObj(x, out)); return; }
+  if (obj.email && typeof obj.email === 'string') {
+    const e = obj.email.toLowerCase().trim();
+    if (e.includes('@')) out.push(e);
+  }
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === 'object') collectEmailsFromObj(v, out);
+  }
+}
+
+/**
  * Extrait tous les emails valides d'un HTML. Dédupliqués (lowercase).
  * Filtre les matches qui ressemblent à des tokens CSS / noms d'image.
  * Filtre aussi les emails dont le domaine ne matche pas `expectedDomain`
  * si fourni (évite de capturer des adresses tierces type "support@gmail.com").
+ *
+ * Sources combinées :
+ *   1. Regex sur le texte brut (mailto:, texte visible, attributs)
+ *   2. Cloudflare data-cfemail (obfuscation XOR)
+ *   3. JSON-LD Schema.org (CMS modernes)
  */
 function extractEmailsFromHtml(html, { expectedDomain } = {}) {
   if (!html || typeof html !== 'string') return [];
   const seen = new Set();
   const out = [];
   const normExpected = expectedDomain ? normalizeDomain(expectedDomain) : null;
-  const matches = html.match(EMAIL_REGEX) || [];
-  for (const raw of matches) {
-    const email = raw.toLowerCase();
-    if (seen.has(email)) continue;
+
+  const addEmail = (raw) => {
+    if (!raw) return;
+    const email = raw.toLowerCase().trim();
+    if (seen.has(email)) return;
     seen.add(email);
-    // rejette si le local-part contient un chiffre qu ressemble à @2x / @3x
     const local = email.split('@')[0];
-    if (/^\d+x$/.test(local)) continue;
-    // rejette si email suivi d'un chemin image (artefact capture HTML)
-    if (/\.(png|jpe?g|gif|svg|webp|ico)$/.test(email)) continue;
-    // rejette si le domaine ne matche pas expectedDomain ou un sous-domaine
+    if (!local) return;
+    if (/^\d+x$/.test(local)) return;
+    if (/\.(png|jpe?g|gif|svg|webp|ico)$/.test(email)) return;
     if (normExpected) {
       const domain = email.split('@')[1];
-      if (domain !== normExpected && !domain.endsWith('.' + normExpected)) continue;
+      if (!domain) return;
+      if (domain !== normExpected && !domain.endsWith('.' + normExpected)) return;
     }
     out.push(email);
+  };
+
+  // 1. Regex brut
+  const matches = html.match(EMAIL_REGEX) || [];
+  for (const raw of matches) addEmail(raw);
+
+  // 2. Cloudflare data-cfemail
+  const CF_RE = /data-cfemail="([0-9a-fA-F]+)"/g;
+  let cfm;
+  while ((cfm = CF_RE.exec(html)) !== null) {
+    addEmail(decodeCloudflareEmail(cfm[1]));
   }
+
+  // 3. JSON-LD
+  for (const e of extractEmailsFromJsonLd(html)) addEmail(e);
+
   return out;
 }
 
@@ -513,6 +588,8 @@ module.exports = {
   scoreEmailAgainstName,
   parseFullName,
   findRoleInSnippet,
+  decodeCloudflareEmail,
+  extractEmailsFromJsonLd,
   // exposé pour tests :
   _constants: {
     TARGET_PATHS, JUNK_LOCAL_PARTS, ROLE_KEYWORDS,

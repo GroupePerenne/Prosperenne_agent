@@ -16,6 +16,8 @@ const {
   parseFullName,
   findRoleInSnippet,
   fetchPage,
+  decodeCloudflareEmail,
+  extractEmailsFromJsonLd,
   _constants,
 } = require('../../../shared/lead-exhauster/scraping');
 
@@ -312,4 +314,77 @@ test('JUNK_LOCAL_PARTS contient catch-all classiques', () => {
   assert.ok(_constants.JUNK_LOCAL_PARTS.has('contact'));
   assert.ok(_constants.JUNK_LOCAL_PARTS.has('info'));
   assert.ok(_constants.JUNK_LOCAL_PARTS.has('noreply'));
+});
+
+// ─── decodeCloudflareEmail ────────────────────────────────────────────────
+
+test('decodeCloudflareEmail — décode un vrai vecteur CF', () => {
+  // Encodage manuel : clé=0x1F, email="jean.dupont@acme.fr"
+  // XOR(0x1F, char) pour chaque octet de l'email
+  const email = 'jean.dupont@acme.fr';
+  const key = 0x1F;
+  let hex = key.toString(16).padStart(2, '0');
+  for (const ch of email) hex += (ch.charCodeAt(0) ^ key).toString(16).padStart(2, '0');
+  assert.equal(decodeCloudflareEmail(hex), email);
+});
+
+test('decodeCloudflareEmail — retourne null si vide', () => {
+  assert.equal(decodeCloudflareEmail(''), null);
+  assert.equal(decodeCloudflareEmail(null), null);
+});
+
+test('decodeCloudflareEmail — retourne null si longueur impaire', () => {
+  assert.equal(decodeCloudflareEmail('abc'), null);
+});
+
+test('extractEmailsFromHtml — détecte data-cfemail dans le HTML', () => {
+  const email = 'jean.dupont@acme.fr';
+  const key = 0x2A;
+  let hex = key.toString(16).padStart(2, '0');
+  for (const ch of email) hex += (ch.charCodeAt(0) ^ key).toString(16).padStart(2, '0');
+  const html = `<a href="/cdn-cgi/l/email-protection" data-cfemail="${hex}">[email protected]</a>`;
+  const out = extractEmailsFromHtml(html, { expectedDomain: 'acme.fr' });
+  assert.ok(out.includes('jean.dupont@acme.fr'), `attendu jean.dupont@acme.fr dans ${JSON.stringify(out)}`);
+});
+
+// ─── extractEmailsFromJsonLd ──────────────────────────────────────────────
+
+test('extractEmailsFromJsonLd — extrait email depuis @type Person', () => {
+  const html = `<script type="application/ld+json">
+    {"@type":"Person","name":"Jean Dupont","email":"jean.dupont@acme.fr"}
+  </script>`;
+  const out = extractEmailsFromJsonLd(html);
+  assert.ok(out.includes('jean.dupont@acme.fr'));
+});
+
+test('extractEmailsFromJsonLd — extrait email depuis LocalBusiness imbriqué', () => {
+  const html = `<script type="application/ld+json">
+    {"@type":"LocalBusiness","name":"ACME","contactPoint":{"@type":"ContactPoint","email":"contact@acme.fr"}}
+  </script>`;
+  const out = extractEmailsFromJsonLd(html);
+  assert.ok(out.includes('contact@acme.fr'));
+});
+
+test('extractEmailsFromJsonLd — JSON malformé → tableau vide', () => {
+  const html = '<script type="application/ld+json">{broken json</script>';
+  assert.deepEqual(extractEmailsFromJsonLd(html), []);
+});
+
+test('extractEmailsFromHtml — combine JSON-LD + regex + Cloudflare', () => {
+  const email1 = 'contact@acme.fr';
+  const email2 = 'jean.dupont@acme.fr';
+  // email2 encodé Cloudflare
+  const key = 0x10;
+  let hex = key.toString(16).padStart(2, '0');
+  for (const ch of email2) hex += (ch.charCodeAt(0) ^ key).toString(16).padStart(2, '0');
+  const html = `
+    <p>${email1}</p>
+    <span data-cfemail="${hex}"></span>
+    <script type="application/ld+json">{"email":"marie.durand@acme.fr"}</script>
+  `;
+  const out = extractEmailsFromHtml(html, { expectedDomain: 'acme.fr' });
+  assert.ok(out.includes('contact@acme.fr'));
+  assert.ok(out.includes('jean.dupont@acme.fr'));
+  assert.ok(out.includes('marie.durand@acme.fr'));
+  assert.equal(new Set(out).size, out.length, 'pas de doublons');
 });

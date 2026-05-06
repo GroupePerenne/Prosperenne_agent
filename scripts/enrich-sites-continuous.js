@@ -56,6 +56,7 @@ const {
   writeEmailResultToLeadBase,
 } = require('../shared/site-finder/writers/leadbaseWriter');
 const { scrapeDomain, isJunkEmail } = require('../shared/lead-exhauster/scraping');
+const { applyPattern, rankPatternsForContext } = require('../shared/lead-exhauster/patterns');
 
 const TABLE_NAME = process.env.LEADBASE_TABLE || 'LeadBase';
 const CONCURRENCY = Number(process.env.SITE_ENRICH_CONCURRENCY || 8);
@@ -100,6 +101,7 @@ const stats = {
   emailsFound: 0,
   emailsNotFound: 0,
   emailErrors: 0,
+  emailsPattern: 0,
 };
 
 function nowIso() {
@@ -168,19 +170,43 @@ async function scrapeEmailForSite(siren, siteUrl, entity, pk) {
 
   const emails = Array.isArray(scrapeResult.emails) ? scrapeResult.emails : [];
   const best = emails.find((e) => !isJunkEmail(e.email));
-  if (!best) {
-    stats.emailsNotFound++;
+
+  if (best) {
+    const ok = await writeEmailResultToLeadBase(siren, {
+      email: best.email,
+      confidence: best.confidence,
+      source: 'airworker_scrape',
+    }, { partitionKey: pk });
+    if (ok) stats.emailsFound++;
+    else stats.emailErrors++;
     return;
   }
 
-  const ok = await writeEmailResultToLeadBase(siren, {
-    email: best.email,
-    confidence: best.confidence,
-    source: 'airworker_scrape',
-  }, { partitionKey: pk });
+  // Fallback : pattern guessing depuis nom dirigeant + domaine.
+  // Stocké avec confidence basse (pattern sans vérification) — le fast path
+  // InlineSiteFinder n'utilisera ce résultat que si confidence >= 0.70.
+  // En dessous, il sert de hint domaine pour Dropcontact.
+  if (firstName && lastName) {
+    const patterns = rankPatternsForContext();
+    // On prend le top pattern nominatif (first.last) uniquement — contact@ exclu.
+    const topNominal = patterns.find((p) => p.id !== 'contact');
+    if (topNominal) {
+      const candidate = applyPattern(topNominal.template, { firstName, lastName, domain });
+      if (candidate) {
+        // Confidence volontairement basse : non vérifiée, candidate seulement.
+        const ok = await writeEmailResultToLeadBase(siren, {
+          email: candidate,
+          confidence: 0.55,
+          source: 'airworker_pattern',
+        }, { partitionKey: pk });
+        if (ok) stats.emailsPattern++;
+        else stats.emailErrors++;
+        return;
+      }
+    }
+  }
 
-  if (ok) stats.emailsFound++;
-  else stats.emailErrors++;
+  stats.emailsNotFound++;
 }
 
 async function processOne(entity) {
@@ -249,7 +275,7 @@ function logProgress() {
     `[${nowIso()}] scanned=${stats.scanned} attempted=${stats.attempted}` +
     ` found=${stats.found} (${findRate}%) notFound=${stats.notFound}` +
     ` skipped=${stats.skipped} errors=${stats.errors} rate=${rate.toFixed(2)} req/s` +
-    ` | emails: found=${stats.emailsFound} (${emailRate}% of sites) notFound=${stats.emailsNotFound} errors=${stats.emailErrors}`,
+    ` | emails: found=${stats.emailsFound} (${emailRate}% of sites) pattern=${stats.emailsPattern} notFound=${stats.emailsNotFound} errors=${stats.emailErrors}`,
   );
 }
 

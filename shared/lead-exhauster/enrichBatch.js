@@ -194,9 +194,12 @@ async function enrichBatchForConsultant(params = {}) {
   for (const cand of candidates) {
     if (leads.length >= batchSize) break;
 
-    // Fast path : email pré-résolu par l'AirWorker (site-finder continu).
-    // Skip exhauster + Dropcontact entièrement → coût zéro.
-    if (cand.emailDirigeant) {
+    // Fast path : email pré-résolu par l'AirWorker avec confiance suffisante.
+    // Seuil 0.70 : scraping HTML vérifié (confidence scraping ≥ 0.60 + bonus
+    // contexte nom). En dessous (patterns non vérifiés, confidence 0.55) on
+    // laisse passer dans l'exhauster — le domaine servira d'hint Dropcontact.
+    const AIRWORKER_MIN_CONFIDENCE = 0.70;
+    if (cand.emailDirigeant && (cand.emailDirigeantConfidence || 0) >= AIRWORKER_MIN_CONFIDENCE) {
       resolutionOk++;
       preResolvedByAirworker++;
       leads.push(buildLeadFromPreResolvedEmail(cand));
