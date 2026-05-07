@@ -31,6 +31,7 @@ const { TableClient } = require('@azure/data-tables');
 
 const TABLE_NAME = process.env.LEADBASE_TABLE || 'LeadBase';
 const WRITER_VERSION = 'v1';
+const EMAIL_WRITER_VERSION = 'v1';
 
 let _client = null;
 let _injectedClient = null;
@@ -138,6 +139,62 @@ async function lookupPartitionKey(client, siren) {
   }
 }
 
+/**
+ * Écrit le résultat email-scraping AirWorker sur l'entité LeadBase.
+ *
+ * Champs écrits (Merge) :
+ *   - emailDirigeant          : adresse email (string) ou null
+ *   - emailDirigeantSource    : 'airworker_scrape' (chaîne libre)
+ *   - emailDirigeantConfidence: 0-1
+ *   - emailDirigeantAt        : ISO timestamp
+ *   - emailDirigeantVersion   : 'v1'
+ *
+ * @param {string} siren
+ * @param {{ email: string|null, confidence: number, source: string }} emailResult
+ * @param {Object} [opts]
+ * @param {string} [opts.partitionKey]
+ * @param {Date}   [opts.now]
+ * @returns {Promise<boolean>}
+ */
+async function writeEmailResultToLeadBase(siren, emailResult, opts = {}) {
+  const client = _getClient();
+  if (!client) return false;
+  if (!/^\d{9}$/.test(String(siren || ''))) return false;
+  if (!emailResult || typeof emailResult !== 'object') return false;
+
+  const partitionKey = opts.partitionKey
+    ? String(opts.partitionKey)
+    : await lookupPartitionKey(client, siren);
+  if (!partitionKey) return false;
+
+  const nowDate = opts.now instanceof Date ? opts.now : new Date();
+  const entity = {
+    partitionKey,
+    rowKey: String(siren),
+    emailDirigeant: emailResult.email || null,
+    emailDirigeantSource: emailResult.source || null,
+    emailDirigeantConfidence: typeof emailResult.confidence === 'number' ? emailResult.confidence : 0,
+    emailDirigeantAt: nowDate.toISOString(),
+    emailDirigeantVersion: EMAIL_WRITER_VERSION,
+  };
+
+  try {
+    // I-1 OK: writer email AirWorker scraping (introduit par origin/main).
+    // Dette technique reconnue : en doctrine v1 la Couche 4 Email vit en
+    // LeadContacts, pas en LeadBase. Cette fonction écrit emailDirigeant*
+    // directement en LeadBase pour le fast path AirWorker. Migration future
+    // vers writer LeadContacts conforme v1 prévue dans un follow-up post-merge
+    // (cohérent avec writer site-finder Couche 3 ci-dessus, même pattern).
+    // I-9 OK: les colonnes emailDirigeant* sont owned par ce writer dans le
+    // contrat actuel — à isoler en migrant vers LeadContacts.
+    // I-10 OK: emailDirigeantAt posé ligne 178.
+    await client.updateEntity(entity, 'Merge');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function _setClientForTests(client) {
   _injectedClient = client;
 }
@@ -149,8 +206,10 @@ function _resetForTests() {
 
 module.exports = {
   writeSiteFinderResultToLeadBase,
+  writeEmailResultToLeadBase,
   TABLE_NAME,
   WRITER_VERSION,
+  EMAIL_WRITER_VERSION,
   // Exposés pour tests :
   _setClientForTests,
   _resetForTests,

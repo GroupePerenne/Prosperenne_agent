@@ -36,6 +36,14 @@ const FALLBACK_PATHS = [
   '/about',
   '/a-propos',
 ];
+// Paths supplémentaires activés uniquement en mode AirWorker (opts.extendedPaths).
+// /contact contient fréquemment l'adresse + SIREN sur les sites PME.
+const EXTENDED_FALLBACK_PATHS = [
+  '/contact',
+  '/contact-us',
+  '/nous-contacter',
+  '/coordonnees',
+];
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
@@ -66,6 +74,9 @@ const ANCHOR_KEYWORDS = [
  * @param {number}   [opts.perPageTimeoutMs]
  * @param {number}   [opts.totalTimeoutMs]
  * @param {number}   [opts.maxAdditionalPages]
+ * @param {boolean}  [opts.extendedPaths]        AirWorker uniquement — ajoute
+ *                                               /contact et variantes aux paths
+ *                                               de fallback.
  * @returns {Promise<Array<{ url: string, status: number, text: string, error?: string }>>}
  */
 async function fetchPagesForValidation(siteUrl, opts = {}) {
@@ -95,9 +106,13 @@ async function fetchPagesForValidation(siteUrl, opts = {}) {
   visited.add(normalized);
   pages.push(homeResult);
 
+  const activeFallbackPaths = opts.extendedPaths
+    ? [...FALLBACK_PATHS, ...EXTENDED_FALLBACK_PATHS]
+    : FALLBACK_PATHS;
+
   if (!homeResult.text || homeResult.status < 200 || homeResult.status >= 400) {
     // Home indisponible ou non-2xx/3xx : on tente quand même les fallback paths
-    for (const path of FALLBACK_PATHS) {
+    for (const path of activeFallbackPaths) {
       if (budgetReached()) break;
       if (pages.length - 1 >= maxAdditional) break;
       const fallbackUrl = buildSameHostUrl(normalized, path);
@@ -115,7 +130,7 @@ async function fetchPagesForValidation(siteUrl, opts = {}) {
   // 3. Fallback paths si aucune anchor pertinente
   const candidateUrls = anchorUrls.length > 0
     ? anchorUrls
-    : FALLBACK_PATHS.map((p) => buildSameHostUrl(normalized, p)).filter(Boolean);
+    : activeFallbackPaths.map((p) => buildSameHostUrl(normalized, p)).filter(Boolean);
 
   // 4. Fetch séquentiel, dans la limite budget + max
   for (const url of candidateUrls) {
@@ -247,6 +262,7 @@ module.exports = {
     buildSameHostUrl,
     USER_AGENT,
     FALLBACK_PATHS,
+    EXTENDED_FALLBACK_PATHS,
     DEFAULT_PER_PAGE_TIMEOUT_MS,
     DEFAULT_TOTAL_TIMEOUT_MS,
     MAX_ADDITIONAL_PAGES,

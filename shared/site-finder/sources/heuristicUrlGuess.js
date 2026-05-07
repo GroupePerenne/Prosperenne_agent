@@ -10,13 +10,15 @@
  * recherche web (T2), on tente directement les URLs probables et on délègue
  * au `siteValidator` aval pour la preuve SIREN dans les mentions légales.
  *
- * Stratégie de slugs (par ordre de priorité, max 8 candidates générés) :
+ * Stratégie de slugs (par ordre de priorité, max 12 candidates générés) :
  *   1. slug long avec tirets (mots multiples joints par tiret)
  *   2. slug long sans tirets (concaténation)
- *   3. slug 2 premiers mots
+ *   3. slug 2 premiers mots avec tiret
  *   4. slug court (premier mot seul, si ≥ 3 chars)
  *
- * Pour chaque slug, on teste .fr d'abord puis .com (limite globale 8 URLs).
+ * Pour chaque slug, on teste .fr, .com, .eu dans cet ordre (cible FR,
+ * ouverture vers TLDs alternatifs couramment utilisés par les PME).
+ * Limite globale 12 URLs (vs 8 avant Option D).
  * Probe HTTP léger : GET avec headers navigateur réalistes, timeout 3s,
  * concurrence 4. Filtre les domaines parking (Content-Length insuffisant ou
  * marqueurs textuels typiques).
@@ -33,15 +35,16 @@
 const { normalize } = require('../utils/urlNormalizer');
 
 const FETCH_TIMEOUT_MS = 3000;
-const MAX_CANDIDATES = 8;
+const MAX_CANDIDATES = 12;
 const CONCURRENCY = 4;
+// TLDs testés par ordre de priorité pour la cible PME FR.
+const TLDS = ['.fr', '.com', '.eu'];
 const SOURCE_ID = 'heuristic_url_guess';
 const INITIAL_CONFIDENCE = 0.70;
 
-// Suffixes juridiques à retirer du nom pour générer le slug.
-// Liste fermée FR : éviter de retirer des termes qui pourraient faire partie
-// du nom de marque réel (ex : "Groupe Renault" — on retire 'groupe' uniquement
-// quand il est en suffixe, pas en préfixe).
+// Suffixes juridiques et qualificatifs à retirer EN QUEUE du nom pour générer
+// le slug. Un seul passage en queue (on ne désempile pas plusieurs niveaux).
+// Liste fermée FR — pas d'extrapolation R-J6.
 const LEGAL_SUFFIXES = [
   'sas',
   'sarl',
@@ -63,7 +66,20 @@ const LEGAL_SUFFIXES = [
   'holding',
   'france',
   'french',
+  // Qualificatifs familiaux fréquents en queue de nom commercial PME
+  'et-fils',
+  'et-associes',
+  'et-cie',
+  'et-freres',
+  'associes',
+  'freres',
+  'fils',
 ];
+
+// Articles et particules à retirer EN TÊTE du nom si le reste fait ≥ 3 chars.
+// On ne touche PAS au corps du nom : "Les Éditions du Nord" → 'editions-du-nord',
+// pas 'nord'. La logique stop-words dans buildSlugs s'occupe des particules internes.
+const BEGIN_ARTICLES = new Set(['le', 'la', 'les', 'l']);
 
 // Mots vides retirés de la slugification (bruit qui dégrade les URLs candidates)
 const STOP_WORDS = new Set([
@@ -141,11 +157,12 @@ function buildHeaders(userAgent) {
 
 /**
  * Convertit un nom d'entreprise en candidates slugs, ordonnés du plus
- * spécifique au plus générique. Les suffixes juridiques (SAS, SARL...) sont
- * retirés en fin de chaîne uniquement.
+ * spécifique au plus générique.
  *
- * Ex : "ACME PLOMBERIE SAS" → ['acme-plomberie', 'acmeplomberie', 'acme-plomberie' (2 mots), 'acme']
+ * Ex : "ACME PLOMBERIE SAS" → ['acme-plomberie', 'acmeplomberie', 'acme-plomberie', 'acme']
  * Ex : "Société Générale"   → ['societe-generale', 'societegenerale']
+ * Ex : "La Belle Menuiserie SARL" → ['belle-menuiserie', 'bellemenuiserie', 'belle']
+ *      + variante sans retrait article : ['belle-menuiserie-sarl'→élagué, etc.]
  */
 function buildSlugs(companyName) {
   if (!companyName || typeof companyName !== 'string') return [];
@@ -161,10 +178,19 @@ function buildSlugs(companyName) {
 
   let words = cleaned.split(/[\s-]+/).filter(Boolean);
 
-  // Retire les suffixes juridiques en queue (un seul passage : on ne dépile
-  // pas plusieurs niveaux pour ne pas vider de noms courts genre "France SAS")
-  while (words.length > 1 && LEGAL_SUFFIXES.includes(words[words.length - 1])) {
-    words.pop();
+  // Retire les suffixes juridiques en queue (un seul passage).
+  // On normalise les tirets dans les suffixes composés pour matcher : "et fils"
+  // est normalisé plus bas, mais on checke aussi la forme jointe "et-fils".
+  while (words.length > 1) {
+    const tail = words[words.length - 1];
+    // Suffixe simple (un mot)
+    if (LEGAL_SUFFIXES.includes(tail)) { words.pop(); continue; }
+    // Suffixe composé (deux derniers mots joints par tiret, ex: "et fils")
+    if (words.length > 2) {
+      const twoLast = `${words[words.length - 2]}-${tail}`;
+      if (LEGAL_SUFFIXES.includes(twoLast)) { words.pop(); words.pop(); continue; }
+    }
+    break;
   }
 
   // Retire stop-words seulement si on reste avec ≥ 2 mots significatifs.
@@ -183,29 +209,42 @@ function buildSlugs(companyName) {
     slugs.push(s);
   };
 
-  // 1. slug long avec tirets
-  push(words.join('-'));
-  // 2. slug long sans tirets (concaténation)
-  if (words.length > 1) push(words.join(''));
-  // 3. slug 2 premiers mots
-  if (words.length >= 2) push(words.slice(0, 2).join('-'));
-  // 4. slug premier mot seul, si ≥ 3 chars et plusieurs mots dans le nom
-  if (words[0] && words[0].length >= 3 && words.length > 1) push(words[0]);
+  // Génère les slugs depuis la liste de mots complète
+  const addVariants = (ws) => {
+    // 1. slug long avec tirets
+    push(ws.join('-'));
+    // 2. slug long sans tirets (concaténation)
+    if (ws.length > 1) push(ws.join(''));
+    // 3. slug 2 premiers mots
+    if (ws.length >= 2) push(ws.slice(0, 2).join('-'));
+    // 4. slug premier mot seul, si ≥ 3 chars et plusieurs mots dans le nom
+    if (ws[0] && ws[0].length >= 3 && ws.length > 1) push(ws[0]);
+  };
+
+  addVariants(words);
+
+  // Variante sans article initial : si le premier mot est un article (le, la,
+  // les, l), on génère les slugs depuis le deuxième mot. Cible les PME dont
+  // le domaine omet l'article (ex: "La Belle Menuiserie" → bellemenuiserie.fr).
+  if (words.length >= 2 && BEGIN_ARTICLES.has(words[0])) {
+    addVariants(words.slice(1));
+  }
 
   return slugs;
 }
 
 /**
- * Pour chaque slug, génère les URL candidates (.fr d'abord, .com ensuite).
+ * Pour chaque slug, génère les URL candidates (.fr, .com, .eu dans l'ordre).
  * Limite à MAX_CANDIDATES total. .fr prioritaire car cible 100% française.
  */
 function buildCandidateUrls(slugs) {
   const urls = [];
   for (const slug of slugs) {
+    for (const tld of TLDS) {
+      if (urls.length >= MAX_CANDIDATES) break;
+      urls.push(`https://${slug}${tld}`);
+    }
     if (urls.length >= MAX_CANDIDATES) break;
-    urls.push(`https://${slug}.fr`);
-    if (urls.length >= MAX_CANDIDATES) break;
-    urls.push(`https://${slug}.com`);
   }
   return urls;
 }
@@ -338,6 +377,8 @@ module.exports = {
     USER_AGENTS,
     LEGAL_SUFFIXES,
     STOP_WORDS,
+    BEGIN_ARTICLES,
+    TLDS,
     MAX_CANDIDATES,
     CONCURRENCY,
     FETCH_TIMEOUT_MS,

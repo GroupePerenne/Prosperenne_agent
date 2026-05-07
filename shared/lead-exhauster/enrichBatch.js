@@ -234,9 +234,20 @@ async function enrichBatchForConsultant(params = {}) {
   let resolutionOk = 0;
   let resolutionUnresolvable = 0;
   let costCentsTotal = 0;
+  let preResolvedByAirworker = 0;
   const unresolvablePromises = [];
 
+  // Fast path AirWorker pré-résolu : seuil 0.70 (scraping HTML vérifié).
+  // En dessous, l'exhauster prend en charge — le domaine servira d'hint
+  // Dropcontact. Cohérent upstream origin/main + parallélisation HEAD pMapLimit.
+  const AIRWORKER_MIN_CONFIDENCE = 0.70;
   const enrichmentsRaw = await pMapLimit(candidates, EXHAUSTER_CONCURRENCY, async (cand) => {
+    // Fast path détecté ici, traitement synchronisé en post-build pour ne pas
+    // muter `leads` ni `resolutionOk` depuis un callback parallèle.
+    if (cand.emailDirigeant && (cand.emailDirigeantConfidence || 0) >= AIRWORKER_MIN_CONFIDENCE) {
+      return { cand, preResolved: true };
+    }
+
     resolutionAttempts++;
 
     const experimentsContext = await buildCtx({
@@ -283,6 +294,13 @@ async function enrichBatchForConsultant(params = {}) {
     if (leads.length >= batchSize) break;
     if (!item || item.error) {
       resolutionUnresolvable++;
+      continue;
+    }
+    // Fast path AirWorker pré-résolu (détecté côté callback parallèle)
+    if (item.preResolved) {
+      resolutionOk++;
+      preResolvedByAirworker++;
+      leads.push(buildLeadFromPreResolvedEmail(item.cand));
       continue;
     }
     const { cand, enrichment } = item;
@@ -333,6 +351,7 @@ async function enrichBatchForConsultant(params = {}) {
       costCentsTotal,
       dryRun: Boolean(dryRun),
       elapsedMs: Date.now() - started,
+      preResolvedByAirworker,
       ...siteFinderMeta,
     },
   };
@@ -381,6 +400,32 @@ function buildLeadFromCandidate(cand, enrichment) {
       cost_cents: enrichment.cost_cents,
       resolvedDomain: enrichment.resolvedDomain,
       experimentsApplied: enrichment.experimentsApplied,
+    },
+  };
+}
+
+/**
+ * Construit un Lead depuis un candidate dont l'email a été pré-résolu par
+ * l'AirWorker (stocké dans emailDirigeant de la LeadBase). Aucune résolution
+ * exhauster ni Dropcontact — coût nul.
+ */
+function buildLeadFromPreResolvedEmail(cand) {
+  return {
+    siren: cand.siren,
+    prenom: cand.firstName || '',
+    nom: cand.lastName || '',
+    entreprise: cand.companyName,
+    email: cand.emailDirigeant,
+    secteur: cand.codeNaf || '',
+    ville: cand.ville || '',
+    contexte: cand.contexte || '',
+    contact: {
+      email: cand.emailDirigeant,
+      confidence: cand.emailDirigeantConfidence || 0,
+      source: 'airworker_preresolved',
+      cost_cents: 0,
+      resolvedDomain: null,
+      experimentsApplied: [],
     },
   };
 }

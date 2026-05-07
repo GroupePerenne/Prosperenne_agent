@@ -44,7 +44,7 @@ test('validateCandidate — SIREN différent dans le texte → rejet (0.0)', asy
   assert.match(r.proofDetails.weakSignals[0], /mismatched_siren=999888777/);
 });
 
-test('validateCandidate — pas de SIREN, nom dans title + ville → cumul faible', async () => {
+test('validateCandidate — pas de SIREN, nom dans title + ville + domaine ressemble → name_city_match (Option C)', async () => {
   const html = '<html><head><title>ACME SAS — Solutions logicielles</title></head>'
     + '<body><h1>ACME SAS</h1><p>Bureau Lyon, France</p></body></html>';
   const { stub } = makeFetcherStub([
@@ -54,8 +54,26 @@ test('validateCandidate — pas de SIREN, nom dans title + ville → cumul faibl
     { url: 'https://acme.fr', targetSiren: '123456789', companyName: 'ACME SAS', ville: 'Lyon' },
     { fetcherImpl: stub },
   );
+  // acme.fr ressemble à "ACME SAS" + Lyon présent → bonus combinatoire Option C
+  assert.equal(r.proofType, 'name_city_match');
+  assert.ok(r.confidence > 0.85, `got ${r.confidence}`);
+  assert.ok(r.signals.includes('company_name_in_title'));
+  assert.ok(r.signals.includes('ville_in_text'));
+  assert.ok(r.signals.includes('name_city_match_bonus'));
+});
+
+test('validateCandidate — pas de SIREN, nom dans title + ville, domaine différent → weak_signals pur', async () => {
+  const html = '<html><head><title>ACME SAS — Solutions logicielles</title></head>'
+    + '<body><h1>ACME SAS</h1><p>Bureau Lyon, France</p></body></html>';
+  const { stub } = makeFetcherStub([
+    { url: 'https://xyzrandom.fr', status: 200, text: html },
+  ]);
+  const r = await validateCandidate(
+    { url: 'https://xyzrandom.fr', targetSiren: '123456789', companyName: 'ACME SAS', ville: 'Lyon' },
+    { fetcherImpl: stub },
+  );
+  // domaine xyzrandom.fr ne ressemble pas à ACME SAS → pas de bonus, weak_signals max 0.80
   assert.equal(r.proofType, 'weak_signals');
-  // Base 0.40 + nom dans title 0.15 + ville 0.10 + domain like name 0.10 = 0.75
   assert.ok(r.confidence > 0.5 && r.confidence <= 0.80, `got ${r.confidence}`);
   assert.ok(r.signals.includes('company_name_in_title'));
   assert.ok(r.signals.includes('ville_in_text'));
@@ -113,18 +131,34 @@ test('validateCandidate — SIREN cible dans page secondaire (mentions)', async 
 
 // ─── Internals ─────────────────────────────────────────────────────────────
 
-test('_internals.computeWeakSignals — base 0.40, plafonne à 0.80', () => {
+test('_internals.computeWeakSignals — base 0.40, plafonne à 0.80 sans bonus combinatoire', () => {
   const { computeWeakSignals } = _internals;
+  // Domaine xyzrandom.fr ne ressemble pas à ACME SAS → pas de name_city_match
   const r = computeWeakSignals({
     concatenated: 'ACME SAS Lyon 69003 ACME ACME ACME',
     homePage: { text: '<title>ACME SAS</title><h1>ACME SAS</h1>' },
     companyName: 'ACME SAS',
     ville: 'Lyon',
     codePostal: '69003',
+    siteUrl: 'https://xyzrandom.fr',
+  });
+  assert.ok(r.confidence <= 0.80, `confidence attendue ≤ 0.80, obtenu ${r.confidence}`);
+  assert.ok(r.confidence >= 0.40);
+  assert.equal(r.nameCityMatch, false);
+});
+
+test('_internals.computeWeakSignals — bonus name_city_match quand domaine ressemble + ville présente', () => {
+  const { computeWeakSignals, NAME_CITY_MATCH_CONFIDENCE } = _internals;
+  const r = computeWeakSignals({
+    concatenated: 'ACME SAS Lyon 69003',
+    homePage: { text: '<title>ACME SAS</title>' },
+    companyName: 'ACME SAS',
+    ville: 'Lyon',
     siteUrl: 'https://acme.fr',
   });
-  assert.ok(r.confidence <= 0.80);
-  assert.ok(r.confidence >= 0.40);
+  assert.equal(r.nameCityMatch, true);
+  assert.equal(r.confidence, NAME_CITY_MATCH_CONFIDENCE);
+  assert.ok(r.signals.includes('name_city_match_bonus'));
 });
 
 test('_internals.domainResemblesName — match exact lowercased', () => {
