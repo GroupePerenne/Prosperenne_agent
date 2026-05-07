@@ -44,6 +44,20 @@ test('I-8 — cache dirigeants-rne expose CACHE_TTL_DAYS > 0', () => {
   delete process.env.DIRIGEANTS_CACHE_TTL_DAYS;
 });
 
+test('I-8 — cache dirigeants-rne expose CACHE_TTL_DEGRADED_DAYS (fallback I-4)', () => {
+  const exports = require('../../../shared/enrichers/dirigeants-rne');
+  const c = exports._constants;
+  assert.equal(typeof c.CACHE_TTL_DEGRADED_DAYS, 'number');
+  assert.ok(
+    c.CACHE_TTL_DEGRADED_DAYS > c.CACHE_TTL_DAYS,
+    `TTL dégradé ${c.CACHE_TTL_DEGRADED_DAYS}j doit être > TTL frais ${c.CACHE_TTL_DAYS}j (positif)`,
+  );
+  assert.ok(
+    c.CACHE_TTL_DEGRADED_DAYS <= 730,
+    `TTL dégradé ${c.CACHE_TTL_DEGRADED_DAYS}j semble excessif (> 2 ans)`,
+  );
+});
+
 // ─── Cache 2 — lead-exhauster index ────────────────────────────────────────
 
 test('I-8 — cache lead-exhauster expose DEFAULT_CACHE_TTL_DAYS > 0', () => {

@@ -101,8 +101,24 @@ test('I-4 — sireneIngestion fallback snapshot local TTL 35j (livré Bloc 2 Pal
   // Tests de comportement détaillés : tests/unit/sirene/downloader-fallback.test.js
 });
 
-test('I-4 — rneEnrichment fallback annuaire-entreprises HTML : à livrer Bloc 2 (todo)', { todo: 'Bloc 2' }, () => {
-  // Quand le worker enrich-leadbase-continuous sera amendé pour I-4 (Bloc 2),
-  // vérifier qu'en cas d'indispo recherche-entreprises.api.gouv.fr, le
-  // fallback annuaire-entreprises.data.gouv.fr HTML prend le relais.
+test('I-4 — rneEnrichment expose circuit breaker + cache TTL dégradé (fallback)', () => {
+  // Pivot vs plan initial annuaire-entreprises HTML scraping :
+  //   - data.gouv banni Mac Paul (Incapsula 403) cf. project_acces_data_gouv_bani.
+  //   - Parsing HTML fragile à toute évolution UI annuaire-entreprises.
+  //   - Risque ban dynamique côté worker Mac Air sur volume.
+  //
+  // Solution alignée avec doctrine §4.2 SIRENE (snapshot local TTL > API tierce)
+  // et feedback_fallback_snapshot_local_vs_api_tierce 7 mai 2026 :
+  //   - Circuit breaker sur fetch RNE (5 échecs/60s ouvre 5 min).
+  //   - Cache DirigeantsCache TTL dégradé 365j accepté en fallback.
+  // Donnée potentiellement obsolète mais disponible > pas de donnée (invariant V).
+  const exports = require('../../../shared/enrichers/dirigeants-rne');
+  const c = exports._constants;
+  assert.ok(c.CIRCUIT_BREAKER_THRESHOLD > 0, 'CIRCUIT_BREAKER_THRESHOLD requis pour I-4');
+  assert.ok(c.CIRCUIT_BREAKER_WINDOW_MS > 0, 'CIRCUIT_BREAKER_WINDOW_MS requis');
+  assert.ok(c.CIRCUIT_BREAKER_OPEN_MS > 0, 'CIRCUIT_BREAKER_OPEN_MS requis');
+  assert.ok(
+    c.CACHE_TTL_DEGRADED_DAYS > c.CACHE_TTL_DAYS,
+    `TTL dégradé ${c.CACHE_TTL_DEGRADED_DAYS}j doit être > TTL frais ${c.CACHE_TTL_DAYS}j`,
+  );
 });

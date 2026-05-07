@@ -8,31 +8,77 @@ const {
   writeSiteFinderResultToLeadBase,
   writeEmailResultToLeadBase,
   _setClientForTests,
+  _setViolationsClientForTests,
   _resetForTests,
 } = writer;
 
-function makeTableClientStub() {
+function makeCouche1Conforme(siren = '123456789', partitionKey = 'A') {
+  // Couche 1 valide pour passer la précondition I-1 dans safeMergeCoucheN.
+  // Note : partitionKey ne respecte pas le PK_LEADBASE_REGEX strict (département),
+  // mais checkCouche1Prerequisite ne valide pas PartitionKey, seulement les
+  // colonnes Couche 1 obligatoires.
+  return {
+    partitionKey,
+    rowKey: siren,
+    siren,
+    nom: 'EXEMPLE SAS',
+    codeNaf: '70.22Z',
+    trancheEffectif: '12',
+    codePostal: '75002',
+    sireneSourcedAt: '2026-05-06T20:14:18Z',
+    sireneSnapshotVersion: '2026-04',
+    sireneRunId: 'sirene-test-fixture',
+    schema_version: '1.0',
+  };
+}
+
+function makeTableClientStub({ couche1Entities = {}, couche1Default = null } = {}) {
   const updates = [];
   const queryResults = [];
   const stub = {
+    _entities: couche1Entities,
     updateEntity: async (entity, mode) => {
       updates.push({ entity, mode });
     },
-    listEntities: ({ queryOptions } = {}) => {
-      // Iterator simulé sur queryResults
+    listEntities: () => {
       const arr = queryResults.slice();
       return (async function* () {
         for (const e of arr) yield e;
       })();
+    },
+    getEntity: async (pk, rk) => {
+      const key = `${pk}:${rk}`;
+      if (couche1Entities[key]) return couche1Entities[key];
+      if (couche1Default) return { ...couche1Default, partitionKey: pk, rowKey: rk };
+      const err = new Error(`Entity not found: ${key}`);
+      err.statusCode = 404;
+      throw err;
     },
     _seedQueryResults: (arr) => { queryResults.length = 0; for (const e of arr) queryResults.push(e); },
   };
   return { stub, updates, queryResults };
 }
 
-test('writeSiteFinderResultToLeadBase — write Merge avec partitionKey fourni', async () => {
-  const { stub, updates } = makeTableClientStub();
+function makeViolationsStub() {
+  const writes = [];
+  return {
+    stub: {
+      createEntity: async (entity) => { writes.push({ entity }); },
+    },
+    writes,
+  };
+}
+
+// ─── writeSiteFinderResultToLeadBase ────────────────────────────────────────
+
+test('writeSiteFinderResultToLeadBase — write Merge avec Couche 1 valide', async () => {
+  const couche1 = makeCouche1Conforme('123456789', 'A');
+  const { stub, updates } = makeTableClientStub({
+    couche1Entities: { 'A:123456789': couche1 },
+  });
+  const violations = makeViolationsStub();
   _setClientForTests(stub);
+  _setViolationsClientForTests(violations.stub);
   try {
     const ok = await writeSiteFinderResultToLeadBase(
       '123456789',
@@ -58,13 +104,17 @@ test('writeSiteFinderResultToLeadBase — write Merge avec partitionKey fourni',
     assert.equal(u.entity.siteWebValidatedAt, '2026-04-29T10:00:00Z');
     assert.ok(u.entity.siteWebLastCheckedAt);
     assert.equal(u.entity.siteWebVersion, 'v1');
+    assert.equal(violations.writes.length, 0, 'pas de violation enregistrée');
   } finally {
     _resetForTests();
   }
 });
 
 test('writeSiteFinderResultToLeadBase — sans partitionKey, lookup par RowKey', async () => {
-  const { stub, updates } = makeTableClientStub();
+  const couche1 = makeCouche1Conforme('123456789', 'B');
+  const { stub, updates } = makeTableClientStub({
+    couche1Entities: { 'B:123456789': couche1 },
+  });
   stub._seedQueryResults([{ partitionKey: 'B', rowKey: '123456789' }]);
   _setClientForTests(stub);
   try {
@@ -123,8 +173,58 @@ test('writeSiteFinderResultToLeadBase — result null → false', async () => {
   }
 });
 
+test('writeSiteFinderResultToLeadBase — entrée Couche 1 absente (404) → false + violation I-1', async () => {
+  const { stub, updates } = makeTableClientStub(); // pas d'entité couche1
+  const violations = makeViolationsStub();
+  _setClientForTests(stub);
+  _setViolationsClientForTests(violations.stub);
+  try {
+    const ok = await writeSiteFinderResultToLeadBase(
+      '123456789',
+      { siteUrl: 'https://acme.fr', confidence: 0.99 },
+      { partitionKey: 'A' },
+    );
+    assert.equal(ok, false);
+    assert.equal(updates.length, 0, 'pas de write si Couche 1 absente');
+    assert.equal(violations.writes.length, 1);
+    assert.equal(violations.writes[0].entity.reason, 'i1_entry_absent');
+  } finally {
+    _resetForTests();
+  }
+});
+
+test('writeSiteFinderResultToLeadBase — Couche 1 incomplète → false + violation I-1', async () => {
+  // Entité présente mais sans codeNaf → Couche 1 non conforme
+  const incomplete = makeCouche1Conforme('123456789', 'A');
+  delete incomplete.codeNaf;
+  const { stub, updates } = makeTableClientStub({
+    couche1Entities: { 'A:123456789': incomplete },
+  });
+  const violations = makeViolationsStub();
+  _setClientForTests(stub);
+  _setViolationsClientForTests(violations.stub);
+  try {
+    const ok = await writeSiteFinderResultToLeadBase(
+      '123456789',
+      { siteUrl: 'https://acme.fr', confidence: 0.99 },
+      { partitionKey: 'A' },
+    );
+    assert.equal(ok, false);
+    assert.equal(updates.length, 0);
+    assert.equal(violations.writes.length, 1);
+    assert.ok(
+      violations.writes[0].entity.reason.startsWith('i1_'),
+      `violation I-1 attendue, eu : ${violations.writes[0].entity.reason}`,
+    );
+  } finally {
+    _resetForTests();
+  }
+});
+
 test('writeSiteFinderResultToLeadBase — TableClient.updateEntity throw → return false (pas de bubble)', async () => {
+  const couche1 = makeCouche1Conforme('123456789', 'A');
   const stub = {
+    getEntity: async () => couche1,
     updateEntity: async () => { throw new Error('storage offline'); },
     listEntities: () => (async function* () {})(),
   };
@@ -142,7 +242,6 @@ test('writeSiteFinderResultToLeadBase — TableClient.updateEntity throw → ret
 });
 
 test('writeSiteFinderResultToLeadBase — pas de connection string → false silencieux', async () => {
-  // Reset complet pour forcer la branche pas-de-client
   const snap = {
     a: process.env.WEBSITE_PATTERNS_STORAGE_CONNECTION_STRING,
     b: process.env.LEADBASE_STORAGE_CONNECTION_STRING,
@@ -168,10 +267,10 @@ test('writeSiteFinderResultToLeadBase — pas de connection string → false sil
 });
 
 test('writeSiteFinderResultToLeadBase — siteUrl null (failure cache) → écrit quand même', async () => {
-  // Permet de tracer l'absence d'un site (cache.recordFailure côté site-finder
-  // ne touche pas LeadBase, donc ce test vérifie juste que le writer accepte
-  // un siteUrl null pour ne pas crasher si le caller force l'appel).
-  const { stub, updates } = makeTableClientStub();
+  const couche1 = makeCouche1Conforme('123456789', 'A');
+  const { stub, updates } = makeTableClientStub({
+    couche1Entities: { 'A:123456789': couche1 },
+  });
   _setClientForTests(stub);
   try {
     const ok = await writeSiteFinderResultToLeadBase(
@@ -187,7 +286,7 @@ test('writeSiteFinderResultToLeadBase — siteUrl null (failure cache) → écri
   }
 });
 
-// ─── writeEmailResultToLeadBase ────────────────────────────────────────────
+// ─── writeEmailResultToLeadBase (bypass légitime — Couche 4 LeadBase) ───────
 
 test('writeEmailResultToLeadBase — write Merge avec champs email', async () => {
   const { stub, updates } = makeTableClientStub();

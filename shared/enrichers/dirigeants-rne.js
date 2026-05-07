@@ -15,7 +15,22 @@
  * - Format dirigeants : array de personne physique avec prenoms/nom/qualite
  *
  * Cache : Storage Table DirigeantsCache (PartitionKey = 2 premiers chiffres
- * du siren, RowKey = siren) avec TTL 30 jours via fetchedAt.
+ * du siren, RowKey = siren) avec TTL 30 jours (frais) via fetchedAt et
+ * TTL 365 jours dégradé en mode fallback.
+ *
+ * Résilience I-4 (multi-source via fallback dégradé) :
+ *   - Circuit breaker : 5 échecs consécutifs en 60s → ouvre 5 min.
+ *     Pendant ce temps, on bypass l'API et on lit le cache dégradé.
+ *   - Cache dégradé : TTL 365j (CACHE_TTL_DEGRADED_DAYS) accepté en lecture
+ *     quand RNE est down. Cohérent invariant V (donnée potentiellement
+ *     obsolète mais disponible > pas de donnée), pattern aligné avec
+ *     SIRENE downloader fallback snapshot local TTL 35j (cf.
+ *     `feedback_fallback_snapshot_local_vs_api_tierce.md` 7 mai 2026).
+ *
+ * Le scraping HTML annuaire-entreprises.data.gouv.fr est volontairement
+ * écarté (Mac Paul ban Incapsula, parsing HTML fragile, risque ban
+ * dynamique côté worker Mac Air sur volume). Reportable en follow-up
+ * dédié testé in-situ sur Mac Air si la couverture s'avère insuffisante.
  */
 
 const { TableClient } = require('@azure/data-tables');
@@ -23,7 +38,49 @@ const { TableClient } = require('@azure/data-tables');
 const RNE_API_BASE = 'https://recherche-entreprises.api.gouv.fr';
 const TABLE_NAME = process.env.DIRIGEANTS_CACHE_TABLE || 'DirigeantsCache';
 const CACHE_TTL_DAYS = Number(process.env.DIRIGEANTS_CACHE_TTL_DAYS || 30);
+const CACHE_TTL_DEGRADED_DAYS = Number(
+  process.env.DIRIGEANTS_CACHE_TTL_DEGRADED_DAYS || 365,
+);
 const FETCH_TIMEOUT_MS = 5000;
+
+// ─── Circuit breaker (I-4 résilience) ───────────────────────────────────────
+const CIRCUIT_BREAKER_THRESHOLD = 5;
+const CIRCUIT_BREAKER_WINDOW_MS = 60_000;
+const CIRCUIT_BREAKER_OPEN_MS = 300_000; // 5 min
+
+let _failureTimestamps = [];
+let _circuitOpenedAt = null;
+
+function _isCircuitOpen() {
+  if (_circuitOpenedAt === null) return false;
+  if (Date.now() - _circuitOpenedAt > CIRCUIT_BREAKER_OPEN_MS) {
+    _circuitOpenedAt = null;
+    _failureTimestamps = [];
+    return false;
+  }
+  return true;
+}
+
+function _recordFailure() {
+  const now = Date.now();
+  _failureTimestamps = _failureTimestamps.filter(
+    (t) => now - t < CIRCUIT_BREAKER_WINDOW_MS,
+  );
+  _failureTimestamps.push(now);
+  if (_failureTimestamps.length >= CIRCUIT_BREAKER_THRESHOLD) {
+    _circuitOpenedAt = now;
+  }
+}
+
+function _recordSuccess() {
+  _failureTimestamps = [];
+  _circuitOpenedAt = null;
+}
+
+function _resetCircuitForTests() {
+  _failureTimestamps = [];
+  _circuitOpenedAt = null;
+}
 
 let _client = null;
 
@@ -57,36 +114,74 @@ function isExpired(fetchedAt) {
   return ageMs > CACHE_TTL_DAYS * 24 * 3600 * 1000;
 }
 
+function isExpiredDegraded(fetchedAt) {
+  if (!fetchedAt) return true;
+  const ageMs = Date.now() - new Date(fetchedAt).getTime();
+  return ageMs > CACHE_TTL_DEGRADED_DAYS * 24 * 3600 * 1000;
+}
+
 /**
  * Récupère les dirigeants d'un siren depuis le cache ou via l'API RNE.
  * Retourne un array de dirigeants au format LeadBase (prenoms, nom, qualite,
  * fonction, role, email) ou null si rien trouvé.
+ *
+ * Stratégie :
+ *   1. Cache frais (≤ TTL) : retour immédiat.
+ *   2. Circuit breaker ouvert : skip API, lecture cache dégradé (TTL 365j).
+ *   3. Fetch RNE. Si succès → cache + retour. Si échec → record failure,
+ *      lecture cache dégradé en fallback.
  */
 async function getDirigeantsForSiren(siren, opts = {}) {
   if (!siren || !/^\d{9}$/.test(String(siren))) return null;
   const sirenStr = String(siren);
 
-  // 1. Cache lookup
+  // 1. Cache frais
   if (!opts.skipCache) {
     const cached = await readFromCache(sirenStr);
     if (cached) return cached;
   }
 
-  // 2. Fetch RNE
-  const dirigeants = await fetchFromRNE(sirenStr);
+  // 2. Circuit breaker ouvert : bypass API, fallback dégradé direct
+  if (_isCircuitOpen()) {
+    return await readFromCache(sirenStr, { degraded: true });
+  }
 
-  // 3. Persist en cache (best effort, même si vide pour éviter re-fetch)
+  // 3. Fetch RNE avec gestion d'échec → fallback dégradé
+  let dirigeants = null;
+  let fetchOk = false;
+  try {
+    dirigeants = await fetchFromRNE(sirenStr);
+    fetchOk = dirigeants !== null;
+  } catch {
+    fetchOk = false;
+  }
+
+  if (!fetchOk) {
+    _recordFailure();
+    return await readFromCache(sirenStr, { degraded: true });
+  }
+
+  _recordSuccess();
   await writeToCache(sirenStr, dirigeants);
-
   return dirigeants;
 }
 
-async function readFromCache(siren) {
+/**
+ * Lecture du cache.
+ *   - Mode normal (defaut) : refuse les entrées expirées (> CACHE_TTL_DAYS).
+ *   - Mode degraded : accepte jusqu'à CACHE_TTL_DEGRADED_DAYS, utilisé en
+ *     fallback I-4 quand le primaire RNE est indisponible.
+ */
+async function readFromCache(siren, opts = {}) {
   const client = getClient();
   if (!client) return null;
   try {
     const entity = await client.getEntity(partitionKeyFor(siren), siren);
-    if (isExpired(entity.fetchedAt)) return null;
+    if (opts.degraded) {
+      if (isExpiredDegraded(entity.fetchedAt)) return null;
+    } else if (isExpired(entity.fetchedAt)) {
+      return null;
+    }
     if (!entity.dirigeantsJson) return [];
     try {
       return JSON.parse(entity.dirigeantsJson);
@@ -198,10 +293,26 @@ async function enrichBatchInPlace(entities, opts = {}) {
 
 function _resetForTests() {
   _client = null;
+  _resetCircuitForTests();
 }
 
 module.exports = {
   getDirigeantsForSiren,
   enrichBatchInPlace,
   _resetForTests,
+  _resetCircuitForTests,
+  _constants: {
+    CACHE_TTL_DAYS,
+    CACHE_TTL_DEGRADED_DAYS,
+    CIRCUIT_BREAKER_THRESHOLD,
+    CIRCUIT_BREAKER_WINDOW_MS,
+    CIRCUIT_BREAKER_OPEN_MS,
+  },
+  _internals: {
+    isExpired,
+    isExpiredDegraded,
+    _isCircuitOpen,
+    _recordFailure,
+    _recordSuccess,
+  },
 };
