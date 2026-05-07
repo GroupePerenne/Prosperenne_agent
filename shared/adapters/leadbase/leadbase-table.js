@@ -65,9 +65,13 @@ function orClause(field, values) {
  *   - nafCodes obligatoire (caller responsable)
  *   - effectifCodes obligatoire (caller responsable)
  *   - jointure AND entre clauses
+ *   - **discriminant origine schema_version='1.0' toujours posé** (I-2 enforced)
  */
 function buildFilter({ nafCodes, effectifCodes, departements }) {
   const clauses = [];
+  // Discriminant origine I-2 : ne lit que les entrées v1 conformes,
+  // exclut le legacy non-conforme (cf. LEADBASE_LESSONS_v1.md §4 invariant I-2).
+  clauses.push("schema_version eq '1.0'");
   const dep = orClause('PartitionKey', departements);
   if (dep) clauses.push(dep);
   const naf = orClause('codeNaf', nafCodes);

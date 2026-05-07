@@ -297,9 +297,12 @@ async function prefetchEnrichmentForBrief(brief, limit, context) {
   const tableClient = TableClient.fromConnectionString(cs, 'LeadBase');
   const sample = [];
   try {
+    // I-2 enforced : ne lit que les entrées v1 conformes (cf.
+    // shared/leadbase/safe-read.js + LEADBASE_LESSONS_v1.md §4 invariant I-2).
     const iter = tableClient.listEntities({
       queryOptions: {
-        select: ['partitionKey', 'rowKey', 'siren', 'dirigeants'],
+        filter: "schema_version eq '1.0'",
+        select: ['partitionKey', 'rowKey', 'siren', 'dirigeants', 'rneCheckedAt', 'rne_checked_at', 'schema_version'],
       },
     });
     for await (const e of iter) {

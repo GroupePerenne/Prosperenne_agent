@@ -97,6 +97,12 @@ async function upsertLeadContact(row = {}) {
   try {
     await ensureTable(client);
     const now = new Date().toISOString();
+    // Conformité v1 : schema_version + leadBaseSchemaVersion + costCents (camelCase).
+    // cost_cents (snake_case) conservé en parallèle pour rétrocompat lecture 30j
+    // (cf. docs/LEADBASE_SCHEMA_v1.md §8.3).
+    const costCentsValue = Number.isFinite(row.cost_cents)
+      ? row.cost_cents
+      : (Number.isFinite(row.costCents) ? row.costCents : 0);
     const entity = {
       partitionKey: String(row.siren),
       rowKey: buildRowKey(row.firstName, row.lastName),
@@ -105,7 +111,8 @@ async function upsertLeadContact(row = {}) {
       confidence: typeof row.confidence === 'number' ? row.confidence : 0,
       source: String(row.source || ''),
       signals: JSON.stringify(Array.isArray(row.signals) ? row.signals : []),
-      cost_cents: Number.isFinite(row.cost_cents) ? row.cost_cents : 0,
+      cost_cents: costCentsValue, // legacy snake_case — rétrocompat 30j
+      costCents: costCentsValue,  // v1 camelCase strict
       firstName: normalizeNamePart(row.firstName) || '',
       lastName: normalizeNamePart(row.lastName) || '',
       role: String(row.role || ''),
@@ -121,6 +128,8 @@ async function upsertLeadContact(row = {}) {
         Array.isArray(row.experimentsApplied) ? row.experimentsApplied : [],
       ),
       beneficiaryId: String(row.beneficiaryId || ''),
+      schema_version: '1.0',
+      leadBaseSchemaVersion: '1.0',
     };
     // upsertEntity("Merge") : ne touche pas aux colonnes non fournies.
     // Ici on fournit tout, y compris resolvedAt/lastVerifiedAt, donc c'est
@@ -231,6 +240,11 @@ function _resetForTests() {
   _ensured = false;
 }
 
+function _setClientForTests(client) {
+  _client = client;
+  _ensured = true; // bypass createTable
+}
+
 module.exports = {
   upsertLeadContact,
   readLeadContact,
@@ -238,4 +252,5 @@ module.exports = {
   purgeBySiren,
   buildRowKey,
   _resetForTests,
+  _setClientForTests,
 };

@@ -28,8 +28,11 @@ const { selectCandidatesForConsultant } = require('../leadSelector');
 const { leadExhauster } = require('./index');
 const { recordUnresolvable } = require('./unresolvableTrace');
 const { DEFAULT_CONFIDENCE_THRESHOLD } = require('./schemas');
+const { DropcontactAdapter } = require('./adapters/dropcontact');
+const { isAggregator } = require('../site-finder/aggregators');
 const { findWebsite } = require('../site-finder');
 const { writeSiteFinderResultToLeadBase } = require('../site-finder/writers/leadbaseWriter');
+const { pMapLimit } = require('../utils/p-map-limit');
 
 /**
  * Enrichit un brief en batch prêt pour launchSequenceForConsultant.
@@ -75,6 +78,21 @@ async function enrichBatchForConsultant(params = {}) {
   // Sprint 2 — site-finder injectables
   const siteFinder = adapters.findWebsite || findWebsite;
   const siteFinderWriter = adapters.writeSiteFinderResultToLeadBase || writeSiteFinderResultToLeadBase;
+  // Cascade Dropcontact (Jalon 3) — wiring de l'adapter en prod. L'adapter
+  // pioche sa config depuis process.env (DROPCONTACT_API_KEY/_ENABLED/_API_URL/
+  // _MONTHLY_BUDGET_CENTS/_TIMEOUT_MS). Bypass pour tests via
+  // adapters.dropcontact.
+  const dropcontactAdapter = (adapters.dropcontact !== undefined)
+    ? adapters.dropcontact
+    : (() => {
+        try {
+          return new DropcontactAdapter({ logger: context });
+        } catch (err) {
+          logWarn(context, `[enrichBatch] DropcontactAdapter init failed: ${err && err.message}`);
+          return null;
+        }
+      })();
+  const exhausterAdapters = { ...adapters, dropcontact: dropcontactAdapter };
 
   if (!beneficiaryId) {
     return errorResult(started, 'missing_beneficiary_id');
@@ -160,6 +178,23 @@ async function enrichBatchForConsultant(params = {}) {
     if (result.source === 'cache') siteFinderMeta.siteFinderCacheHits++;
     siteFinderMeta.siteFinderCostCents += Number(result.costCents) || 0;
 
+    // Filtre annuaires : si site-finder retourne un agrégateur (rubypayeur,
+    // datalegal, e-pro...), on n'écrit PAS companyDomain. Le pipeline
+    // continue sans domaine validé : Dropcontact pourra chercher via
+    // SIREN+companyName, ce qui est plus fiable qu'un pattern absurde sur
+    // un faux domaine. Tracé pour audit.
+    if (isAggregator(result.siteUrl)) {
+      siteFinderMeta.siteFinderAggregatorSkipped = (siteFinderMeta.siteFinderAggregatorSkipped || 0) + 1;
+      cand.siteFinderResult = {
+        siteUrl: result.siteUrl,
+        confidence: result.confidence,
+        source: result.source,
+        proofType: result.proofType,
+        skippedAggregator: true,
+      };
+      continue;
+    }
+
     // Enrichit le candidate : `companyDomain` sera consommé par l'exhauster
     // ligne ~136 (hintedEmail prioritaire mais ici hintedEmail est null
     // puisqu'on a skip dès que présent).
@@ -182,8 +217,19 @@ async function enrichBatchForConsultant(params = {}) {
     }
   }
 
-  // ─── Étape 2 : boucle exhauster séquentielle ────────────────────────
-  const leads = [];
+  // ─── Étape 2 : boucle exhauster parallèle (concurrency=3) ──────────
+  // Concurrency 3 par défaut : exhauster est I/O-heavy (Dropcontact poll
+  // ~90s + scraping multi-pages). Au-delà de 3 on sature Dropcontact API
+  // et on génère du throttling DDG/Brave. En deçà on perd le bénéfice
+  // (selectCandidates est déjà coûteux 4-5 min, il faut compresser
+  // l'étape exhauster pour tenir dans la fenêtre 10 min Consumption).
+  // Override possible via env EXHAUSTER_CONCURRENCY.
+  //
+  // Surcout assumé : on enrichit candidateMultiplier × batchSize candidates
+  // en parallèle alors qu'on coupe à batchSize au build leads ; les surplus
+  // sont mis en cache LeadContacts pour les runs suivantes, pas de gaspillage net.
+  const EXHAUSTER_CONCURRENCY = Math.max(1, Number(process.env.EXHAUSTER_CONCURRENCY) || 3);
+
   let resolutionAttempts = 0;
   let resolutionOk = 0;
   let resolutionUnresolvable = 0;
@@ -191,19 +237,15 @@ async function enrichBatchForConsultant(params = {}) {
   let preResolvedByAirworker = 0;
   const unresolvablePromises = [];
 
-  for (const cand of candidates) {
-    if (leads.length >= batchSize) break;
-
-    // Fast path : email pré-résolu par l'AirWorker avec confiance suffisante.
-    // Seuil 0.70 : scraping HTML vérifié (confidence scraping ≥ 0.60 + bonus
-    // contexte nom). En dessous (patterns non vérifiés, confidence 0.55) on
-    // laisse passer dans l'exhauster — le domaine servira d'hint Dropcontact.
-    const AIRWORKER_MIN_CONFIDENCE = 0.70;
+  // Fast path AirWorker pré-résolu : seuil 0.70 (scraping HTML vérifié).
+  // En dessous, l'exhauster prend en charge — le domaine servira d'hint
+  // Dropcontact. Cohérent upstream origin/main + parallélisation HEAD pMapLimit.
+  const AIRWORKER_MIN_CONFIDENCE = 0.70;
+  const enrichmentsRaw = await pMapLimit(candidates, EXHAUSTER_CONCURRENCY, async (cand) => {
+    // Fast path détecté ici, traitement synchronisé en post-build pour ne pas
+    // muter `leads` ni `resolutionOk` depuis un callback parallèle.
     if (cand.emailDirigeant && (cand.emailDirigeantConfidence || 0) >= AIRWORKER_MIN_CONFIDENCE) {
-      resolutionOk++;
-      preResolvedByAirworker++;
-      leads.push(buildLeadFromPreResolvedEmail(cand));
-      continue;
+      return { cand, preResolved: true };
     }
 
     resolutionAttempts++;
@@ -235,13 +277,34 @@ async function enrichBatchForConsultant(params = {}) {
         experimentsContext,
         simulated: Boolean(dryRun),
       },
-      { adapters, context },
+      { adapters: exhausterAdapters, context },
     ).catch((err) => {
       logWarn(context, `[enrichBatch] exhauster throw for ${cand.siren}: ${err && err.message}`);
       return { status: 'error', email: null, signals: ['exception'] };
     });
 
-    if (enrichment.status === 'ok' && enrichment.email) {
+    return { cand, enrichment };
+  });
+
+  // Build leads en ordre, stop dès batchSize atteint. Les enrichments au-delà
+  // ont déjà été persistés en cache LeadContacts par l'exhauster (réutilisés
+  // par les prochaines runs).
+  const leads = [];
+  for (const item of enrichmentsRaw) {
+    if (leads.length >= batchSize) break;
+    if (!item || item.error) {
+      resolutionUnresolvable++;
+      continue;
+    }
+    // Fast path AirWorker pré-résolu (détecté côté callback parallèle)
+    if (item.preResolved) {
+      resolutionOk++;
+      preResolvedByAirworker++;
+      leads.push(buildLeadFromPreResolvedEmail(item.cand));
+      continue;
+    }
+    const { cand, enrichment } = item;
+    if (enrichment && enrichment.status === 'ok' && enrichment.email) {
       resolutionOk++;
       costCentsTotal += Number(enrichment.cost_cents) || 0;
       leads.push(buildLeadFromCandidate(cand, enrichment));
@@ -252,8 +315,8 @@ async function enrichBatchForConsultant(params = {}) {
           unresolvableWriter({
             beneficiaryId,
             siren: cand.siren,
-            reason: enrichment.status === 'error' ? 'error' : 'unresolvable',
-            signalsExhausted: Array.isArray(enrichment.signals) ? enrichment.signals : [],
+            reason: enrichment && enrichment.status === 'error' ? 'error' : 'unresolvable',
+            signalsExhausted: Array.isArray(enrichment && enrichment.signals) ? enrichment.signals : [],
             firstName: cand.firstName,
             lastName: cand.lastName,
             companyName: cand.companyName,

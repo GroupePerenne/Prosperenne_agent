@@ -100,10 +100,11 @@ async function test1_countParis(client) {
   let count = 0;
   const sample = [];
   try {
+    // I-2 OK: smoke v1 — filtre schema_version pour cohérence consommateurs prod.
     const iterator = client.listEntities({
       queryOptions: {
-        filter: "PartitionKey eq '75'",
-        select: ['siren', 'nom', 'codeNaf', 'ville', 'trancheEffectif'],
+        filter: "PartitionKey eq '75' and schema_version eq '1.0'",
+        select: ['siren', 'nom', 'codeNaf', 'ville', 'trancheEffectif', 'schema_version'],
       },
     });
     for await (const entity of iterator) {
@@ -143,11 +144,13 @@ async function test2_filterEsnParis(client) {
   try {
     // Note : Azure Tables ne supporte pas "in" sur un champ → on filtre
     // sur codeNaf exact et on croise avec trancheEffectif 11 (10-19) ou 12 (20-49)
+    // I-2 OK: smoke v1 ESN Paris.
     const iterator = client.listEntities({
       queryOptions: {
         filter:
-          "PartitionKey eq '75' and codeNaf eq '62.02A' " +
-          "and (trancheEffectif eq '11' or trancheEffectif eq '12')",
+          "schema_version eq '1.0' "
+          + "and PartitionKey eq '75' and codeNaf eq '62.02A' "
+          + "and (trancheEffectif eq '11' or trancheEffectif eq '12')",
       },
     });
     for await (const entity of iterator) {
@@ -192,8 +195,9 @@ async function test3_lookupSiren(client) {
     const start = Date.now();
     let found = null;
     try {
+      // I-2 OK: lookup par siren v1.
       const iterator = client.listEntities({
-        queryOptions: { filter: `siren eq '${c.siren}'` },
+        queryOptions: { filter: `siren eq '${c.siren}' and schema_version eq '1.0'` },
       });
       for await (const entity of iterator) {
         found = entity;

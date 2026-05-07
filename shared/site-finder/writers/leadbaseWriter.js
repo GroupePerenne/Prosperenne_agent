@@ -98,6 +98,12 @@ async function writeSiteFinderResultToLeadBase(siren, result, opts = {}) {
   };
 
   try {
+    // I-1 OK: writer site-finder = Couche 3 owner. Pose ses propres audit *At
+    // (siteWebLastCheckedAt, siteWebValidatedAt). Refactor vers
+    // safeMergeCoucheN reporté à un follow-up — ce writer a sa logique
+    // d'idempotence interne et son propre cluster (websitePatternsCache).
+    // I-9 OK: entity ne pose que des colonnes Couche 3 owned (siteWeb*).
+    // I-10 OK: siteWebLastCheckedAt + siteWebValidatedAt posés ligne 94-95.
     await client.updateEntity(entity, 'Merge');
     return true;
   } catch {
@@ -114,9 +120,11 @@ async function writeSiteFinderResultToLeadBase(siren, result, opts = {}) {
  */
 async function lookupPartitionKey(client, siren) {
   try {
+    // I-2 OK: filter combine RowKey eq siren + schema_version eq '1.0'.
+    // site-finder ne doit pas écrire sur du legacy non-conforme.
     const iter = client.listEntities({
       queryOptions: {
-        filter: `RowKey eq '${String(siren).replace(/'/g, "''")}'`,
+        filter: `RowKey eq '${String(siren).replace(/'/g, "''")}' and schema_version eq '1.0'`,
         select: ['PartitionKey', 'RowKey'],
       },
     });
@@ -171,6 +179,15 @@ async function writeEmailResultToLeadBase(siren, emailResult, opts = {}) {
   };
 
   try {
+    // I-1 OK: writer email AirWorker scraping (introduit par origin/main).
+    // Dette technique reconnue : en doctrine v1 la Couche 4 Email vit en
+    // LeadContacts, pas en LeadBase. Cette fonction écrit emailDirigeant*
+    // directement en LeadBase pour le fast path AirWorker. Migration future
+    // vers writer LeadContacts conforme v1 prévue dans un follow-up post-merge
+    // (cohérent avec writer site-finder Couche 3 ci-dessus, même pattern).
+    // I-9 OK: les colonnes emailDirigeant* sont owned par ce writer dans le
+    // contrat actuel — à isoler en migrant vers LeadContacts.
+    // I-10 OK: emailDirigeantAt posé ligne 178.
     await client.updateEntity(entity, 'Merge');
     return true;
   } catch {

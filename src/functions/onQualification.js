@@ -222,121 +222,53 @@ module.exports = {
   buildInsufficientBriefMail,
 };
 
-// ─── Lead Selector — fire-and-forget après Promise.all ─────────────────────
+// ─── Lead Selector — post queue async (fix 5 mai 2026) ─────────────────────
 
 /**
- * Déclenche le pipeline complet (sélection candidates + enrichment exhauster +
- * lancement séquence) en fire-and-forget après la réponse HTTP au consultant.
+ * Poste un job sur la queue `lead-selector-jobs` consommée par le handler
+ * `leadSelectorJobQueue` (timeout 10 min, hors fenêtre HTTP). Le pipeline
+ * complet (enrichBatch + sequence Martin/Mila + mail "base à affiner") est
+ * exécuté côté queue trigger via `rebuildConsultantFromMem0` qui relit le
+ * brief depuis Mem0.
  *
- * Mis à jour Jalon 3 : consomme `enrichBatchForConsultant` au lieu de
- * l'ancien `selectLeadsForConsultant`. Le mail "base à affiner" est
- * construit par `buildInsufficientBatchMail` (migré dans enrichBatch
- * conformément au point Paul #1 Jalon 3).
+ * Avant ce fix, le pipeline tournait en IIFE async directe dans le worker
+ * FA — fragile sur Linux Consumption v4, tué par recycle worker post-200,
+ * ce qui a bloqué les briefs Morgane et Johnny du 4 mai 2026 PM (aucune
+ * séquence générée, aucun mail "base à affiner" envoyé).
  *
- * Inhibé via env LEAD_SELECTOR_DISABLED=1 (utile pour tests/staging).
+ * `visibilityTimeout: 10s` laisse le temps au `storeConsultant` Mem0
+ * fire-and-forget de finir avant que le handler queue ne lise.
+ *
+ * Inhibé via env LEAD_SELECTOR_DISABLED=1.
  */
 function defaultTriggerLeadSelector({ brief, briefId, consultantId, context }) {
   if (process.env.LEAD_SELECTOR_DISABLED === '1') return;
   const log = makeSafeLogger(context);
 
-  let enrichAndProfileBatchForConsultant;
-  let buildInsufficientBatchMail;
-  let launchSequenceForConsultant;
-  let sendMailLazy;
+  let QueueClient;
+  let randomUUID;
   try {
-    ({ enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndProfileBatch'));
-    ({ buildInsufficientBatchMail } = require('../../shared/lead-exhauster/enrichBatch'));
-    ({ launchSequenceForConsultant } = require('../../agents/david/orchestrator'));
-    ({ sendMail: sendMailLazy } = require('../../shared/graph-mail'));
+    ({ QueueClient } = require('@azure/storage-queue'));
+    ({ randomUUID } = require('node:crypto'));
   } catch (err) {
-    log.warn(`[leadSelector] trigger require failed: ${err.message}`);
+    log.warn(`[leadSelector] queue require failed: ${err.message}`);
     return;
   }
 
-  // La promise n'est volontairement pas await depuis le handler HTTP.
-  const startedAt = Date.now();
-  log.info('leadSelector.trigger.start', { brief_id: briefId, consultantId });
+  const jobId = `job-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const batchSize = Number(process.env.LEAD_SELECTOR_BATCH_SIZE || 10);
+  const payload = JSON.stringify({ jobId, consultantId, batchSize, dryRun: false, briefId });
+
   (async () => {
     try {
-      const beneficiaryId = `oseys-${String(consultantId || '').split('@')[0] || 'unknown'}`;
-      const result = await enrichAndProfileBatchForConsultant({
-        brief,
-        beneficiaryId,
-        briefId,
-        consultantId,
-        context,
+      const queueClient = new QueueClient(process.env.AzureWebJobsStorage, 'lead-selector-jobs');
+      await queueClient.createIfNotExists();
+      await queueClient.sendMessage(Buffer.from(payload).toString('base64'), {
+        visibilityTimeout: 10,
       });
-
-      log(
-        `[leadSelector] brief_id=${briefId} status=${result.status} returned=${result.meta && result.meta.returned}`,
-      );
-
-      if (result.status === 'ok') {
-        const consultant = {
-          nom: brief.nom,
-          email: brief.email,
-          offre: brief.offre,
-          ton: brief.registre,
-          tutoiement: brief.vouvoiement === 'tu',
-        };
-        const briefForSeq = { prospecteur: brief.prospecteur || 'both' };
-        const seqResults = await launchSequenceForConsultant({
-          consultant,
-          brief: briefForSeq,
-          leads: result.leads,
-          context,
-        });
-        const ok = seqResults.filter((r) => !r.error).length;
-        log(
-          `[leadSelector] sequence launched for brief_id=${briefId}, ok=${ok}/${seqResults.length}`,
-        );
-      } else if (result.status === 'insufficient') {
-        // Partielle : on lance tout de même la séquence sur les leads
-        // disponibles ET on envoie le mail "base à affiner" en parallèle.
-        const consultant = {
-          nom: brief.nom,
-          email: brief.email,
-          offre: brief.offre,
-          ton: brief.registre,
-          tutoiement: brief.vouvoiement === 'tu',
-        };
-        const briefForSeq = { prospecteur: brief.prospecteur || 'both' };
-        await Promise.all([
-          launchSequenceForConsultant({
-            consultant, brief: briefForSeq, leads: result.leads, context,
-          }),
-          sendMailLazy({
-            from: process.env.DAVID_EMAIL,
-            to: brief.email,
-            subject: 'Lead Selector — base à affiner',
-            html: buildInsufficientBatchMail(brief, result),
-          }),
-        ]);
-      } else {
-        // empty / error → mail d'élargissement seul
-        await sendMailLazy({
-          from: process.env.DAVID_EMAIL,
-          to: brief.email,
-          subject: 'Lead Selector — base à affiner',
-          html: buildInsufficientBatchMail(brief, result),
-        });
-      }
-      log.info('leadSelector.trigger.end', {
-        brief_id: briefId,
-        consultantId,
-        status: result.status,
-        returned: result.meta && result.meta.returned,
-        elapsed_ms: Date.now() - startedAt,
-      });
+      log.info('leadSelector.queued', { brief_id: briefId, consultantId, jobId });
     } catch (err) {
-      log.error('[leadSelector] fire-and-forget failed', err);
-      log.info('leadSelector.trigger.end', {
-        brief_id: briefId,
-        consultantId,
-        status: 'exception',
-        error: err && err.message,
-        elapsed_ms: Date.now() - startedAt,
-      });
+      log.error('[leadSelector] queue post failed', err);
     }
   })();
 }

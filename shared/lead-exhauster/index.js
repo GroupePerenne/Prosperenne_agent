@@ -374,7 +374,15 @@ function isFreshCacheHit(row) {
   const last = Date.parse(row.lastVerifiedAt);
   if (!Number.isFinite(last)) return false;
   const ageDays = (Date.now() - last) / (24 * 3600 * 1000);
-  return ageDays <= DEFAULT_CACHE_TTL_DAYS;
+  if (ageDays > DEFAULT_CACHE_TTL_DAYS) return false;
+  // Skip negative cache hits (email=null && source='none') — ces entries
+  // proviennent de tentatives antérieures où aucun maillon n'a résolu un
+  // email exploitable. Avant le 5 mai 2026 PM, Dropcontact n'était pas
+  // câblé (Jalon 3 incomplet) donc ces "none" sont des faux unresolvable.
+  // On les retente : Dropcontact a son propre circuit breaker + budget
+  // guard, et le résultat positif/négatif sera ré-écrit en cache normal.
+  if (!row.email && row.source === 'none') return false;
+  return true;
 }
 
 function extractAppliedExperiments(ctx) {

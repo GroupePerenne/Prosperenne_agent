@@ -1,9 +1,37 @@
 {
-  "_version": "1.0",
-  "_note": "Règle produit Groupe Pérenne : cabinets comptables et cabinets d'avocats sont partenaires/apporteurs, jamais prospects directs. Cette liste est appliquée en post-filtre côté Lead Selector, après la requête LeadBase.",
+  "_version": "1.1",
+  "_note": "Règle produit Groupe Pérenne : exclusions absolues de la prospection commerciale OSEYS. Les codes ici listés ne peuvent JAMAIS être prospects directs. Cette liste est appliquée en post-filtre côté Lead Selector (leadSelector.js) ET côté ingestion SIRENE (scripts/sirene-bulk-import.js, ajouté 6 mai 2026 PM). Match exact par code NAF Rev 2 INSEE.",
+  "_revisions": [
+    "1.0 (initial) — cabinets comptables (69.20Z) et avocats (69.10Z) partenaires/apporteurs uniquement.",
+    "1.1 (6 mai 2026 PM) — ajout administration publique (84.*), enseignement primaire/secondaire public (85.10Z/85.20Z/85.31Z/85.32Z), organisations associatives (94.*) suite au constat smoke vérité Phase 4 SIRENE Paris : 8/10 leads aléatoires sweet spot 6-49 étaient des structures publiques hors cible OSEYS."
+  ],
 
   "exclusions": [
     { "code": "69.10Z", "raison": "Activités juridiques (avocats, notaires, huissiers, conseil juridique)" },
-    { "code": "69.20Z", "raison": "Activités comptables (experts-comptables, commissaires aux comptes)" }
+    { "code": "69.20Z", "raison": "Activités comptables (experts-comptables, commissaires aux comptes)" },
+
+    { "code": "84.11Z", "raison": "Administration publique générale" },
+    { "code": "84.12Z", "raison": "Administration publique - tutelle des activités sociales (santé, éducation, culture)" },
+    { "code": "84.13Z", "raison": "Administration publique - tutelle des activités économiques" },
+    { "code": "84.21Z", "raison": "Administration publique - affaires étrangères" },
+    { "code": "84.22Z", "raison": "Administration publique - défense" },
+    { "code": "84.23Z", "raison": "Administration publique - justice" },
+    { "code": "84.24Z", "raison": "Administration publique - activités d'ordre public et de sécurité" },
+    { "code": "84.25Z", "raison": "Administration publique - services du feu et de secours" },
+    { "code": "84.30A", "raison": "Sécurité sociale - activités générales" },
+    { "code": "84.30B", "raison": "Sécurité sociale - gestion des retraites complémentaires" },
+    { "code": "84.30C", "raison": "Sécurité sociale - distribution sociale de revenus" },
+
+    { "code": "85.10Z", "raison": "Enseignement pré-primaire (écoles maternelles publiques)" },
+    { "code": "85.20Z", "raison": "Enseignement primaire (écoles élémentaires publiques)" },
+    { "code": "85.31Z", "raison": "Enseignement secondaire général (collèges, lycées publics)" },
+    { "code": "85.32Z", "raison": "Enseignement secondaire technique ou professionnel public" },
+
+    { "code": "94.11Z", "raison": "Activités des organisations patronales et consulaires" },
+    { "code": "94.12Z", "raison": "Activités des organisations professionnelles" },
+    { "code": "94.20Z", "raison": "Activités des syndicats de salariés" },
+    { "code": "94.91Z", "raison": "Activités des organisations religieuses" },
+    { "code": "94.92Z", "raison": "Activités des organisations politiques" },
+    { "code": "94.99Z", "raison": "Autres organisations fonctionnant par adhésion volontaire" }
   ]
 }

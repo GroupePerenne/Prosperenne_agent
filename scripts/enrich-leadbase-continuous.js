@@ -195,12 +195,16 @@ function logProgress() {
 }
 
 async function* iterateLeadBase() {
-  // listEntities streaming
+  // listEntities streaming avec discriminant I-2 : ne lit que les entrées v1
+  // conformes (schema_version='1.0'). Le legacy 12,8M sans schema_version est
+  // ignoré — il sera promu via le cron SIRENE bulk France entière mensuel.
   const iter = tableClient.listEntities({
     queryOptions: {
-      // Fetch entités avec dirigeants null OU rne_checked_at expiré.
-      // Filter Storage Tables est limité ; on fait un scan large + filtre client.
-      select: ['partitionKey', 'rowKey', 'siren', 'dirigeants', 'rne_checked_at'],
+      filter: "schema_version eq '1.0'",
+      // Fetch entités avec dirigeants null OU rneCheckedAt expiré.
+      // Note v1 : rneCheckedAt camelCase (post migration Bloc 3). Pendant
+      // les 30j de rétrocompat, on lit aussi rne_checked_at legacy.
+      select: ['partitionKey', 'rowKey', 'siren', 'dirigeants', 'rneCheckedAt', 'rne_checked_at', 'schema_version'],
     },
   });
   let buffer = [];

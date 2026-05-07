@@ -45,10 +45,20 @@ const QUALIFICATION_MAP = Object.freeze({
 const DEFAULT_API_URL = 'https://api.dropcontact.io/batch';
 // Dropcontact API V1 : "Request not ready yet, try again in 30 seconds"
 // Validation terrain 2026-04-24 : batch processing ~30-60s réel.
-// Poll initial à 30s (consigne provider), puis 15s pour capter le
-// résultat dès disponibilité (meilleur behavior moyen que 30/30/15).
-const DEFAULT_TIMEOUT_MS = 90_000;
-const DEFAULT_POLL_DELAYS_MS = [30_000, 15_000, 15_000, 15_000]; // 75s cumulés
+// Polls 30s × 3 = 90s cumulés + timeout 110s. Dropcontact répond
+// fréquemment "Request not ready yet, try again in 30 seconds" sur les
+// premiers polls pour les batch ; la V1 [30, 15, 15, 15] = 75s était trop
+// court (poll exhausted observé 5 mai 2026 PM). 5 polls (150s) était trop
+// long : enrichBatch est SÉQUENTIEL côté candidates (boucle for await),
+// donc 10 candidates × 220s = 36 min, hors fenêtre 10 min functionTimeout
+// Linux Consumption (timeout fatal observé). 3 polls couvre la majorité
+// des matches en restant compatible batchSize 10 sur 10 min.
+//
+// TODO post-pilote : paralléliser exhauster sur les candidates via
+// Promise.allSettled avec concurrency limitée (~3-5) pour libérer
+// l'enveloppe et permettre des polls plus longs (5-7 polls).
+const DEFAULT_TIMEOUT_MS = 110_000;
+const DEFAULT_POLL_DELAYS_MS = [30_000, 30_000, 30_000];
 const DEFAULT_COST_PER_LOOKUP_CENTS = 3; // Starter plan ~2.4c/lookup, arrondi 3
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_OPEN_MS = 10 * 60 * 1000; // 10 min
@@ -139,8 +149,14 @@ class DropcontactAdapter {
   static qualificationToConfidence(q) {
     if (!q || typeof q !== 'string') return 0;
     const key = q.toLowerCase().trim();
-    const v = QUALIFICATION_MAP[key];
-    return typeof v === 'number' ? v : 0;
+    // Format Dropcontact V1 : "nominative", "catch_all", "role"
+    if (typeof QUALIFICATION_MAP[key] === 'number') return QUALIFICATION_MAP[key];
+    // Format Dropcontact V2 (observé 2026-05-05 sur fichier exemple app.dropcontact.com) :
+    // "nominative@pro", "catch-all@pro", "role@pro" — préfixe sémantique avant '@',
+    // tirets normalisés en underscore pour matcher la map.
+    const prefix = key.split('@')[0].replace(/-/g, '_');
+    if (typeof QUALIFICATION_MAP[prefix] === 'number') return QUALIFICATION_MAP[prefix];
+    return 0;
   }
 
   /**

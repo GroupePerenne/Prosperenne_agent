@@ -30,6 +30,7 @@
  */
 
 const { normalizeDomain } = require('./patterns');
+const { isAggregator } = require('../site-finder/aggregators');
 
 const API_GOUV_URL =
   process.env.RECHERCHE_ENTREPRISES_API_URL || 'https://recherche-entreprises.api.gouv.fr';
@@ -65,17 +66,25 @@ async function resolveDomain(input = {}, opts = {}) {
 
   // 1. Domain fourni par le caller
   if (input.companyDomain) {
-    const normalized = normalizeDomain(input.companyDomain);
-    if (normalized) {
-      return {
-        domain: normalized,
-        confidence: 1.0,
-        source: 'input',
-        signals: ['domain_from_input'],
-        elapsedMs: Date.now() - started,
-      };
+    if (isAggregator(input.companyDomain)) {
+      // Rare mais observé en prod : un agrégateur (rubypayeur, datalegal,
+      // e-pro...) a été passé comme companyDomain. On l'ignore, on tente
+      // api_gouv qui peut donner un vrai site officiel; sinon on retourne
+      // null et le pipeline ira en cascade Dropcontact sans domaine.
+      signals.push('input_domain_aggregator_skipped');
+    } else {
+      const normalized = normalizeDomain(input.companyDomain);
+      if (normalized) {
+        return {
+          domain: normalized,
+          confidence: 1.0,
+          source: 'input',
+          signals: ['domain_from_input'],
+          elapsedMs: Date.now() - started,
+        };
+      }
+      signals.push('input_domain_malformed');
     }
-    signals.push('input_domain_malformed');
   }
 
   // 2. API gouv recherche-entreprises
