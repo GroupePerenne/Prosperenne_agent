@@ -120,7 +120,22 @@ node scripts/audit-leadbase-integrity.js --limit 1000
 |---|---|---|
 | Migration emails legacy → LeadContacts v1 | Sous-palier suivant Bloc 3 | Identifier les SIRENs avec `emailDirigeant` direct en LeadBase, créer entrées LeadContacts v1 conformes |
 | Suppression colonnes legacy (`rne_checked_at`, etc.) | T+30j post-migration | Script de cleanup non-prioritaire |
-| Bascule consommateurs (Bloc 4) | Quand v1 est complète et stable | AirWorker, lead-exhauster, smoke, David repointés |
+| Bascule consommateurs (Bloc 4) | **Livré 7 mai** — voir §5.1 | AirWorker, lead-exhauster, lead-selector, site-finder repointés en code |
+
+### 5.1 Bascule consommateurs (Bloc 4 — livré 7 mai 2026 PM)
+
+Patches discriminant I-2 enforced sur tous les consommateurs principaux. **Pas de deploy prod automatique** — la bascule effective se fait au merge de la branche `feat/leadbase-v2-refonte` sur `main` puis deploy `pereneo-mail-sender`, prérogative Paul/COMEX (CLAUDE.md §11.2).
+
+| Module | Patch appliqué |
+|---|---|
+| `shared/adapters/leadbase/leadbase-table.js` | `buildFilter` préfixe systématiquement `schema_version eq '1.0'` (lead-selector, queryLeads) |
+| `scripts/enrich-leadbase-continuous.js` | `iterateLeadBase` filter `schema_version eq '1.0'` au scan AirWorker RNE |
+| `shared/site-finder/writers/leadbaseWriter.js` | `lookupPartitionKey` filter combine `RowKey eq siren` + `schema_version eq '1.0'` |
+| `shared/lead-exhauster/trace.js` | `upsertLeadContact` pose `schema_version='1.0'` + `leadBaseSchemaVersion='1.0'` + `costCents` (camelCase) avec `cost_cents` rétrocompat 30j |
+
+Tests anti-régression : `tests/integration/leadbase/consumer-switch-v1.test.js` + `tests/unit/leadSelector/filter-builder.test.js` (mis à jour).
+
+**Effet net après deploy** : David ne lit plus que les entrées `schema_version='1.0'`. Le legacy 12,8M reste lisible par accès direct (tableClient sans filter) mais aucun consommateur de prod ne le voit. Jusqu'au cron SIRENE bulk France entière mensuel (1er du mois, prochaine fenêtre = 1er juin), David a accès à ~27 408 leads Paris ; après le cron, ~614k France entière.
 
 ---
 

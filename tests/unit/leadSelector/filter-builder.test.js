@@ -17,12 +17,12 @@ const {
 
 // ─── buildFilter ─────────────────────────────────────────────────────────────
 
-test('buildFilter — 1 NAF, 1 effectif, sans département', () => {
+test('buildFilter — 1 NAF, 1 effectif, sans département (discriminant I-2 préfixé)', () => {
   const f = buildFilter({ nafCodes: ['62.02A'], effectifCodes: ['11'] });
-  assert.equal(f, "codeNaf eq '62.02A' and trancheEffectif eq '11'");
+  assert.equal(f, "schema_version eq '1.0' and codeNaf eq '62.02A' and trancheEffectif eq '11'");
 });
 
-test('buildFilter — N NAF, N effectif, N départements (parenthèses OR)', () => {
+test('buildFilter — N NAF, N effectif, N départements (parenthèses OR + discriminant I-2)', () => {
   const f = buildFilter({
     nafCodes: ['62.02A', '62.01Z'],
     effectifCodes: ['11', '12'],
@@ -30,7 +30,8 @@ test('buildFilter — N NAF, N effectif, N départements (parenthèses OR)', () 
   });
   assert.equal(
     f,
-    "(PartitionKey eq '75' or PartitionKey eq '92' or PartitionKey eq '93')"
+    "schema_version eq '1.0'"
+    + " and (PartitionKey eq '75' or PartitionKey eq '92' or PartitionKey eq '93')"
     + " and (codeNaf eq '62.02A' or codeNaf eq '62.01Z')"
     + " and (trancheEffectif eq '11' or trancheEffectif eq '12')"
   );
@@ -40,18 +41,33 @@ test('buildFilter — sans départements : pas de clause PartitionKey', () => {
   const f = buildFilter({ nafCodes: ['62.02A'], effectifCodes: ['11', '12'] });
   assert.ok(!f.includes('PartitionKey'));
   assert.match(f, /trancheEffectif eq '11' or trancheEffectif eq '12'/);
+  assert.ok(f.startsWith("schema_version eq '1.0'"), 'I-2 discriminant doit toujours être préfixé');
 });
 
 test('buildFilter — départements vide [] équivalent à absent', () => {
   const f = buildFilter({ nafCodes: ['62.02A'], effectifCodes: ['11'], departements: [] });
-  assert.equal(f, "codeNaf eq '62.02A' and trancheEffectif eq '11'");
+  assert.equal(f, "schema_version eq '1.0' and codeNaf eq '62.02A' and trancheEffectif eq '11'");
 });
 
 test('buildFilter — escape des apostrophes (sécurité injection)', () => {
   // Si jamais une valeur contient une apostrophe (cas très improbable sur du NAF),
   // elle doit être échappée par doublement.
   const f = buildFilter({ nafCodes: ["12.34'X"], effectifCodes: ['11'] });
-  assert.equal(f, "codeNaf eq '12.34''X' and trancheEffectif eq '11'");
+  assert.equal(f, "schema_version eq '1.0' and codeNaf eq '12.34''X' and trancheEffectif eq '11'");
+});
+
+test('buildFilter — I-2 discriminant toujours présent (anti-régression)', () => {
+  // Quelle que soit la combinaison d'inputs, schema_version='1.0' doit
+  // toujours être présent (enforcement runtime invariant I-2).
+  for (const args of [
+    { nafCodes: ['62.02A'], effectifCodes: ['11'] },
+    { nafCodes: ['62.02A', '62.01Z'], effectifCodes: ['11', '12'], departements: ['75'] },
+    { nafCodes: ["aa'bb"], effectifCodes: ['11'] },
+  ]) {
+    const f = buildFilter(args);
+    assert.ok(f.includes("schema_version eq '1.0'"),
+      `discriminant manquant pour ${JSON.stringify(args)} : ${f}`);
+  }
 });
 
 // ─── chunk ───────────────────────────────────────────────────────────────────

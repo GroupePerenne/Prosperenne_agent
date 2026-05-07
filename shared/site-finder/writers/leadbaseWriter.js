@@ -113,9 +113,11 @@ async function writeSiteFinderResultToLeadBase(siren, result, opts = {}) {
  */
 async function lookupPartitionKey(client, siren) {
   try {
+    // Discriminant I-2 : ne lookupe que les entrées v1 conformes.
+    // site-finder ne doit pas écrire sur du legacy non-conforme (I-1).
     const iter = client.listEntities({
       queryOptions: {
-        filter: `RowKey eq '${String(siren).replace(/'/g, "''")}'`,
+        filter: `RowKey eq '${String(siren).replace(/'/g, "''")}' and schema_version eq '1.0'`,
         select: ['PartitionKey', 'RowKey'],
       },
     });
