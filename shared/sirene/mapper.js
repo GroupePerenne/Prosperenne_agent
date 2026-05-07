@@ -2,7 +2,11 @@
 
 /**
  * Transforme une ligne SIRENE OpenDataSoft (champs `*etablissement` et
- * `*unitelegale`) en entité LeadBase format Pereneo.
+ * `*unitelegale`) en entité LeadBase format Pereneo, conforme au schéma v1.0
+ * (cf. docs/LEADBASE_SCHEMA_v1.md).
+ *
+ * Conformité v1 : pose schema_version='1.0' sur toute entrée pour permettre
+ * la discrimination origine côté lecture (invariant I-2).
  *
  * Décodage critique : OpenDataSoft expose les codes INSEE déjà décodés en
  * labels texte. Notre LeadBase utilise les codes INSEE traditionnels pour
@@ -167,6 +171,7 @@ function mapSireneRowToLeadBase(row, opts = {}) {
     sireneSourcedAt: new Date().toISOString(),
     sireneSnapshotVersion: opts.snapshot || (row.datederniertraitementetablissement || '').trim() || undefined,
     sireneRunId: opts.runId || undefined,
+    schema_version: '1.0',
   };
 
   // Personne physique (entreprise individuelle) : on garde le dirigeant

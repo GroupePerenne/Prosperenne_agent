@@ -19,8 +19,9 @@ const { TableClient } = require('@azure/data-tables');
 const TABLE_LEADBASE = process.env.LEADBASE_TABLE || 'LeadBase';
 const TABLE_RUNS = process.env.SIRENE_RUNS_TABLE || 'SireneIngestionRuns';
 
-// Colonnes SIRENE : seules ces colonnes sont touchées par le writer SIRENE.
+// Colonnes SIRENE Couche 1 : seules ces colonnes sont touchées par le writer SIRENE.
 // Toute autre colonne dans la ligne LeadBase existante est préservée intacte.
+// Cohérent avec docs/LEADBASE_SCHEMA_v1.md §5 + invariant I-9 sémantique unique.
 const SIRENE_OWNED_COLUMNS = Object.freeze([
   'siren',
   'nom',
@@ -38,6 +39,7 @@ const SIRENE_OWNED_COLUMNS = Object.freeze([
   'sireneSourcedAt',
   'sireneSnapshotVersion',
   'sireneRunId',
+  'schema_version', // v1.0 — discriminant origine I-2
 ]);
 
 let _leadBaseClient = null;
