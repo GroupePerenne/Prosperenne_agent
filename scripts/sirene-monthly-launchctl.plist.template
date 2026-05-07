@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template launchctl pour ingestion SIRENE mensuelle Pereneo.
+
+  Pivot par rapport au plan initial Function App timer :
+  cron Mac Air worker, cohérent avec roadmap project_roadmap_air_worker.md
+  (5 mai 2026, Paul). Économique, idempotent, déjà éprouvé pour
+  enrich-leadbase-continuous.js.
+
+  Schedule : 1er du mois 03h00 Paris (heures creuses, hors fenêtre
+  pilote 9h-18h).
+
+  Installation :
+    1. Copier en ~/Library/LaunchAgents/com.pereneo.sirene-monthly.plist
+    2. Personnaliser {REPO_PATH} (chemin absolu vers Pereneo_agents)
+    3. launchctl load ~/Library/LaunchAgents/com.pereneo.sirene-monthly.plist
+    4. Vérifier : launchctl list | grep com.pereneo.sirene-monthly
+    5. Logs : /tmp/pereneo-sirene-monthly.{out,err}.log
+    6. Arrêt : launchctl unload ~/Library/LaunchAgents/com.pereneo.sirene-monthly.plist
+
+  Test manuel (sans attendre la prochaine fenêtre) :
+    launchctl start com.pereneo.sirene-monthly
+
+  Audit run : table SireneIngestionRuns dans pereneoleadsst.
+  Conformité v1 : schema_version='1.0' posé par mapper, vérifié par
+  validateLeadBaseEntity (cf. tests/unit/sirene/conformity-v1.test.js).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pereneo.sirene-monthly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <string>{REPO_PATH}/scripts/sirene-bulk-import.js</string>
+        <string>--all</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{REPO_PATH}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>SIRENE_TRANCHES_INCLUDE</key>
+        <string>03,11,12</string>
+    </dict>
+
+    <!--
+      StartCalendarInterval : tous les 1er du mois à 03h00.
+      Si le Mac est éteint, launchd le déclenche au prochain démarrage.
+    -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Day</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!--
+      Pas de KeepAlive : run unique par tick. Si plante, on attend le
+      mois suivant ou run manuel.
+    -->
+
+    <key>StandardOutPath</key>
+    <string>/tmp/pereneo-sirene-monthly.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/pereneo-sirene-monthly.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>Nice</key>
+    <integer>5</integer>
+</dict>
+</plist>
