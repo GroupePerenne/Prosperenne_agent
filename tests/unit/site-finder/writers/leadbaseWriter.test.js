@@ -6,7 +6,6 @@ const assert = require('node:assert/strict');
 const writer = require('../../../../shared/site-finder/writers/leadbaseWriter');
 const {
   writeSiteFinderResultToLeadBase,
-  writeEmailResultToLeadBase,
   _setClientForTests,
   _setViolationsClientForTests,
   _resetForTests,
@@ -286,56 +285,7 @@ test('writeSiteFinderResultToLeadBase — siteUrl null (failure cache) → écri
   }
 });
 
-// ─── writeEmailResultToLeadBase (bypass légitime — Couche 4 LeadBase) ───────
-
-test('writeEmailResultToLeadBase — write Merge avec champs email', async () => {
-  const { stub, updates } = makeTableClientStub();
-  _setClientForTests(stub);
-  try {
-    const ok = await writeEmailResultToLeadBase(
-      '123456789',
-      { email: 'jean.dupont@acme.fr', confidence: 0.75, source: 'airworker_scrape' },
-      { partitionKey: 'A' },
-    );
-    assert.equal(ok, true);
-    assert.equal(updates.length, 1);
-    const u = updates[0];
-    assert.equal(u.mode, 'Merge');
-    assert.equal(u.entity.partitionKey, 'A');
-    assert.equal(u.entity.rowKey, '123456789');
-    assert.equal(u.entity.emailDirigeant, 'jean.dupont@acme.fr');
-    assert.equal(u.entity.emailDirigeantSource, 'airworker_scrape');
-    assert.equal(u.entity.emailDirigeantConfidence, 0.75);
-    assert.ok(u.entity.emailDirigeantAt);
-    assert.equal(u.entity.emailDirigeantVersion, 'v1');
-  } finally {
-    _resetForTests();
-  }
-});
-
-test('writeEmailResultToLeadBase — email null → écrit quand même (reset)', async () => {
-  const { stub, updates } = makeTableClientStub();
-  _setClientForTests(stub);
-  try {
-    const ok = await writeEmailResultToLeadBase(
-      '123456789',
-      { email: null, confidence: 0, source: 'airworker_scrape' },
-      { partitionKey: 'A' },
-    );
-    assert.equal(ok, true);
-    assert.equal(updates[0].entity.emailDirigeant, null);
-  } finally {
-    _resetForTests();
-  }
-});
-
-test('writeEmailResultToLeadBase — siren invalide → false', async () => {
-  const { stub, updates } = makeTableClientStub();
-  _setClientForTests(stub);
-  try {
-    assert.equal(await writeEmailResultToLeadBase('12345', { email: 'a@b.fr' }, { partitionKey: 'A' }), false);
-    assert.equal(updates.length, 0);
-  } finally {
-    _resetForTests();
-  }
-});
+// Gap 5.2B — writeEmailResultToLeadBase supprimé. La Couche 4 (email) vit
+// désormais en LeadContacts via shared/lead-exhauster/trace.js::upsertLeadContact.
+// Tests de cette migration : tests/unit/lead-exhauster/* + couvrent le fast path
+// AirWorker via batchReadLeadContactsCatchAll.

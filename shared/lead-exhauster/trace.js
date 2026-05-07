@@ -235,6 +235,29 @@ async function purgeBySiren(siren) {
   }
 }
 
+/**
+ * Batch lookup catch-all (RK = `email__`) pour un array de sirens.
+ * Utilisé par enrichBatch fast path AirWorker et leadSelector pour
+ * récupérer en parallèle les LeadContacts pré-résolus côté AirWorker
+ * sans firstName/lastName (scrape canonique site officiel).
+ *
+ * Retourne une Map<siren, leadContactRow|null>. Best effort par siren —
+ * un échec individuel ne casse pas le batch global.
+ *
+ * @param {string[]} sirens
+ * @returns {Promise<Map<string, Object|null>>}
+ */
+async function batchReadLeadContactsCatchAll(sirens) {
+  const result = new Map();
+  if (!Array.isArray(sirens) || sirens.length === 0) return result;
+  const valid = sirens.filter((s) => /^\d{9}$/.test(String(s || '')));
+  await Promise.all(valid.map(async (siren) => {
+    const lc = await readLeadContact({ siren }).catch(() => null);
+    result.set(String(siren), lc || null);
+  }));
+  return result;
+}
+
 function _resetForTests() {
   _client = null;
   _ensured = false;
@@ -248,6 +271,7 @@ function _setClientForTests(client) {
 module.exports = {
   upsertLeadContact,
   readLeadContact,
+  batchReadLeadContactsCatchAll,
   updateFeedback,
   purgeBySiren,
   buildRowKey,

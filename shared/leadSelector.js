@@ -339,13 +339,10 @@ function extractCandidateFromEntity(entity) {
     inseeRole: ((firstDirigeant && (firstDirigeant.fonction || firstDirigeant.role)) || '').trim(),
     contexte: buildContexte(entity, firstDirigeant),
     hintedEmail,
-    // Pré-résolution email AirWorker (site-finder enrichissement continu).
-    // Présent si l'AirWorker a trouvé et stocké l'email en amont.
-    // InlineSiteFinder l'utilise pour sauter l'exhauster entier.
-    emailDirigeant: entity.emailDirigeant || null,
-    emailDirigeantConfidence: typeof entity.emailDirigeantConfidence === 'number'
-      ? entity.emailDirigeantConfidence
-      : 0,
+    // Gap 5.2B — pré-résolution AirWorker basculée vers LeadContacts (RK
+    // catch-all 'email__'). Le lookup est fait dans enrichBatch via
+    // batchReadLeadContactsCatchAll, hydrate cand.airworkerLeadContact.
+    // emailDirigeant/Confidence retirés ici (Couche 4 doctrine v1.1 = LeadContacts).
   };
 }
 

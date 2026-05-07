@@ -18,11 +18,10 @@
  * Si absent, on tente un lookup par RowKey via query filter — coût d'un
  * round-trip, acceptable parce qu'on est déjà dans une cascade lente.
  *
- * `writeEmailResultToLeadBase` reste en place avec bypass commenté :
- * la migration Couche 4 (emailDirigeant* LeadBase → LeadContacts conforme
- * doctrine v1.1) est un refactor architectural cascade (touche
- * enrichBatch fast path + leadSelector lecture) qui mérite son propre
- * chantier, pas une cleanup inline. Cf. follow-up dédié post 7 mai PM.
+ * Gap 5.2B (mergé) : `writeEmailResultToLeadBase` (Couche 4 LeadBase) supprimé.
+ * Toutes les écritures email AirWorker passent désormais par
+ * shared/lead-exhauster/trace.js::upsertLeadContact (LeadContacts conforme
+ * doctrine v1.1). Plus de Couche 4 en LeadBase.
  */
 
 const { TableClient } = require('@azure/data-tables');
@@ -30,7 +29,6 @@ const { safeMergeCoucheN } = require('../../leadbase/safe-write');
 
 const TABLE_NAME = process.env.LEADBASE_TABLE || 'LeadBase';
 const WRITER_VERSION = 'v1';
-const EMAIL_WRITER_VERSION = 'v1';
 const VIOLATIONS_TABLE = process.env.LEADBASE_INTEGRITY_VIOLATIONS_TABLE
   || 'LeadBaseIntegrityViolations';
 
@@ -172,72 +170,6 @@ async function lookupPartitionKey(client, siren) {
   }
 }
 
-/**
- * Écrit le résultat email-scraping AirWorker sur l'entité LeadBase.
- *
- * Champs écrits (Merge) :
- *   - emailDirigeant          : adresse email (string) ou null
- *   - emailDirigeantSource    : 'airworker_scrape' (chaîne libre)
- *   - emailDirigeantConfidence: 0-1
- *   - emailDirigeantAt        : ISO timestamp
- *   - emailDirigeantVersion   : 'v1'
- *
- * @param {string} siren
- * @param {{ email: string|null, confidence: number, source: string }} emailResult
- * @param {Object} [opts]
- * @param {string} [opts.partitionKey]
- * @param {Date}   [opts.now]
- * @returns {Promise<boolean>}
- */
-async function writeEmailResultToLeadBase(siren, emailResult, opts = {}) {
-  const client = _getClient();
-  if (!client) return false;
-  if (!/^\d{9}$/.test(String(siren || ''))) return false;
-  if (!emailResult || typeof emailResult !== 'object') return false;
-
-  const partitionKey = opts.partitionKey
-    ? String(opts.partitionKey)
-    : await lookupPartitionKey(client, siren);
-  if (!partitionKey) return false;
-
-  const nowDate = opts.now instanceof Date ? opts.now : new Date();
-  const entity = {
-    partitionKey,
-    rowKey: String(siren),
-    emailDirigeant: emailResult.email || null,
-    emailDirigeantSource: emailResult.source || null,
-    emailDirigeantConfidence: typeof emailResult.confidence === 'number' ? emailResult.confidence : 0,
-    emailDirigeantAt: nowDate.toISOString(),
-    emailDirigeantVersion: EMAIL_WRITER_VERSION,
-  };
-
-  try {
-    // I-1 OK: writer email AirWorker scraping (introduit par origin/main).
-    // Dette technique reconnue : en doctrine v1 la Couche 4 Email vit en
-    // LeadContacts, pas en LeadBase. Cette fonction écrit emailDirigeant*
-    // directement en LeadBase pour le fast path AirWorker convoyeur vers
-    // enrichBatch (cf. shared/lead-exhauster/enrichBatch.js:247,418-424
-    // qui lit cand.emailDirigeant comme source pivot).
-    //
-    // Le refactor vers writer LeadContacts conforme v1 est cascade :
-    //   1. Nouveau writer writeAirWorkerEmailToLeadContacts (Couche 4 v1).
-    //   2. Bascule fast path enrichBatch lecture LeadBase → LeadContacts.
-    //   3. Bascule leadSelector copie emailDirigeant via jointure ou flag
-    //      compact en LeadBase pointant vers LeadContacts.
-    //   4. Suppression colonnes emailDirigeant* en LeadBase (post 30j compat).
-    //
-    // Chantier architectural dédié, pas une cleanup pre-merge. Bypass
-    // maintenu en attendant.
-    // I-9 OK: les colonnes emailDirigeant* sont owned par ce writer dans le
-    // contrat actuel — à isoler en migrant vers LeadContacts.
-    // I-10 OK: emailDirigeantAt posé ligne 178.
-    await client.updateEntity(entity, 'Merge');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function _setClientForTests(client) {
   _injectedClient = client;
 }
@@ -255,10 +187,8 @@ function _resetForTests() {
 
 module.exports = {
   writeSiteFinderResultToLeadBase,
-  writeEmailResultToLeadBase,
   TABLE_NAME,
   WRITER_VERSION,
-  EMAIL_WRITER_VERSION,
   SITE_FINDER_OWNED_COLUMNS,
   // Exposés pour tests :
   _setClientForTests,

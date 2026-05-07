@@ -43,6 +43,7 @@ function makeAdapters({
   findWebsiteResult = null,
   findWebsiteThrows = null,
   writerOk = true,
+  airworkerLookupMap = new Map(),
 } = {}) {
   const calls = {
     selectCandidates: 0,
@@ -50,6 +51,7 @@ function makeAdapters({
     findWebsite: [],
     writer: [],
     unresolvable: [],
+    airworkerLookup: [],
   };
   return {
     calls,
@@ -78,6 +80,11 @@ function makeAdapters({
       writeSiteFinderResultToLeadBase: async (siren, result, opts) => {
         calls.writer.push({ siren, result, opts });
         return writerOk;
+      },
+      // Gap 5.2B — adapter mock du batch lookup LeadContacts AirWorker.
+      airworkerLookup: async (sirens) => {
+        calls.airworkerLookup.push(sirens);
+        return airworkerLookupMap;
       },
       buildExperimentsContext: async () => ({ applied: [], shouldApplyVariant: () => false }),
     },
@@ -295,37 +302,42 @@ test('enrichBatch — buildDirigeantName combine firstName et lastName', async (
 
 // ─── Fast path AirWorker pré-résolu ────────────────────────────────────────
 
-test('enrichBatch — emailDirigeant présent → exhauster skippé, lead direct, preResolvedByAirworker++', async () => {
-  const cand = {
-    ...makeCandidate({ siren: '444444444' }),
-    emailDirigeant: 'jean.dupont@acme.fr',
-    emailDirigeantConfidence: 0.75,
-  };
-  const { calls, adapters } = makeAdapters({ candidates: [cand] });
+test('enrichBatch — LeadContact AirWorker présent → exhauster skippé, lead direct, preResolvedByAirworker++', async () => {
+  const cand = makeCandidate({ siren: '444444444' });
+  // Gap 5.2B — fast path lit cand.airworkerLeadContact hydraté par batchReadLeadContactsCatchAll.
+  const airworkerLookupMap = new Map([
+    ['444444444', { email: 'jean.dupont@acme.fr', confidence: 0.75, source: 'internal_scraping', domain: 'acme.fr' }],
+  ]);
+  const { calls, adapters } = makeAdapters({ candidates: [cand], airworkerLookupMap });
   const result = await enrichBatchForConsultant({
     brief: {},
     beneficiaryId: 'oseys-test',
     batchSize: 1,
     adapters,
   });
-  // site-finder pas appelé (pas de hintedEmail, mais emailDirigeant court-circuite avant l'exhauster)
+  // site-finder pas appelé (pas de hintedEmail, mais LeadContact AirWorker court-circuite avant l'exhauster)
   // NB: site-finder est quand même appelé car le skip exhauster est APRÈS la pré-passe site-finder
   // On vérifie surtout que l'exhauster n'est PAS appelé
   assert.equal(calls.exhauster.length, 0, 'exhauster ne doit pas être appelé');
+  assert.equal(calls.airworkerLookup.length, 1, 'airworkerLookup appelé 1 fois en batch');
   assert.equal(result.leads.length, 1);
   assert.equal(result.leads[0].email, 'jean.dupont@acme.fr');
   assert.equal(result.leads[0].contact.source, 'airworker_preresolved');
   assert.equal(result.leads[0].contact.cost_cents, 0);
+  assert.equal(result.leads[0].contact.resolvedDomain, 'acme.fr');
   assert.equal(result.meta.preResolvedByAirworker, 1);
   assert.equal(result.meta.resolutionOk, 1);
 });
 
-test('enrichBatch — mix : 1 emailDirigeant, 1 normal → exhauster appelé 1 fois', async () => {
+test('enrichBatch — mix : 1 LeadContact AirWorker, 1 normal → exhauster appelé 1 fois', async () => {
   const cands = [
-    { ...makeCandidate({ siren: '111111111' }), emailDirigeant: 'pre@acme.fr', emailDirigeantConfidence: 0.8 },
+    makeCandidate({ siren: '111111111' }),
     makeCandidate({ siren: '222222222' }),
   ];
-  const { calls, adapters } = makeAdapters({ candidates: cands });
+  const airworkerLookupMap = new Map([
+    ['111111111', { email: 'pre@acme.fr', confidence: 0.8, source: 'internal_scraping', domain: 'acme.fr' }],
+  ]);
+  const { calls, adapters } = makeAdapters({ candidates: cands, airworkerLookupMap });
   const result = await enrichBatchForConsultant({
     brief: {},
     beneficiaryId: 'oseys-test',

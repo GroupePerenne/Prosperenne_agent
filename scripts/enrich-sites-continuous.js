@@ -53,8 +53,8 @@ const { TableClient } = require('@azure/data-tables');
 const { findWebsite } = require('../shared/site-finder/index');
 const {
   writeSiteFinderResultToLeadBase,
-  writeEmailResultToLeadBase,
 } = require('../shared/site-finder/writers/leadbaseWriter');
+const { upsertLeadContact } = require('../shared/lead-exhauster/trace');
 const { scrapeDomain, isJunkEmail } = require('../shared/lead-exhauster/scraping');
 const { applyPattern, rankPatternsForContext } = require('../shared/lead-exhauster/patterns');
 
@@ -172,11 +172,26 @@ async function scrapeEmailForSite(siren, siteUrl, entity, pk) {
   const best = emails.find((e) => !isJunkEmail(e.email));
 
   if (best) {
-    const ok = await writeEmailResultToLeadBase(siren, {
+    // Bascule Couche 4 : écriture LeadContacts conforme doctrine v1.1.
+    // Source mappée 'airworker_scrape' → 'internal_scraping' (sémantique :
+    // scrape du site officiel = scraping interne). RK catch-all 'email__'
+    // si pas de dirigeant identifié (Dropcontact résoudra plus tard avec
+    // RK nominatif distinct, coexistence par design).
+    const ok = await upsertLeadContact({
+      siren,
       email: best.email,
       confidence: best.confidence,
-      source: 'airworker_scrape',
-    }, { partitionKey: pk });
+      source: 'internal_scraping',
+      signals: ['airworker', 'site_canonical'],
+      costCents: 0,
+      firstName: firstName || '',
+      lastName: lastName || '',
+      domain,
+      domainSource: 'site-finder',
+      naf: String(entity.codeNaf || ''),
+      tranche: String(entity.trancheEffectif || ''),
+      beneficiaryId: 'airworker',
+    });
     if (ok) stats.emailsFound++;
     else stats.emailErrors++;
     return;
@@ -194,11 +209,23 @@ async function scrapeEmailForSite(siren, siteUrl, entity, pk) {
       const candidate = applyPattern(topNominal.template, { firstName, lastName, domain });
       if (candidate) {
         // Confidence volontairement basse : non vérifiée, candidate seulement.
-        const ok = await writeEmailResultToLeadBase(siren, {
+        // Source mappée 'airworker_pattern' → 'internal_patterns' (sémantique :
+        // pattern guess de format `prenom.nom@domain` = pattern interne).
+        const ok = await upsertLeadContact({
+          siren,
           email: candidate,
           confidence: 0.55,
-          source: 'airworker_pattern',
-        }, { partitionKey: pk });
+          source: 'internal_patterns',
+          signals: ['airworker', 'pattern_guess'],
+          costCents: 0,
+          firstName,
+          lastName,
+          domain,
+          domainSource: 'site-finder',
+          naf: String(entity.codeNaf || ''),
+          tranche: String(entity.trancheEffectif || ''),
+          beneficiaryId: 'airworker',
+        });
         if (ok) stats.emailsPattern++;
         else stats.emailErrors++;
         return;

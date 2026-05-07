@@ -32,6 +32,7 @@ const { DropcontactAdapter } = require('./adapters/dropcontact');
 const { isAggregator } = require('../site-finder/aggregators');
 const { findWebsite } = require('../site-finder');
 const { writeSiteFinderResultToLeadBase } = require('../site-finder/writers/leadbaseWriter');
+const { batchReadLeadContactsCatchAll } = require('./trace');
 const { pMapLimit } = require('../utils/p-map-limit');
 
 /**
@@ -78,6 +79,9 @@ async function enrichBatchForConsultant(params = {}) {
   // Sprint 2 — site-finder injectables
   const siteFinder = adapters.findWebsite || findWebsite;
   const siteFinderWriter = adapters.writeSiteFinderResultToLeadBase || writeSiteFinderResultToLeadBase;
+  // Gap 5.2B — fast path AirWorker via LeadContacts (RK catch-all 'email__').
+  // Remplace l'ancienne lecture LeadBase.emailDirigeant (Couche 4 dette).
+  const airworkerLookup = adapters.airworkerLookup || batchReadLeadContactsCatchAll;
   // Cascade Dropcontact (Jalon 3) — wiring de l'adapter en prod. L'adapter
   // pioche sa config depuis process.env (DROPCONTACT_API_KEY/_ENABLED/_API_URL/
   // _MONTHLY_BUDGET_CENTS/_TIMEOUT_MS). Bypass pour tests via
@@ -130,6 +134,23 @@ async function enrichBatchForConsultant(params = {}) {
   }
 
   const candidates = Array.isArray(selectorResult.candidates) ? selectorResult.candidates : [];
+
+  // Gap 5.2B — pré-passe lookup AirWorker LeadContacts (RK catch-all).
+  // Pour chaque candidate, lit le LeadContact `email__` éventuellement écrit
+  // par le worker AirWorker (scrape canonique site officiel ou pattern guess).
+  // Le résultat hydrate `cand.airworkerLeadContact` consommé au fast path
+  // étape 2 et par buildLeadFromPreResolvedEmail.
+  try {
+    const sirens = candidates.map((c) => String(c.siren)).filter((s) => /^\d{9}$/.test(s));
+    const airworkerByS = await airworkerLookup(sirens);
+    const map = (airworkerByS instanceof Map) ? airworkerByS : new Map(Object.entries(airworkerByS || {}));
+    candidates.forEach((c) => {
+      c.airworkerLeadContact = map.get(String(c.siren)) || null;
+    });
+  } catch (err) {
+    logWarn(context, `[enrichBatch] airworker LeadContacts lookup failed: ${err && err.message}`);
+    candidates.forEach((c) => { c.airworkerLeadContact = null; });
+  }
 
   // ─── Étape 1.5 : pré-passe site-finder (Sprint 2) ────────────────────
   // Pour chaque candidate sans companyDomain hint, on essaie de retrouver
@@ -244,7 +265,9 @@ async function enrichBatchForConsultant(params = {}) {
   const enrichmentsRaw = await pMapLimit(candidates, EXHAUSTER_CONCURRENCY, async (cand) => {
     // Fast path détecté ici, traitement synchronisé en post-build pour ne pas
     // muter `leads` ni `resolutionOk` depuis un callback parallèle.
-    if (cand.emailDirigeant && (cand.emailDirigeantConfidence || 0) >= AIRWORKER_MIN_CONFIDENCE) {
+    // Gap 5.2B — lecture LeadContact catch-all (Couche 4 doctrine v1.1).
+    const lc = cand.airworkerLeadContact;
+    if (lc && lc.email && (typeof lc.confidence === 'number' ? lc.confidence : 0) >= AIRWORKER_MIN_CONFIDENCE) {
       return { cand, preResolved: true };
     }
 
@@ -406,25 +429,28 @@ function buildLeadFromCandidate(cand, enrichment) {
 
 /**
  * Construit un Lead depuis un candidate dont l'email a été pré-résolu par
- * l'AirWorker (stocké dans emailDirigeant de la LeadBase). Aucune résolution
- * exhauster ni Dropcontact — coût nul.
+ * l'AirWorker (stocké dans LeadContacts catch-all RK 'email__' depuis Gap
+ * 5.2B). Aucune résolution exhauster ni Dropcontact — coût nul.
  */
 function buildLeadFromPreResolvedEmail(cand) {
+  const lc = cand.airworkerLeadContact || {};
+  const email = lc.email || null;
+  const confidence = typeof lc.confidence === 'number' ? lc.confidence : 0;
   return {
     siren: cand.siren,
     prenom: cand.firstName || '',
     nom: cand.lastName || '',
     entreprise: cand.companyName,
-    email: cand.emailDirigeant,
+    email,
     secteur: cand.codeNaf || '',
     ville: cand.ville || '',
     contexte: cand.contexte || '',
     contact: {
-      email: cand.emailDirigeant,
-      confidence: cand.emailDirigeantConfidence || 0,
+      email,
+      confidence,
       source: 'airworker_preresolved',
       cost_cents: 0,
-      resolvedDomain: null,
+      resolvedDomain: lc.domain || null,
       experimentsApplied: [],
     },
   };
