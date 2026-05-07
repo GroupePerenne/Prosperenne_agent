@@ -37,6 +37,10 @@ const { TableClient } = require('@azure/data-tables');
 const { randomUUID } = require('node:crypto');
 const { safeListLeadBaseEntities, composeDiscriminantFilter } = require('../shared/leadbase/safe-read');
 const { migrateLegacyCapitalToV1, extractScrapedCapital } = require('../shared/leadbase/migrate-capital-scrape');
+const {
+  hasLegacyEmailToMigrate,
+  migrateLegacyEmailToLeadContact,
+} = require('../shared/leadbase/migrate-legacy-emails');
 
 // ─── CLI ───────────────────────────────────────────────────────────────────
 
@@ -81,7 +85,7 @@ function maskCs(cs) {
 
 // ─── Migration runner ──────────────────────────────────────────────────────
 
-async function runMigration({ args, leadBaseClient, runsClient }) {
+async function runMigration({ args, leadBaseClient, runsClient, leadContactsClient }) {
   const startedAt = new Date();
   const runId = `migrate-${startedAt.toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
 
@@ -97,6 +101,9 @@ async function runMigration({ args, leadBaseClient, runsClient }) {
     capitalRne: 0,
     capitalWeb: 0,
     capitalLinkedIn: 0,
+    legacyEmailsDetected: 0,
+    legacyEmailsMigrated: 0,
+    legacyEmailsSkipped: 0,
   };
 
   // I-2 : filtre serveur-side discriminant
@@ -109,44 +116,70 @@ async function runMigration({ args, leadBaseClient, runsClient }) {
     counters.scanned++;
     if (args.limit && counters.scanned > args.limit) break;
 
-    // Skip déjà migré (idempotent)
-    if (entity.migratedFromLegacyAt) {
+    // Détection email legacy (à migrer vers LeadContacts indépendamment du
+    // capital Couches 2-5)
+    const emailLegacyDetected = hasLegacyEmailToMigrate(entity);
+    if (emailLegacyDetected) counters.legacyEmailsDetected++;
+
+    // Skip déjà migré pour le capital Couches 2-5 (idempotent)
+    const capitalAlreadyMigrated = !!entity.migratedFromLegacyAt;
+
+    const capital = extractScrapedCapital(entity);
+    const hasCapital = capital.summary.hasRne || capital.summary.hasWeb || capital.summary.hasLinkedIn;
+
+    // Si rien à faire (ni email, ni capital, ni capital déjà migré sans email)
+    if (!emailLegacyDetected && !hasCapital) continue;
+    if (!emailLegacyDetected && capitalAlreadyMigrated) {
       counters.skipped++;
       continue;
     }
 
-    const capital = extractScrapedCapital(entity);
-    if (!capital.summary.hasRne && !capital.summary.hasWeb && !capital.summary.hasLinkedIn) {
-      // Pas de capital legacy à migrer
-      continue;
-    }
-    counters.needsMigration++;
-    if (capital.summary.hasRne) counters.capitalRne++;
-    if (capital.summary.hasWeb) counters.capitalWeb++;
-    if (capital.summary.hasLinkedIn) counters.capitalLinkedIn++;
-
-    if (args.dryRun) {
-      continue;
+    if (hasCapital && !capitalAlreadyMigrated) {
+      counters.needsMigration++;
+      if (capital.summary.hasRne) counters.capitalRne++;
+      if (capital.summary.hasWeb) counters.capitalWeb++;
+      if (capital.summary.hasLinkedIn) counters.capitalLinkedIn++;
     }
 
-    try {
-      const result = await migrateLegacyCapitalToV1({
-        leadBaseClient,
-        violationsClient,
-        legacyEntity: entity,
-        partitionKey: entity.partitionKey,
-        rowKey: entity.rowKey,
-        migrationRunId: runId,
-      });
-      if (result.totalMerged > 0) counters.migrated++;
-      else counters.skipped++;
-    } catch (err) {
-      counters.errored++;
-      console.error(`[migrate] error siren=${entity.rowKey} : ${err.message}`);
+    if (args.dryRun) continue;
+
+    // Migration capital Couches 2-5 (skip si déjà fait)
+    if (hasCapital && !capitalAlreadyMigrated) {
+      try {
+        const result = await migrateLegacyCapitalToV1({
+          leadBaseClient,
+          violationsClient,
+          legacyEntity: entity,
+          partitionKey: entity.partitionKey,
+          rowKey: entity.rowKey,
+          migrationRunId: runId,
+        });
+        if (result.totalMerged > 0) counters.migrated++;
+        else counters.skipped++;
+      } catch (err) {
+        counters.errored++;
+        console.error(`[migrate] capital error siren=${entity.rowKey} : ${err.message}`);
+      }
+    }
+
+    // Migration email legacy → LeadContacts v1 (indépendant du capital)
+    if (emailLegacyDetected && leadContactsClient) {
+      try {
+        const r = await migrateLegacyEmailToLeadContact({
+          leadContactsClient,
+          leadBaseEntity: entity,
+          migrationRunId: runId,
+        });
+        if (r.migrated) counters.legacyEmailsMigrated++;
+        else counters.legacyEmailsSkipped++;
+      } catch (err) {
+        counters.errored++;
+        console.error(`[migrate] email error siren=${entity.rowKey} : ${err.message}`);
+      }
     }
 
     if (counters.scanned % 1000 === 0) {
-      console.log(`[migrate] progress scanned=${counters.scanned} migrated=${counters.migrated}`);
+      console.log(`[migrate] progress scanned=${counters.scanned} migrated=${counters.migrated} emails=${counters.legacyEmailsMigrated}`);
     }
   }
 
@@ -154,16 +187,19 @@ async function runMigration({ args, leadBaseClient, runsClient }) {
   const elapsedMs = endedAt - startedAt;
 
   console.log('\n=== Résumé migration ===');
-  console.log(`runId           : ${runId}`);
-  console.log(`scanned         : ${counters.scanned}`);
-  console.log(`needsMigration  : ${counters.needsMigration}`);
-  console.log(`migrated        : ${counters.migrated}`);
-  console.log(`skipped         : ${counters.skipped}`);
-  console.log(`errored         : ${counters.errored}`);
-  console.log(`capitalRne      : ${counters.capitalRne}`);
-  console.log(`capitalWeb      : ${counters.capitalWeb}`);
-  console.log(`capitalLinkedIn : ${counters.capitalLinkedIn}`);
-  console.log(`elapsedMs       : ${elapsedMs}`);
+  console.log(`runId                 : ${runId}`);
+  console.log(`scanned               : ${counters.scanned}`);
+  console.log(`needsMigration        : ${counters.needsMigration}`);
+  console.log(`migrated (capital)    : ${counters.migrated}`);
+  console.log(`skipped               : ${counters.skipped}`);
+  console.log(`errored               : ${counters.errored}`);
+  console.log(`capitalRne            : ${counters.capitalRne}`);
+  console.log(`capitalWeb            : ${counters.capitalWeb}`);
+  console.log(`capitalLinkedIn       : ${counters.capitalLinkedIn}`);
+  console.log(`legacyEmailsDetected  : ${counters.legacyEmailsDetected}`);
+  console.log(`legacyEmailsMigrated  : ${counters.legacyEmailsMigrated}`);
+  console.log(`legacyEmailsSkipped   : ${counters.legacyEmailsSkipped}`);
+  console.log(`elapsedMs             : ${elapsedMs}`);
 
   if (!args.dryRun && runsClient) {
     try { await runsClient.createTable(); } catch { /* déjà créée */ }
@@ -198,10 +234,13 @@ async function main() {
   console.log(`Source : ${maskCs(cs)}`);
 
   const leadBaseClient = TableClient.fromConnectionString(cs, 'LeadBase');
+  const leadContactsClient = TableClient.fromConnectionString(cs, 'LeadContacts');
+  // Tente createTable best-effort, idempotent côté Storage
+  try { await leadContactsClient.createTable(); } catch { /* déjà créée */ }
   const runsTable = process.env.LEADBASE_MIGRATION_RUNS_TABLE || 'LeadBaseMigrationRuns';
   const runsClient = TableClient.fromConnectionString(cs, runsTable);
 
-  const result = await runMigration({ args, leadBaseClient, runsClient });
+  const result = await runMigration({ args, leadBaseClient, runsClient, leadContactsClient });
   if (result.counters.errored > 0) process.exit(2);
   process.exit(0);
 }

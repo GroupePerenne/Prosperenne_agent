@@ -31,22 +31,32 @@ const path = require('path');
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 
-// Fichiers autorisés à utiliser TableClient direct sur LeadBase sans helper :
+// Fichiers autorisés à utiliser TableClient direct sur LeadBase / LeadContacts
+// sans helper :
 // - les helpers safe-* eux-mêmes (le helper est l'autorité d'appel)
 // - le writer Couche 1 SIRENE qui crée les entrées (seule couche autorisée I-1)
 // - le script audit prod qui a un design "scan complet" légitime
 // - les anciens scripts archive (à terme à supprimer mais pas dans ce sprint)
+// - le module trace lead-exhauster qui est le writer Couche 4 LeadContacts
+//   officiel (équivalent de shared/sirene/writer.js pour la Couche 4).
 const WHITELIST_FILES = new Set([
   'shared/leadbase/safe-read.js',
   'shared/leadbase/safe-write.js',
   'shared/leadbase/migrate-capital-scrape.js', // utilise safeMergeCoucheN
+  'shared/leadbase/migrate-leadcontacts.js', // helpers pure functions, pas de client
   'shared/leadbase/integrity-audit.js', // pure helpers (pas de client)
   'shared/sirene/writer.js', // Couche 1 SIRENE — seule autorisée à create
   'shared/adapters/leadbase/leadbase-table.js', // buildFilter pose schema_version
+  'shared/lead-exhauster/trace.js', // writer Couche 4 LeadContacts officiel
   'scripts/audit-leadbase-integrity.js', // audit complet legitime (allowEmptyFilter via design)
   'scripts/migrate-leadbase-storage.js', // legacy archivé (oseysjeannot → pereneoleads)
   'scripts/sirene-bulk-import.js', // utilise writer SIRENE Couche 1
 ]);
+
+// Tables couvertes par le lint. LeadContacts est la table Couche 4 Email v1
+// refondue, soumise aux mêmes invariants schema_version + leadBaseSchemaVersion
+// + audit *At (cf. LEADBASE_SCHEMA_v1.md §8).
+const COVERED_TABLES = ['LeadBase', 'LeadContacts'];
 
 // Patterns sensibles avec leur invariant correspondant
 const PATTERNS = [
@@ -108,9 +118,13 @@ test('lint I-* — pas de contournement TableClient sur LeadBase hors whitelist/
     let src;
     try { src = fs.readFileSync(fullPath, 'utf8'); } catch { continue; }
 
-    // Cible uniquement les fichiers qui touchent LeadBase (sinon faux positifs
-    // sur LeadContacts, LeadSelectorTrace, etc.)
-    if (!src.includes("'LeadBase'") && !src.includes('"LeadBase"')) continue;
+    // Cible les fichiers qui touchent LeadBase ou LeadContacts (Couche 4
+    // refondue v1). Faux positifs tolérés sur LeadSelectorTrace, dailyMetrics,
+    // EmailPatterns, etc. — pas de discriminant invariant sur ces tables.
+    const touchesCovered = COVERED_TABLES.some(
+      (t) => src.includes(`'${t}'`) || src.includes(`"${t}"`),
+    );
+    if (!touchesCovered) continue;
 
     const lines = src.split('\n');
 

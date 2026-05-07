@@ -181,6 +181,61 @@ test('runMigration — limit respecté', async () => {
   assert.ok(result.counters.scanned <= 11);
 });
 
+test('runMigration — flot intégré : email legacy → LeadContacts en parallèle du capital', async () => {
+  const entities = [fixtureV1WithCapital('552081317', '75', {
+    dirigeants: '[]',
+    rne_checked_at: 'x',
+    emailDirigeant: 'jean.dupont@exemple.com',
+    prenomDirigeant: 'Jean',
+    nomDirigeant: 'Dupont',
+  })];
+  const leadBaseClient = makeMockLeadBaseClient(entities);
+  const runsClient = makeMockRunsClient();
+  // Mock LeadContacts client
+  const leadContactsWrites = [];
+  const leadContactsClient = {
+    async createTable() { /* noop */ },
+    async getEntity() {
+      const err = new Error('not found');
+      err.statusCode = 404;
+      throw err;
+    },
+    async createEntity(e) { leadContactsWrites.push(e); },
+  };
+  const result = await runMigration({
+    args: { dryRun: false },
+    leadBaseClient,
+    runsClient,
+    leadContactsClient,
+  });
+  // Capital RNE migré
+  assert.equal(result.counters.migrated, 1);
+  // Email legacy détecté + migré
+  assert.equal(result.counters.legacyEmailsDetected, 1);
+  assert.equal(result.counters.legacyEmailsMigrated, 1);
+  // LeadContacts créée avec schema_version v1
+  assert.equal(leadContactsWrites.length, 1);
+  assert.equal(leadContactsWrites[0].schema_version, '1.0');
+  assert.equal(leadContactsWrites[0].source, 'legacy_migration');
+});
+
+test('runMigration — pas de leadContactsClient : skip email migration sans crash', async () => {
+  const entities = [fixtureV1WithCapital('552081317', '75', {
+    emailDirigeant: 'a@b.com',
+    prenomDirigeant: 'A', nomDirigeant: 'B',
+  })];
+  const leadBaseClient = makeMockLeadBaseClient(entities);
+  const runsClient = makeMockRunsClient();
+  // pas de leadContactsClient passé
+  const result = await runMigration({
+    args: { dryRun: false },
+    leadBaseClient,
+    runsClient,
+  });
+  assert.equal(result.counters.legacyEmailsDetected, 1);
+  assert.equal(result.counters.legacyEmailsMigrated, 0); // pas migré faute de client
+});
+
 test('runMigration — archivage LeadBaseMigrationRuns en mode full', async () => {
   const entities = [fixtureV1WithCapital('552081317', '75', {
     dirigeants: '[]', rne_checked_at: 'x',

@@ -15,11 +15,29 @@ Migrer le **capital scrapé** présent en LeadBase legacy (siteWeb, dirigeants R
 - Injection `migratedFromLegacyAt` audit pour traçabilité.
 - Audit `*At` posé si manquant en legacy (I-10 enforcement).
 
+**Ce que la migration FAIT (v1.1, intégration 7 mai PM)** :
+- Migration capital scrapé Couches 2/3/5 LeadBase legacy → LeadBase v1 normalisé.
+- **Migration emails legacy `emailDirigeant` directs → LeadContacts v1** (intégrée dans le même run).
+
 **Ce que la migration ne fait PAS** :
 - Ne supprime rien (non-destructive).
 - Ne touche pas aux entrées sans `schema_version='1.0'` (filtre I-2 strict).
-- Ne crée pas d'entrée nouvelle (I-1 contrat couches : Couche 1 SIRENE seule autorisée).
-- Ne migre pas les `emailDirigeant` legacy directs vers LeadContacts (palier ultérieur).
+- Ne crée pas d'entrée LeadBase nouvelle (I-1 contrat couches : Couche 1 SIRENE seule autorisée).
+
+### 1.1 Migration emails legacy → LeadContacts v1
+
+Le legacy 12,8M Constantin + AirWorker pré-v1 a parfois peuplé `emailDirigeant` directement en LeadBase (351 emails comptés sur PK=75 au 7 mai). Ces emails sont du capital scrapé qui doit être préservé.
+
+Stratégie :
+- Détection : entrée LeadBase v1 avec `emailDirigeant` peuplé.
+- Création entrée LeadContacts v1 avec :
+  - `source='legacy_migration'` (marqueur traçabilité)
+  - `confidence=0.4` (volontairement < seuil 0.8 David — ne sera pas envoyée tant que pas re-vérifiée SMTP/Dropcontact)
+  - `schema_version='1.0'` + `leadBaseSchemaVersion='1.0'`
+  - `migratedFromLegacyEmailAt` audit
+- Idempotent : skip si entrée LeadContacts existe déjà pour le couple (siren, firstName, lastName).
+
+**Pourquoi `confidence=0.4`** : on ne connaît pas la qualité d'origine du scrap legacy. Choix prudent — David ne déclenche pas d'envoi tant que l'email n'a pas été re-vérifié. Cohérent avec mandat "qualité de la séquence prime".
 
 ---
 
