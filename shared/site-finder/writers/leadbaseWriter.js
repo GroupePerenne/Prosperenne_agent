@@ -97,6 +97,12 @@ async function writeSiteFinderResultToLeadBase(siren, result, opts = {}) {
   };
 
   try {
+    // I-1 OK: writer site-finder = Couche 3 owner. Pose ses propres audit *At
+    // (siteWebLastCheckedAt, siteWebValidatedAt). Refactor vers
+    // safeMergeCoucheN reporté à un follow-up — ce writer a sa logique
+    // d'idempotence interne et son propre cluster (websitePatternsCache).
+    // I-9 OK: entity ne pose que des colonnes Couche 3 owned (siteWeb*).
+    // I-10 OK: siteWebLastCheckedAt + siteWebValidatedAt posés ligne 94-95.
     await client.updateEntity(entity, 'Merge');
     return true;
   } catch {
@@ -113,8 +119,8 @@ async function writeSiteFinderResultToLeadBase(siren, result, opts = {}) {
  */
 async function lookupPartitionKey(client, siren) {
   try {
-    // Discriminant I-2 : ne lookupe que les entrées v1 conformes.
-    // site-finder ne doit pas écrire sur du legacy non-conforme (I-1).
+    // I-2 OK: filter combine RowKey eq siren + schema_version eq '1.0'.
+    // site-finder ne doit pas écrire sur du legacy non-conforme.
     const iter = client.listEntities({
       queryOptions: {
         filter: `RowKey eq '${String(siren).replace(/'/g, "''")}' and schema_version eq '1.0'`,

@@ -109,14 +109,17 @@ async function preflightSiteFinder(cand) {
 async function pullSireneIngestedLeads(client, departement, sampleSize, opts = {}) {
   console.log(`[scan] Pull entités sireneSourcedAt non-null sur partition ${departement}…`);
   const pool = [];
+  // I-2 OK: smoke truth SIRENE ingested — schema_version='1.0' obligatoire
+  // pour ne pas remonter du legacy hors-cible OSEYS.
   const iter = client.listEntities({
     queryOptions: {
-      filter: `PartitionKey eq '${departement}'`,
+      filter: `PartitionKey eq '${departement}' and schema_version eq '1.0'`,
       select: [
         'partitionKey', 'rowKey', 'siren', 'nom', 'codeNaf', 'ville',
         'codePostal', 'trancheEffectif', 'trancheEffectifLabel',
         'prenomDirigeant', 'nomDirigeant', 'sireneSourcedAt', 'sireneRunId',
         'siteWeb', 'emailDirigeant', 'dirigeants', 'categorieJuridique',
+        'schema_version',
       ],
     },
   });
