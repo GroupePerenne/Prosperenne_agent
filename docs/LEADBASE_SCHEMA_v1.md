@@ -82,9 +82,10 @@ Tables d'audit et de cache (cluster, hors LeadBase elle-même) :
 
 `partitionKey` = code département de l'établissement siège.
 
-Format :
-- Métropole : 2 chiffres `01` à `95`, ou `2A` / `2B` pour la Corse.
-- DOM : 3 chiffres `971` à `976`.
+Format (regex stricte cohérente avec départements français valides) :
+- Métropole : `01`-`19`, `21`-`95` (le `20` est remplacé par `2A`/`2B` Corse).
+- DOM : `971`-`976`.
+- Regex : `/^(0[1-9]|1[0-9]|2[1-9]|[3-8][0-9]|9[0-5]|2A|2B|97[1-6])$/` (cf. `shared/leadbase/schema-v1.js`).
 
 Calcul : `extractDepartement(codePostal)` (cf. `shared/sirene/mapper.js`).
 
@@ -362,7 +363,7 @@ Tests TDD dans `tests/unit/leadbase/`, lancés par `npm test`.
 | Test | Vérification |
 |---|---|
 | `schema-v1.test.js` | Une entrée v1.0 valide possède toutes les colonnes Couche 1 NON-NULL listées §5. |
-| `pk-rk-format.test.js` | `partitionKey` matche `/^([0-9]{2}\|2A\|2B\|97[1-6])$/`. `rowKey` matche `/^[0-9]{9}$/`. |
+| `pk-rk-format.test.js` | `partitionKey` matche regex département stricte (cf. §3.1). `rowKey` matche `/^[0-9]{9}$/`. |
 | `tranche-codes.test.js` | `trancheEffectif` ∈ codes INSEE TEFEN valides. |
 | `naf-format.test.js` | `codeNaf` matche `/^[0-9]{2}\.[0-9]{2}[A-Z]?$/`. |
 | `sireneRunId-trace.test.js` | Tout `sireneRunId` présent en LeadBase a un audit dans `SireneIngestionRuns`. |
