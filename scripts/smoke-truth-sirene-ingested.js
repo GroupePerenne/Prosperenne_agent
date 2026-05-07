@@ -40,6 +40,10 @@ const { leadExhauster } = require('../shared/lead-exhauster');
 const { DropcontactAdapter } = require('../shared/lead-exhauster/adapters/dropcontact');
 const { findWebsite } = require('../shared/site-finder');
 const { isAggregator } = require('../shared/site-finder/aggregators');
+const NAF_EXCLUSIONS = require('../shared/mappings/naf-exclusions.json');
+
+const NAF_EXCLUSION_CODES = new Set((NAF_EXCLUSIONS.exclusions || []).map((e) => e.code));
+const isNafCible = (code) => Boolean(code) && !NAF_EXCLUSION_CODES.has(code);
 
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -102,7 +106,7 @@ async function preflightSiteFinder(cand) {
   }
 }
 
-async function pullSireneIngestedLeads(client, departement, sampleSize) {
+async function pullSireneIngestedLeads(client, departement, sampleSize, opts = {}) {
   console.log(`[scan] Pull entités sireneSourcedAt non-null sur partition ${departement}…`);
   const pool = [];
   const iter = client.listEntities({
@@ -112,35 +116,79 @@ async function pullSireneIngestedLeads(client, departement, sampleSize) {
         'partitionKey', 'rowKey', 'siren', 'nom', 'codeNaf', 'ville',
         'codePostal', 'trancheEffectif', 'trancheEffectifLabel',
         'prenomDirigeant', 'nomDirigeant', 'sireneSourcedAt', 'sireneRunId',
-        'siteWeb', 'emailDirigeant',
+        'siteWeb', 'emailDirigeant', 'dirigeants', 'categorieJuridique',
       ],
     },
   });
   let scanned = 0;
+  let nafExcluded = 0;
   for await (const e of iter) {
     scanned++;
-    if (!e.sireneSourcedAt) continue; // on ne veut que les leads ingérés via SIRENE
+    if (!e.sireneSourcedAt) continue;
+    if (opts.nafFilter && !opts.nafFilter(e.codeNaf)) {
+      nafExcluded++;
+      continue;
+    }
     pool.push(e);
-    if (pool.length >= sampleSize * 30) break; // assez pour échantillonner
+    if (pool.length >= sampleSize * 30) break;
   }
-  console.log(`[scan] ${scanned} entités scannées partition ${departement}, ${pool.length} avec sireneSourcedAt.`);
+  console.log(`[scan] ${scanned} entités scannées partition ${departement}, ${nafExcluded} NAF exclus, ${pool.length} candidats au pool.`);
   return rand(pool, sampleSize);
+}
+
+/**
+ * Extrait firstName/lastName du décideur depuis l'entité LeadBase.
+ *
+ * Priorité :
+ *   1. prenomDirigeant + nomDirigeant SIRENE (peuplé pour entreprises individuelles
+ *      via shared/sirene/mapper.js si catégorie juridique 1xxx)
+ *   2. JSON dirigeants RNE peuplé par scripts/enrich-leadbase-continuous.js
+ *      pour les sociétés (catégorie juridique 5xxx, 6xxx, 7xxx, etc.)
+ */
+function extractDirigeantFromEntity(entity) {
+  if (entity.prenomDirigeant && entity.nomDirigeant) {
+    return {
+      firstName: entity.prenomDirigeant,
+      lastName: entity.nomDirigeant,
+      role: '',
+      source: 'sirene_ei',
+    };
+  }
+  if (!entity.dirigeants) return null;
+  try {
+    const arr = JSON.parse(entity.dirigeants);
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    const d = arr[0];
+    const firstName = (d.prenoms || d.prenom || '').trim();
+    const lastName = (d.nom || '').trim();
+    if (!firstName && !lastName) return null;
+    return {
+      firstName,
+      lastName,
+      role: d.qualite || d.fonction || d.role || '',
+      source: 'rne',
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function runOne(entity, adapters) {
   // Construit l'input leadExhauster à partir de l'entité LeadBase SIRENE.
-  // Pas de hintedEmail (SIRENE ne fournit pas), pas de companyDomain (l'AirWorker site-finder s'en charge).
+  // Lecture décideur priorité SIRENE EI puis fallback RNE pour sociétés.
+  const dirigeant = extractDirigeantFromEntity(entity);
   const cand = {
     siren: entity.siren,
-    firstName: entity.prenomDirigeant || '',
-    lastName: entity.nomDirigeant || '',
+    firstName: (dirigeant && dirigeant.firstName) || '',
+    lastName: (dirigeant && dirigeant.lastName) || '',
     companyName: entity.nom || '',
     ville: entity.ville || '',
     codeNaf: entity.codeNaf || '',
     trancheEffectif: entity.trancheEffectif || '',
-    inseeRole: '',
+    inseeRole: (dirigeant && dirigeant.role) || '',
     companyDomain: entity.siteWeb || null,
     hintedEmail: entity.emailDirigeant || null,
+    dirigeantSource: (dirigeant && dirigeant.source) || 'none',
   };
 
   const t0 = Date.now();
@@ -191,7 +239,9 @@ async function main() {
   console.log(`SMTP_PROBE   : ${process.env.SMTP_PROBE_ENABLED || '(off)'}`);
   console.log('═'.repeat(70));
 
-  const sample = await pullSireneIngestedLeads(client, args.departement, args.n);
+  const sample = await pullSireneIngestedLeads(client, args.departement, args.n, {
+    nafFilter: isNafCible,
+  });
   if (sample.length === 0) {
     console.error('Aucun lead SIRENE trouvé. As-tu lancé l\'ingestion ?');
     process.exit(1);

@@ -54,6 +54,15 @@ const {
 } = require('../shared/sirene/mapper');
 const { downloadDepartement } = require('../shared/sirene/downloader');
 const { writeEntity, writeRun } = require('../shared/sirene/writer');
+const NAF_EXCLUSIONS = require('../shared/mappings/naf-exclusions.json');
+
+// Set des codes NAF exclus par construction (cabinets juridiques/comptables,
+// administration publique, enseignement public primaire/secondaire,
+// organisations associatives). Cf. shared/mappings/naf-exclusions.json.
+// Match exact (le mapper conserve le code NAF tel que renvoyé par INSEE).
+const NAF_EXCLUSION_CODES = new Set(
+  (NAF_EXCLUSIONS.exclusions || []).map((e) => e.code),
+);
 
 // ─── Tranches code INSEE → labels OpenDataSoft (inverse du mapper) ─────────
 const TRANCHE_CODE_TO_LABEL = Object.freeze(
@@ -83,7 +92,7 @@ const FRANCE_DOM = ['971', '972', '973', '974', '976'];
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  const out = { departements: [], all: false, dryRun: false };
+  const out = { departements: [], all: false, dryRun: false, noNafFilter: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--departement' || args[i] === '-d') {
       out.departements.push(args[i + 1]);
@@ -92,6 +101,9 @@ function parseArgs(argv) {
       out.all = true;
     } else if (args[i] === '--dry-run') {
       out.dryRun = true;
+    } else if (args[i] === '--no-naf-filter') {
+      // Ne pas appliquer naf-exclusions.json (audit / debug uniquement)
+      out.noNafFilter = true;
     } else if (args[i] === '--help' || args[i] === '-h') {
       out.help = true;
     }
@@ -121,8 +133,8 @@ Exemples :
 `);
 }
 
-async function processDepartement({ departement, trancheLabels, runId, snapshot, dryRun }) {
-  const stats = { created: 0, updated: 0, skipped: 0, error: 0, mapInvalid: 0, parsed: 0 };
+async function processDepartement({ departement, trancheLabels, runId, snapshot, dryRun, applyNafFilter }) {
+  const stats = { created: 0, updated: 0, skipped: 0, error: 0, mapInvalid: 0, nafExcluded: 0, parsed: 0 };
   process.stdout.write(`[${departement}] download… `);
   const dl = await downloadDepartement({ departement, trancheLabels });
   process.stdout.write(`${dl.downloaded ? `${(dl.bytes / 1024 / 1024).toFixed(2)} MB en ${(dl.durationMs / 1000).toFixed(1)}s` : 'cache hit'} → parse… `);
@@ -130,12 +142,18 @@ async function processDepartement({ departement, trancheLabels, runId, snapshot,
   const text = await fs.promises.readFile(dl.path, 'utf8');
   const { rows } = parseCsv(text);
   stats.parsed = rows.length;
-  process.stdout.write(`${rows.length} lignes → write… `);
+  process.stdout.write(`${rows.length} lignes → filter+write… `);
 
   for (const row of rows) {
     const mapped = mapSireneRowToLeadBase(row, { runId, snapshot });
     if (!mapped.valid) {
       stats.mapInvalid++;
+      continue;
+    }
+    // Filtre NAF exclusions OSEYS (admin publique, enseignement public,
+    // associations, juridique, comptable). Cf. shared/mappings/naf-exclusions.json.
+    if (applyNafFilter && mapped.entity.codeNaf && NAF_EXCLUSION_CODES.has(mapped.entity.codeNaf)) {
+      stats.nafExcluded++;
       continue;
     }
     if (dryRun) {
@@ -150,7 +168,7 @@ async function processDepartement({ departement, trancheLabels, runId, snapshot,
   }
 
   console.log(
-    `created=${stats.created} updated=${stats.updated} skipped=${stats.skipped} mapInvalid=${stats.mapInvalid} error=${stats.error}`,
+    `created=${stats.created} updated=${stats.updated} skipped=${stats.skipped} mapInvalid=${stats.mapInvalid} nafExcluded=${stats.nafExcluded} error=${stats.error}`,
   );
   return { dl, stats };
 }
@@ -193,8 +211,12 @@ async function main() {
   console.log(`départements: ${departements.length} (${departements.slice(0, 5).join(', ')}${departements.length > 5 ? '…' : ''})`);
   console.log('═'.repeat(70));
 
-  const totals = { created: 0, updated: 0, skipped: 0, error: 0, mapInvalid: 0, parsed: 0, bytes: 0 };
+  const totals = { created: 0, updated: 0, skipped: 0, error: 0, mapInvalid: 0, nafExcluded: 0, parsed: 0, bytes: 0 };
   const errors = [];
+  const applyNafFilter = !args.noNafFilter;
+
+  console.log(`naf filter  : ${applyNafFilter ? `ON (${NAF_EXCLUSION_CODES.size} codes exclus)` : 'OFF (--no-naf-filter)'}`);
+  console.log('═'.repeat(70));
 
   for (const dep of departements) {
     try {
@@ -204,6 +226,7 @@ async function main() {
         runId,
         snapshot,
         dryRun: args.dryRun,
+        applyNafFilter,
       });
       for (const k of Object.keys(stats)) totals[k] += stats[k];
       totals.bytes += dl.bytes || 0;
@@ -215,7 +238,7 @@ async function main() {
 
   const endedAt = new Date().toISOString();
   console.log('═'.repeat(70));
-  console.log(`TOTAUX : created=${totals.created} updated=${totals.updated} skipped=${totals.skipped} mapInvalid=${totals.mapInvalid} error=${totals.error} parsed=${totals.parsed} bytes=${(totals.bytes / 1024 / 1024).toFixed(1)} MB`);
+  console.log(`TOTAUX : created=${totals.created} updated=${totals.updated} skipped=${totals.skipped} mapInvalid=${totals.mapInvalid} nafExcluded=${totals.nafExcluded} error=${totals.error} parsed=${totals.parsed} bytes=${(totals.bytes / 1024 / 1024).toFixed(1)} MB`);
   if (errors.length > 0) {
     console.log(`Errors par département : ${errors.length}`);
     for (const e of errors) console.log(`  - ${e.dep}: ${e.error}`);
@@ -234,6 +257,8 @@ async function main() {
         updated: totals.updated,
         skipped: totals.skipped,
         error: totals.error,
+        nafExcluded: totals.nafExcluded,
+        mapInvalid: totals.mapInvalid,
       },
       tranches: trancheCodes,
       mode: trancheCodes.includes('21') ? 'large' : 'strict',

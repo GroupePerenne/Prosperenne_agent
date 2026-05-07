@@ -195,6 +195,8 @@ async function writeRun(run, opts = {}) {
       entitiesUpdated: Number(counters.updated) || 0,
       entitiesSkipped: Number(counters.skipped) || 0,
       entitiesError: Number(counters.error) || 0,
+      entitiesNafExcluded: Number(counters.nafExcluded) || 0,
+      entitiesMapInvalid: Number(counters.mapInvalid) || 0,
       bytesDownloaded: Number(run.bytesDownloaded) || 0,
     }, 'Merge');
     return true;
