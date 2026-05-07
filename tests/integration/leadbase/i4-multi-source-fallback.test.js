@@ -89,10 +89,16 @@ test('I-5 — convention fallback local Mem0 documentée', () => {
 
 // ─── Adapters non encore livrés (à livrer Bloc 2) ──────────────────────────
 
-test('I-4 — sireneIngestion fallback INSEE direct : à livrer Bloc 2 (todo)', { todo: 'Bloc 2' }, () => {
-  // Quand le pipeline sireneIngestion timer mensuel sera livré (Bloc 2),
-  // ce test devra vérifier qu'en cas d'indispo OpenDataSoft, le fallback
-  // api.insee.fr direct prend le relais.
+test('I-4 — sireneIngestion fallback snapshot local TTL 35j (livré Bloc 2 Palier 3)', () => {
+  // Pivot vs plan initial INSEE direct : fallback "snapshot local récent"
+  // plus pragmatique (pas de compte API tiers à maintenir, déjà en place
+  // via SIRENE_SNAPSHOT_DIR). Cf. docs/SIRENE_INGESTION_v2.md §4 I-4.
+  const downloader = require('../../../shared/sirene/downloader');
+  assert.equal(typeof downloader.downloadDepartementWithFallback, 'function',
+    'downloadDepartementWithFallback doit être exporté pour I-4');
+  assert.equal(typeof downloader.findRecentSnapshot, 'function',
+    'findRecentSnapshot doit être exporté pour I-4');
+  // Tests de comportement détaillés : tests/unit/sirene/downloader-fallback.test.js
 });
 
 test('I-4 — rneEnrichment fallback annuaire-entreprises HTML : à livrer Bloc 2 (todo)', { todo: 'Bloc 2' }, () => {

@@ -163,11 +163,98 @@ async function downloadDepartement(args) {
   return { path: fp, bytes, downloaded: true, durationMs };
 }
 
+/**
+ * Cherche le snapshot local le plus récent du département dans la fenêtre TTL.
+ * Implémente l'invariant I-4 fallback multi-source en mode "snapshot local
+ * récent" : si OpenDataSoft est indispo, on utilise la donnée du dernier run
+ * connu (mois précédent acceptable). Donnée potentiellement obsolète mais
+ * disponible — meilleur que rien (cohérent avec V capital permanent).
+ *
+ * TTL par défaut : 35 jours (couvre cycle mensuel + buffer).
+ *
+ * @param {Object} args
+ * @param {string} args.departement
+ * @param {number} [args.ttlDays=35]
+ * @returns {{ path:string, bytes:number, ageDays:number } | null}
+ */
+function findRecentSnapshot({ departement, ttlDays = 35 }) {
+  if (!departement) return null;
+  const dir = process.env.SIRENE_SNAPSHOT_DIR
+    || path.join(os.homedir(), 'Pereneo', 'sirene-snapshots');
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const prefix = `sirene-${departement}-`;
+  const matches = entries.filter((f) => f.startsWith(prefix) && f.endsWith('.csv'));
+  if (matches.length === 0) return null;
+
+  const now = Date.now();
+  const ttlMs = ttlDays * 24 * 3600 * 1000;
+  let best = null;
+  for (const fname of matches) {
+    const m = fname.match(/sirene-[^-]+-([0-9]{8})\.csv$/);
+    if (!m) continue;
+    const stamp = m[1];
+    const y = Number(stamp.slice(0, 4));
+    const mo = Number(stamp.slice(4, 6));
+    const d = Number(stamp.slice(6, 8));
+    const dt = Date.UTC(y, mo - 1, d);
+    const ageMs = now - dt;
+    if (ageMs > ttlMs) continue;
+    const fp = path.join(dir, fname);
+    let stat;
+    try { stat = fs.statSync(fp); } catch { continue; }
+    if (stat.size <= 100) continue;
+    if (!best || dt > best.dt) {
+      best = { dt, path: fp, bytes: stat.size, ageDays: Math.floor(ageMs / (24 * 3600 * 1000)) };
+    }
+  }
+  return best ? { path: best.path, bytes: best.bytes, ageDays: best.ageDays } : null;
+}
+
+/**
+ * Wrap downloadDepartement avec fallback I-4 multi-source.
+ * Tente OpenDataSoft. En cas d'erreur (réseau, 503, timeout), cherche un
+ * snapshot local récent (< TTL) du département. Si trouvé, retourne le
+ * snapshot comme fallback. Sinon, remonte l'erreur initiale.
+ *
+ * @param {Object} args (mêmes args que downloadDepartement)
+ * @param {number} [args.fallbackTtlDays=35]
+ * @returns {Promise<{ path:string, bytes:number, downloaded:boolean, durationMs:number, fallbackUsed?:boolean, fallbackAgeDays?:number }>}
+ */
+async function downloadDepartementWithFallback(args) {
+  try {
+    return await downloadDepartement(args);
+  } catch (downloadErr) {
+    const fb = findRecentSnapshot({
+      departement: args.departement,
+      ttlDays: args.fallbackTtlDays,
+    });
+    if (fb) {
+      return {
+        path: fb.path,
+        bytes: fb.bytes,
+        downloaded: false,
+        durationMs: 0,
+        fallbackUsed: true,
+        fallbackAgeDays: fb.ageDays,
+        fallbackReason: downloadErr.message,
+      };
+    }
+    throw downloadErr;
+  }
+}
+
 module.exports = {
   buildWhereClause,
   buildExportUrl,
   snapshotPath,
   downloadDepartement,
+  downloadDepartementWithFallback,
+  findRecentSnapshot,
   // Constantes
   ENDPOINT,
   DEFAULT_FIELDS,
