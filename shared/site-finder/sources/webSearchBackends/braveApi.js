@@ -119,6 +119,11 @@ async function search(query, opts = {}) {
   const status = res.status;
   if (status === 429) throw new SearchBlockedError('rate_limited', status);
   if (status === 401) throw new SearchTransientError('brave 401 unauthorized', status);
+  // S7 (8 mai 2026) — 402 Payment Required : Brave plan payant cap mensuel
+  // atteint (USAGE_LIMIT_EXCEEDED). Doit basculer cascade et logger clairement,
+  // pas retourner [] silencieusement (bug observé : Brave 0 résultats sans
+  // erreur ni log pendant ~1 semaine, découvert post-mortem 8 mai PM).
+  if (status === 402) throw new SearchBlockedError('quota_exceeded_server', status);
   if (status === 403) throw new SearchBlockedError('forbidden', status);
   if (status === 422) throw new SearchTransientError('brave 422 invalid query', status);
   if (status >= 500 && status < 600) {
