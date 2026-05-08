@@ -21,9 +21,8 @@
  */
 
 const { app } = require('@azure/functions');
-const { parseBriefFromMemories } = require('../../shared/leadSelector');
 const { launchSequenceForConsultant } = require('../../agents/david/orchestrator');
-const { getMem0 } = require('../../shared/adapters/memory/mem0');
+const { loadConsultantBrief } = require('../../shared/consultant-brief-loader');
 const { enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndProfileBatch');
 const { makeSafeLogger } = require('../../shared/safe-log');
 const { QueueClient } = require('@azure/storage-queue');
@@ -77,11 +76,11 @@ app.http('runLeadSelectorForConsultant', {
         }
       }
 
-      const consultantPayload = await rebuildConsultantFromMem0(consultantId, context);
+      const consultantPayload = await loadConsultantBrief(consultantId, context);
       if (!consultantPayload) {
         return {
           status: 404,
-          jsonBody: { error: 'consultant_not_found_in_mem0' },
+          jsonBody: { error: 'consultant_brief_missing' },
         };
       }
 
@@ -132,36 +131,3 @@ app.http('runLeadSelectorForConsultant', {
   },
 });
 
-/**
- * Reconstitue { consultant, brief, originalBrief, beneficiaryId } depuis
- * les memories Mem0 du consultant.
- *
- * `originalBrief` est le dict complet tel que soumis via le formulaire
- * (avec secteurs, effectif, zone, etc.) — consommé par `enrichBatch`.
- * `brief` est une vue réduite passée à `launchSequenceForConsultant`.
- */
-async function rebuildConsultantFromMem0(consultantId, context) {
-  const mem0 = getMem0(context);
-  if (!mem0) return null;
-  let memories;
-  try {
-    memories = await mem0.retrieveConsultant(consultantId);
-  } catch {
-    return null;
-  }
-  if (!memories || memories.length === 0) return null;
-  const originalBrief = parseBriefFromMemories(memories);
-  if (!originalBrief) return null;
-  return {
-    consultant: {
-      nom: originalBrief.nom,
-      email: originalBrief.email,
-      offre: originalBrief.offre,
-      ton: originalBrief.registre,
-      tutoiement: originalBrief.vouvoiement === 'tu',
-    },
-    brief: { prospecteur: originalBrief.prospecteur || 'both' },
-    originalBrief,
-    beneficiaryId: `oseys-${String(consultantId || '').split('@')[0] || 'unknown'}`,
-  };
-}

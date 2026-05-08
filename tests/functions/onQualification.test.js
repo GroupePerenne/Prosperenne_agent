@@ -113,7 +113,11 @@ test('buildConsultantMemory — vouvoiement "vous" : tutoiement false', () => {
 
 // ──────────────── handleQualification ────────────────
 
-test('handleQualification — brief complet + Mem0 actif : storeConsultant appelé avec consultant_id lowercase et schéma correct', async () => {
+// Doctrine Paul 8 mai 2026 : brief consultant = config opérationnelle
+// stable, NE TRANSITE PAS par Mem0. Source unique = Storage Table
+// consultantOnboarding. Mem0 réservé à la mémoire agentique pure.
+
+test('handleQualification — brief complet : status 200 + 2 mails + AUCUN appel Mem0.storeConsultant', async () => {
   const { mem0, calls: mem0Calls } = makeMem0Stub();
   const deps = makeDeps({ mem0 });
   const { context } = makeContext();
@@ -125,51 +129,37 @@ test('handleQualification — brief complet + Mem0 actif : storeConsultant appel
   assert.match(res.jsonBody.brief_id, /^brief_/);
 
   assert.equal(deps.sendMailCalls.length, 2);
-  assert.equal(mem0Calls.length, 1);
-  // email casé est dans le brief en CamelCase, consultant_id doit être lowercase
-  assert.equal(mem0Calls[0].id, 'morgane.dupont@oseys.fr');
-  assert.deepEqual(mem0Calls[0].memory, buildConsultantMemory(BRIEF_COMPLET));
+  assert.equal(mem0Calls.length, 0, 'doctrine 8 mai 2026 : brief ne transite pas par Mem0');
 });
 
-test('handleQualification — secteurs absents : favorite_sectors [] transmis, status 200', async () => {
+test('handleQualification — secteurs absents : favorite_sectors [] dans buildConsultantMemory, status 200', async () => {
   const brief = { ...BRIEF_COMPLET };
   delete brief.secteurs;
-  const { mem0, calls: mem0Calls } = makeMem0Stub();
+  const { mem0 } = makeMem0Stub();
   const deps = makeDeps({ mem0 });
   const { context } = makeContext();
 
   const res = await handleQualification(makeRequest({ body: brief }), context, deps);
 
   assert.equal(res.status, 200);
-  assert.equal(mem0Calls.length, 1);
-  assert.deepEqual(mem0Calls[0].memory.favorite_sectors, []);
+  // Validation pure du builder, indépendante de Mem0
+  assert.deepEqual(buildConsultantMemory(brief).favorite_sectors, []);
 });
 
-test('handleQualification — exemple_client absent : usable_anecdotes [] transmis', async () => {
+test('handleQualification — exemple_client absent : usable_anecdotes [] dans buildConsultantMemory', async () => {
   const brief = { ...BRIEF_COMPLET };
   delete brief.exemple_client;
-  const { mem0, calls: mem0Calls } = makeMem0Stub();
+  const { mem0 } = makeMem0Stub();
   const deps = makeDeps({ mem0 });
   const { context } = makeContext();
 
   const res = await handleQualification(makeRequest({ body: brief }), context, deps);
 
   assert.equal(res.status, 200);
-  assert.deepEqual(mem0Calls[0].memory.usable_anecdotes, []);
+  assert.deepEqual(buildConsultantMemory(brief).usable_anecdotes, []);
 });
 
-test('handleQualification — Mem0 storeConsultant retourne null (dégradation) : status 200 quand même', async () => {
-  const { mem0 } = makeMem0Stub({ storeReturns: null });
-  const deps = makeDeps({ mem0 });
-  const { context } = makeContext();
-
-  const res = await handleQualification(makeRequest(), context, deps);
-
-  assert.equal(res.status, 200);
-  assert.equal(res.jsonBody.ok, true);
-});
-
-test('handleQualification — Mem0 storeConsultant throw : warn log + status 200 (best effort)', async () => {
+test('handleQualification — Mem0 down (storeConsultant throw injecté) : status 200 inchangé (Mem0 hors flow)', async () => {
   const { mem0 } = makeMem0Stub({ storeThrows: new Error('mem0 exploded') });
   const deps = makeDeps({ mem0 });
   const { context, calls: ctxCalls } = makeContext();
@@ -177,11 +167,11 @@ test('handleQualification — Mem0 storeConsultant throw : warn log + status 200
   const res = await handleQualification(makeRequest(), context, deps);
 
   assert.equal(res.status, 200);
-  assert.equal(ctxCalls.warn.length, 1);
-  assert.match(ctxCalls.warn[0][0], /\[mem0\] storeConsultant failed: mem0 exploded/);
+  // Plus aucun warn Mem0 — le code n'appelle plus storeConsultant
+  assert.equal(ctxCalls.warn.length, 0);
 });
 
-test('handleQualification — getMem0 retourne null (MEM0_API_KEY absente) : pas d\'appel storeConsultant, status 200', async () => {
+test('handleQualification — getMem0 retourne null : status 200 inchangé (Mem0 hors flow)', async () => {
   const deps = makeDeps({ mem0: null });
   const { context } = makeContext();
 

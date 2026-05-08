@@ -22,8 +22,7 @@ const { app } = require('@azure/functions');
 const { TableClient } = require('@azure/data-tables');
 const { enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndProfileBatch');
 const { launchSequenceForConsultant } = require('../../agents/david/orchestrator');
-const { parseBriefFromMemories } = require('../../shared/leadSelector');
-const { getMem0 } = require('../../shared/adapters/memory/mem0');
+const { loadConsultantBrief } = require('../../shared/consultant-brief-loader');
 const { makeSafeLogger } = require('../../shared/safe-log');
 
 const TABLE_NAME = 'leadSelectorJobs';
@@ -51,9 +50,9 @@ app.storageQueue('leadSelectorJobQueue', {
     if (tableClient) await markStatus(tableClient, jobId, 'running');
 
     try {
-      const consultantPayload = await rebuildConsultantFromMem0(consultantId, context);
+      const consultantPayload = await loadConsultantBrief(consultantId, context);
       if (!consultantPayload) {
-        await markStatus(tableClient, jobId, 'error', { error: 'consultant_not_found_in_mem0' });
+        await markStatus(tableClient, jobId, 'error', { error: 'consultant_brief_missing' });
         return;
       }
 
@@ -157,28 +156,3 @@ function flattenForTable(obj) {
   return out;
 }
 
-async function rebuildConsultantFromMem0(consultantId, context) {
-  const mem0 = getMem0(context);
-  if (!mem0) return null;
-  let memories;
-  try {
-    memories = await mem0.retrieveConsultant(consultantId);
-  } catch {
-    return null;
-  }
-  if (!memories || memories.length === 0) return null;
-  const originalBrief = parseBriefFromMemories(memories);
-  if (!originalBrief) return null;
-  return {
-    consultant: {
-      nom: originalBrief.nom,
-      email: originalBrief.email,
-      offre: originalBrief.offre,
-      ton: originalBrief.registre,
-      tutoiement: originalBrief.vouvoiement === 'tu',
-    },
-    brief: { prospecteur: originalBrief.prospecteur || 'both' },
-    originalBrief,
-    beneficiaryId: `oseys-${String(consultantId || '').split('@')[0] || 'unknown'}`,
-  };
-}

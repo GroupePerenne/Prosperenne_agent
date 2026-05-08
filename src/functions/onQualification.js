@@ -114,17 +114,11 @@ async function handleQualification(request, context, deps = {}) {
     // Voir ARCHITECTURE §3.1 type 2.
     const consultantId = brief.email.toLowerCase();
     const consultantMemory = buildConsultantMemory(brief);
-    const mem0 = getMem0(context);
 
-    // Parallélisation : les 2 mails + le store Mem0 en best effort. Toute
-    // erreur Mem0 non déjà dégradée par l'adapter est swallowée ici — pas
-    // question qu'un hoquet Mem0 fasse 500 sur le brief consultant.
-    const mem0Task = mem0
-      ? mem0.storeConsultant(consultantId, consultantMemory).catch((err) => {
-          log.warn(`[mem0] storeConsultant failed: ${err.message}`);
-          return null;
-        })
-      : Promise.resolve(null);
+    // Brief consultant = config opérationnelle stable, NE TRANSITE PAS par
+    // Mem0 (doctrine Paul 8 mai 2026). Source de vérité unique = Storage Table
+    // consultantOnboarding. Mem0 reste réservé à la mémoire agentique :
+    // signaux prospect, patterns globaux, mémoire continue Charli.
 
     const completedAt = new Date().toISOString();
     const onboardingTask = recordOnboardingCompleted({
@@ -153,11 +147,10 @@ async function handleQualification(request, context, deps = {}) {
     // Failed to fetch côté browser sur réseau mobile/lent, observé Morgane/
     // Johnny le 4 mai 2026 12h00).
     //
-    // Les 2 sendMail (récap David + accusé consultant) + Mem0 storeConsultant
-    // + recordOnboardingCompleted + recordAction tournent en arrière-plan.
-    // Toute erreur est swallowée par les .catch() de chaque promise. Le brief
-    // est de toute façon tracé dans la Storage Table consultantOnboarding
-    // (best-effort) + dans les logs FA.
+    // Les 2 sendMail (récap David + accusé consultant) + recordOnboardingCompleted
+    // + recordAction tournent en arrière-plan. Toute erreur est swallowée par
+    // les .catch(). Le brief est tracé dans Storage Table consultantOnboarding
+    // (source unique) + logs FA.
     const sendMailDavid = sendMail({
       from: process.env.DAVID_EMAIL,
       to: process.env.DAVID_EMAIL,
@@ -190,7 +183,6 @@ async function handleQualification(request, context, deps = {}) {
     // attend pas.
     void sendMailDavid;
     void sendMailConsultant;
-    void mem0Task;
     void onboardingTask;
     void actionTask;
 
