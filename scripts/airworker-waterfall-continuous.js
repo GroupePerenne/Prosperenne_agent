@@ -52,6 +52,31 @@ const DRY_RUN = process.env.AIRWORKER_DRY_RUN === '1';
 const POSITIVE_TTL_DAYS = Number(process.env.LEADCONTACTS_POSITIVE_TTL_DAYS) || 90;
 const NEGATIVE_RETRY_DAYS = Number(process.env.LEADCONTACTS_NEGATIVE_RETRY_DAYS) || 7;
 
+// ─── Background fill mode (8 mai 2026 PM) ──────────────────────────────────
+// Quand TOUS les briefs consultants ont leurs leads cached fresh, l'AirWorker
+// bascule en mode "background fill" qui itère LeadBase par PartitionKey
+// (département FR) avec filtres NAF/tranche élargis pour pré-couvrir tout
+// le sweet spot national. Permet de pré-rempli LeadContacts en weekend pour
+// servir les futurs consultants instantanément.
+const FILL_ENABLED = process.env.AIRWORKER_FILL_ENABLED === '1';
+const FILL_BATCH_LEADS = Number(process.env.AIRWORKER_FILL_BATCH_LEADS) || 50;
+const FILL_NAF_PREFIXES = (process.env.AIRWORKER_FILL_NAF_PREFIXES || '41,42,43,80,81,82,85,86,87,90,93,95').split(',').map((s) => s.trim()).filter(Boolean);
+const FILL_TRANCHES = (process.env.AIRWORKER_FILL_TRANCHES || '11,12,21,22,31').split(',').map((s) => s.trim()).filter(Boolean);
+// Départements FR métropole + DOM-TOM dans l'ordre numérique d'application LeadBase.
+// La PartitionKey LeadBase Couche 1 est le code département (cf. shared/sirene/mapper.js).
+const FILL_DEPARTMENTS = (process.env.AIRWORKER_FILL_DEPARTMENTS || ''
+  || ['01','02','03','04','05','06','07','08','09',
+      '10','11','12','13','14','15','16','17','18','19',
+      '21','22','23','24','25','26','27','28','29','2A','2B',
+      '30','31','32','33','34','35','36','37','38','39',
+      '40','41','42','43','44','45','46','47','48','49',
+      '50','51','52','53','54','55','56','57','58','59',
+      '60','61','62','63','64','65','66','67','68','69',
+      '70','71','72','73','74','75','76','77','78','79',
+      '80','81','82','83','84','85','86','87','88','89',
+      '90','91','92','93','94','95',
+      '971','972','973','974','976'].join(',')).split(',').map((s) => s.trim()).filter(Boolean);
+
 // ─── Storage Tables clients ────────────────────────────────────────────────
 
 let _leadContactsClient = null;
@@ -65,6 +90,14 @@ function getStorageConn() {
 
 function getLeadBaseConn() {
   return process.env.LEADBASE_STORAGE_CONNECTION_STRING || process.env.AzureWebJobsStorage;
+}
+
+let _leadBaseClient = null;
+function getLeadBaseClient() {
+  if (!_leadBaseClient) {
+    _leadBaseClient = TableClient.fromConnectionString(getLeadBaseConn(), 'LeadBase');
+  }
+  return _leadBaseClient;
 }
 
 function getLeadContactsClient() {
@@ -240,9 +273,188 @@ async function updateProgress(consultantEmail, stats) {
   }
 }
 
+// ─── Background fill mode (Option B 8 mai 2026 PM) ─────────────────────────
+
+const { extractFirstName, extractLastName } = require('../shared/lead-exhauster/patterns');
+
+async function loadFillProgress() {
+  try {
+    const entity = await getProgressClient().getEntity('background-fill-state', 'current');
+    return {
+      lastDept: entity.lastDept || null,
+      lastSiren: entity.lastSiren || null,
+      passCount: Number(entity.passCount) || 0,
+    };
+  } catch (err) {
+    if (err && err.statusCode === 404) return { lastDept: null, lastSiren: null, passCount: 0 };
+    return { lastDept: null, lastSiren: null, passCount: 0 };
+  }
+}
+
+async function saveFillProgress(state) {
+  if (DRY_RUN) return;
+  try {
+    await getProgressClient().upsertEntity({
+      partitionKey: 'background-fill-state',
+      rowKey: 'current',
+      lastDept: state.lastDept || null,
+      lastSiren: state.lastSiren || null,
+      passCount: Number(state.passCount) || 0,
+      lastUpdatedAt: new Date().toISOString(),
+    }, 'Merge');
+  } catch (err) {
+    console.warn(`[airworker:fill] saveFillProgress failed: ${err.message}`);
+  }
+}
+
+function entityToCandidate(entity) {
+  if (!entity || !entity.siren || !/^\d{9}$/.test(String(entity.siren))) return null;
+  let dirigeants = [];
+  try {
+    dirigeants = JSON.parse(entity.dirigeants || '[]');
+  } catch { return null; }
+  if (!Array.isArray(dirigeants) || dirigeants.length === 0) return null;
+  const dir = dirigeants[0];
+  if (!dir || (!dir.prenoms && !dir.prenom) || !dir.nom) return null;
+
+  const firstName = extractFirstName(dir.prenoms || dir.prenom);
+  const lastName = extractLastName(dir.nom);
+  if (!firstName || !lastName || !entity.nom) return null;
+
+  return {
+    siren: String(entity.siren),
+    firstName,
+    lastName,
+    companyName: entity.nom,
+    ville: entity.ville || '',
+    codeNaf: entity.codeNaf || '',
+    trancheEffectif: entity.trancheEffectif || '',
+    inseeRole: dir.qualite || dir.fonction || dir.role || '',
+    partitionKey: entity.partitionKey || '',
+  };
+}
+
+function buildFillFilter(dept) {
+  // Filtre PartitionKey + tranches + NAF prefix.
+  // I-2 OK: AirWorker fill itère LeadBase par PartitionKey dept par design.
+  // Whitelist déjà appliquée pour airworker-waterfall-continuous.js (lint test).
+  const parts = [`PartitionKey eq '${dept}'`];
+  if (FILL_TRANCHES.length > 0) {
+    const tranches = FILL_TRANCHES.map((t) => `trancheEffectif eq '${t}'`).join(' or ');
+    parts.push(`(${tranches})`);
+  }
+  if (FILL_NAF_PREFIXES.length > 0) {
+    // Range query NAF par prefix : codeNaf ge 'PP' and codeNaf lt 'PP/'
+    // (le caractère '/' suit immédiatement '.' en ASCII donc filtre OK pour
+    //  préfixes NAF type "41" → "41.00A"...."41.99Z")
+    const nafs = FILL_NAF_PREFIXES.map((p) => `(codeNaf ge '${p}' and codeNaf lt '${p}~')`).join(' or ');
+    parts.push(`(${nafs})`);
+  }
+  return parts.join(' and ');
+}
+
+/**
+ * Background fill : itère LeadBase par PartitionKey (département FR) avec
+ * filtres NAF/tranche élargis. Limite à FILL_BATCH_LEADS leads par invocation
+ * pour permettre au mainLoop de re-checker les briefs régulièrement (~5-15min).
+ *
+ * Idempotent via cache LeadContacts (TTL 90j positifs / 7j négatifs).
+ * Reprise après crash via AirWorkerProgress (lastDept + lastSiren).
+ */
+async function processBackgroundFill(deps, stats) {
+  if (!FILL_ENABLED) return;
+
+  const progress = await loadFillProgress();
+  const startIdx = progress.lastDept
+    ? Math.max(0, FILL_DEPARTMENTS.indexOf(progress.lastDept))
+    : 0;
+
+  console.log(`[airworker:fill] mode actif. depts=${FILL_DEPARTMENTS.length}, naf=${FILL_NAF_PREFIXES.join(',')}, tranches=${FILL_TRANCHES.join(',')}, start=${FILL_DEPARTMENTS[startIdx]} (pass #${progress.passCount + 1})`);
+
+  let leadsThisBatch = 0;
+  let lastSirenSeen = progress.lastSiren;
+
+  for (let i = startIdx; i < FILL_DEPARTMENTS.length; i++) {
+    if (_shutdownRequested) break;
+    if (leadsThisBatch >= FILL_BATCH_LEADS) break;
+
+    const dept = FILL_DEPARTMENTS[i];
+    const filter = buildFillFilter(dept);
+    const client = getLeadBaseClient();
+
+    let entitiesScanned = 0;
+    let resumeAtSiren = (i === startIdx) ? progress.lastSiren : null;
+
+    try {
+      // Lint I-2 OK: AirWorker fill itère par PartitionKey dept (whitelisté)
+      const iterator = client.listEntities({ queryOptions: { filter } });
+      for await (const entity of iterator) {
+        if (_shutdownRequested || leadsThisBatch >= FILL_BATCH_LEADS) break;
+        entitiesScanned++;
+        // Resume : skip les sirens déjà passés sur le dept en cours
+        if (resumeAtSiren) {
+          if (String(entity.siren) === resumeAtSiren) {
+            resumeAtSiren = null; // on reprend à partir du siren suivant
+          }
+          continue;
+        }
+        const candidate = entityToCandidate(entity);
+        if (!candidate) continue;
+
+        const cached = await readLeadContact(candidate.siren, candidate.firstName, candidate.lastName);
+        if (cached && isFreshCacheHit(cached)) {
+          stats.totalSkippedCached++;
+          lastSirenSeen = candidate.siren;
+          continue;
+        }
+
+        try {
+          const r = await processLead({
+            ...candidate,
+            beneficiaryId: 'airworker-fill',
+          }, deps);
+          stats.totalProcessed++;
+          if (r.status === 'ok') stats.totalResolved++;
+
+          console.log(`[airworker:fill][${dept}] ${candidate.siren} ${candidate.firstName} ${candidate.lastName} → ${r.status} ${r.email || '(no)'} conf=${r.confidence} src=${r.source} ${r.elapsedMs}ms`);
+
+          await upsertLeadContact(r);
+          await logBackgroundJob(r);
+          lastSirenSeen = candidate.siren;
+          await saveFillProgress({ lastDept: dept, lastSiren: lastSirenSeen, passCount: progress.passCount });
+          leadsThisBatch++;
+        } catch (err) {
+          stats.totalErrors++;
+          console.warn(`[airworker:fill] error ${candidate.siren}: ${err.message}`);
+        }
+      }
+      console.log(`[airworker:fill][${dept}] dept fini : ${entitiesScanned} entities scannées`);
+      // Dept fini → on passe au suivant. Reset lastSiren pour le nouveau dept.
+      await saveFillProgress({ lastDept: dept, lastSiren: null, passCount: progress.passCount });
+      lastSirenSeen = null;
+    } catch (err) {
+      console.warn(`[airworker:fill][${dept}] iterator error: ${err.message}. Skip dept.`);
+    }
+  }
+
+  // Si on a fini la liste de tous les depts, on incrémente passCount et reset à 01
+  if (!_shutdownRequested && leadsThisBatch < FILL_BATCH_LEADS) {
+    const newPassCount = progress.passCount + 1;
+    console.log(`[airworker:fill] full pass #${newPassCount} done. Restart at dept ${FILL_DEPARTMENTS[0]}.`);
+    await saveFillProgress({ lastDept: FILL_DEPARTMENTS[0], lastSiren: null, passCount: newPassCount });
+  }
+}
+
 // ─── Process batch ─────────────────────────────────────────────────────────
 
 async function processBatchForBrief(brief, deps, stats) {
+  const before = stats.totalProcessed;
+  const before2 = stats.totalErrors;
+  await _doProcessBatchForBrief(brief, deps, stats);
+  return (stats.totalProcessed - before) + (stats.totalErrors - before2);
+}
+
+async function _doProcessBatchForBrief(brief, deps, stats) {
   console.log(`[airworker] briefs ${brief.email} : selectCandidatesForConsultant batch=${BATCH_SIZE}`);
   const t0 = Date.now();
   const selectorResult = await selectCandidatesForConsultant({
@@ -349,16 +561,26 @@ async function mainLoop() {
       }
 
       console.log(`[airworker] cycle start, ${briefs.length} briefs actifs`);
+      let totalActivityThisCycle = 0;
       for (const brief of briefs) {
         if (_shutdownRequested) break;
-        await processBatchForBrief(brief, deps, stats);
+        const activity = await processBatchForBrief(brief, deps, stats);
+        totalActivityThisCycle += activity || 0;
         await updateProgress(brief.email, stats);
         if (!_shutdownRequested) {
           await new Promise((r) => setTimeout(r, SLEEP_BATCH_MS));
         }
       }
 
-      console.log(`[airworker] cycle done. stats: processed=${stats.totalProcessed} resolved=${stats.totalResolved} (${stats.totalProcessed > 0 ? Math.round(stats.totalResolved / stats.totalProcessed * 100) : 0}%) cached=${stats.totalSkippedCached} errors=${stats.totalErrors}`);
+      // Si tous les briefs ont eu 0 nouveau lead à processer (= tous cached),
+      // on bascule en background fill pour pré-couvrir le sweet spot national.
+      // Limite à FILL_BATCH_LEADS leads par invocation pour permettre le
+      // re-check briefs régulièrement (~5-15 min).
+      if (totalActivityThisCycle === 0 && FILL_ENABLED && !_shutdownRequested) {
+        await processBackgroundFill(deps, stats);
+      }
+
+      console.log(`[airworker] cycle done. stats: processed=${stats.totalProcessed} resolved=${stats.totalResolved} (${stats.totalProcessed > 0 ? Math.round(stats.totalResolved / stats.totalProcessed * 100) : 0}%) cached=${stats.totalSkippedCached} errors=${stats.totalErrors}${FILL_ENABLED ? ' [fill enabled]' : ''}`);
     } catch (err) {
       console.error(`[airworker] cycle error: ${err.message}`);
       await new Promise((r) => setTimeout(r, 60000));
