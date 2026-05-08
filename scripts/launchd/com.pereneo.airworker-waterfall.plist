@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent macOS pour AirWorker Waterfall Continuous
+
+  Pour activer (Mac dédié AirWorker) :
+
+    1. Adapter les chemins ci-dessous au répertoire local du repo
+    2. Créer le fichier env shell ~/.config/charli/airworker.env avec :
+         export DROPCONTACT_API_KEY="..."
+         export AzureWebJobsStorage="..."
+         export LEADBASE_STORAGE_CONNECTION_STRING="..."
+         export DROPCONTACT_ENABLED=true
+         export DROPCONTACT_API_URL=https://api.dropcontact.io/batch
+         export AIRWORKER_CONCURRENCY=2
+         export AIRWORKER_BATCH_SIZE=10
+         export AIRWORKER_SLEEP_BATCH_MS=30000
+    3. Copier dans ~/Library/LaunchAgents/ :
+         cp com.pereneo.airworker-waterfall.plist ~/Library/LaunchAgents/
+    4. Charger le LaunchAgent :
+         launchctl load ~/Library/LaunchAgents/com.pereneo.airworker-waterfall.plist
+    5. Vérifier :
+         launchctl list | grep airworker
+         tail -f ~/Library/Logs/airworker-waterfall.log
+
+  Pour désactiver :
+    launchctl unload ~/Library/LaunchAgents/com.pereneo.airworker-waterfall.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pereneo.airworker-waterfall</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <!-- Adapter le chemin du repo. Source l'env shell + lance Node. -->
+    <string>source $HOME/.config/charli/airworker.env && cd "$HOME/Documents/Professionnel/GROUPE PERENNE/Pereneo_agents" && /usr/local/bin/node scripts/airworker-waterfall-continuous.js</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <!-- Relance si le process exit avec code != 0 (crash, OOM, etc.) -->
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+  <!-- Au moins 60s entre 2 redémarrages pour éviter boucle crash -->
+
+  <key>StandardOutPath</key>
+  <string>/Users/paulrudler/Library/Logs/airworker-waterfall.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/paulrudler/Library/Logs/airworker-waterfall.err</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/paulrudler/Documents/Professionnel/GROUPE PERENNE/Pereneo_agents</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+
+  <!-- Limites ressources : pas plus de 2 process AirWorker simultanés -->
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfProcesses</key>
+    <integer>50</integer>
+  </dict>
+</dict>
+</plist>

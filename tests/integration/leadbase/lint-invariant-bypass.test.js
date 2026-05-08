@@ -51,6 +51,7 @@ const WHITELIST_FILES = new Set([
   'scripts/audit-leadbase-integrity.js', // audit complet legitime (allowEmptyFilter via design)
   'scripts/migrate-leadbase-storage.js', // legacy archivé (oseysjeannot → pereneoleads)
   'scripts/sirene-bulk-import.js', // utilise writer SIRENE Couche 1
+  'scripts/airworker-waterfall-continuous.js', // AirWorker AirWorker mode Mac local — writer Couche 4 LeadContacts dédié + log Storage Tables CharliBackgroundJobs/AirWorkerProgress
 ]);
 
 // Tables couvertes par le lint. LeadContacts est la table Couche 4 Email v1
