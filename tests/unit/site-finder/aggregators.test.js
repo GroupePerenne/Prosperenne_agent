@@ -84,3 +84,13 @@ test('AGGREGATOR_DOMAINS contient les annuaires critiques observés', () => {
   assert.ok(AGGREGATOR_DOMAINS.has('e-pro.fr'));
   assert.ok(AGGREGATOR_DOMAINS.has('prosmaison.fr'));
 });
+
+// S4 (8 mai 2026) — agrégateurs additionnels observés en prod 8 mai
+// run Morgane/Johnny (LeadContacts polluants pour cascade enrichissement).
+
+test('S4 — repreneurs.com et infonet.fr ajoutés (observés prod 8 mai)', () => {
+  assert.ok(AGGREGATOR_DOMAINS.has('repreneurs.com'));
+  assert.ok(AGGREGATOR_DOMAINS.has('infonet.fr'));
+  assert.equal(isAggregator('https://repreneurs.com/cession/sas-123'), true);
+  assert.equal(isAggregator('https://www.infonet.fr/entreprise/siren'), true);
+});

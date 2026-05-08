@@ -48,6 +48,9 @@ const AGGREGATOR_DOMAINS = new Set([
   'xerfi.com',
   'bvdinfo.com',
   'dnb.com',
+  // Observés polluants en prod 8 mai 2026 (LeadContacts run Morgane/Johnny)
+  'repreneurs.com',     // annuaire cession entreprise
+  'infonet.fr',         // annuaire fiches INPI
   // Données publiques + presse
   'annuaire-entreprises.data.gouv.fr',
   'data.gouv.fr',
