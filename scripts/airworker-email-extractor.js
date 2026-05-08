@@ -64,6 +64,44 @@ const JUNK_LOCAL_PARTS = new Set([
   'mailer-daemon', 'support-noreply', 'sentry',
 ]);
 
+// V8.1 (8 mai 2026 PM) — emails placeholder/exemple détectés en HTML scrapé
+// (cas Valery VAILLOUD → jean.dupont@gmail.com sur dept 01). Beaucoup de
+// thèmes WordPress/builders contiennent des emails d'exemple en mockup.
+// Liste fermée des patterns CONNUS, à étendre si nouveau cas.
+const PLACEHOLDER_EMAILS = new Set([
+  'jean.dupont@gmail.com',
+  'jeandupont@gmail.com',
+  'jean-dupont@gmail.com',
+  'john.doe@gmail.com',
+  'johndoe@gmail.com',
+  'john.doe@example.com',
+  'john@example.com',
+  'jane.doe@example.com',
+  'test@test.com',
+  'test@gmail.com',
+  'email@example.com',
+  'votre.email@exemple.fr',
+  'votre@email.com',
+  'name@example.com',
+  'user@example.com',
+  'demo@demo.com',
+  'sample@sample.com',
+]);
+
+// V8.1 — les freemails (Gmail/Orange/etc.) ne sont acceptés QUE si le
+// local-part match approximativement le dirigeant. Sinon c'est probable
+// un placeholder ou un email tiers du site (ex: webmaster perso, fournisseur).
+function freemailMatchesDirigeant(local, firstNorm, lastNorm) {
+  if (!firstNorm && !lastNorm) return false;
+  const localNorm = local.replace(/[^a-z]/g, '');
+  if (!localNorm) return false;
+  // Match exact ou contains avec longueur min 4 chars (évite 'jl' qui matche 'jean.dupont')
+  if (firstNorm && firstNorm.length >= 4 && localNorm.includes(firstNorm)) return true;
+  if (lastNorm && lastNorm.length >= 4 && localNorm.includes(lastNorm)) return true;
+  if (firstNorm && lastNorm && (localNorm === firstNorm + lastNorm || localNorm === lastNorm + firstNorm)) return true;
+  return false;
+}
+
 const GENERIC_LOCAL_PARTS = new Set([
   'contact', 'info', 'infos', 'hello', 'bonjour', 'mail',
   'accueil', 'sav', 'commercial', 'sales', 'vente', 'ventes',
@@ -110,6 +148,9 @@ function scoreEmail(email, dirigeantFirstName, dirigeantLastName, companyDomain)
   const [local, domain] = lower.split('@');
   if (!local || !domain) return null;
 
+  // V8.1 — Placeholder email (jean.dupont@gmail.com, john.doe@, etc.) → reject
+  if (PLACEHOLDER_EMAILS.has(lower)) return null;
+
   // Junk → reject
   for (const j of JUNK_LOCAL_PARTS) {
     if (local === j || local.startsWith(`${j}.`)) return null;
@@ -137,9 +178,16 @@ function scoreEmail(email, dirigeantFirstName, dirigeantLastName, companyDomain)
     }
   }
 
-  // 2. Email perso freemail trouvé sur le site (TPE FR utilise gmail/orange comme pro)
+  // 2. Email perso freemail trouvé sur le site (TPE FR utilise gmail/orange comme pro).
+  // V8.1 — accepter UNIQUEMENT si le local-part match le dirigeant (≥4 chars
+  // commun). Sinon c'est un placeholder ou email tiers (ex: jean.dupont@gmail.com
+  // sur le site de Valery VAILLOUD = bullshit). Faux positifs détectés en prod 8 mai PM.
   if (FREEMAIL_DOMAINS.has(domain)) {
-    return { confidence: 0.75, type: 'freemail_perso', reason: `freemail ${domain}` };
+    if (freemailMatchesDirigeant(local, firstNorm, lastNorm)) {
+      return { confidence: 0.75, type: 'freemail_perso', reason: `freemail ${domain} match dirigeant` };
+    }
+    // Freemail sans match dirigeant → potentiel placeholder, on rejette
+    return null;
   }
 
   // 3. Nominatif partiel sur le bon domaine (ex: f.broka quand dirigeant Gerard)
