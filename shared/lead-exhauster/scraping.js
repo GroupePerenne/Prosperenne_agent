@@ -37,14 +37,9 @@ const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; PereneoBot/1.0; +https://os
 // Pages visées par ordre de probabilité d'y trouver des décideurs/emails.
 // La page d'accueil en dernier recours (signal plus dilué).
 //
-// S6 (8 mai 2026) — réduction 9 → 6 pages : pages retirées car contribuent
-// rarement à un match (mesure prod 8 mai sur 7 candidates avec scraping :
-// `email.pattern_contact_under_threshold` dans 6/7 cas, le scraping
-// trouvait des patterns déjà sous seuil 0.80, doublons de pages /a-propos
-// vs /qui-sommes-nous, /equipe vs /team déjà couverts par les pages courtes).
-// Gain estimé : ~24s/pire-cas (3 pages × 8s pageTimeout). Conserve coverage
-// majoritaire en gardant /contact, /equipe, /a-propos + équivalents EN.
-const TARGET_PATHS = Object.freeze([
+// S6 (8 mai 2026) — réduction 9 → 6 pages pour FA Azure runtime (latence ↓
+// ~24s pire-cas sur globalTimeout 20s). Mode FAST par défaut.
+const TARGET_PATHS_FAST = Object.freeze([
   '/contact',
   '/equipe',
   '/a-propos',
@@ -52,6 +47,32 @@ const TARGET_PATHS = Object.freeze([
   '/about',
   '/',
 ]);
+
+// S10 (8 mai 2026) — mode EXHAUSTIVE pour AirWorker local : les mentions
+// légales et CGV sont des **mines d'or** pour TPE FR (email gérant
+// légalement obligatoire en mentions légales). En mode local, pas de
+// contrainte timeout FA 230s, on peut prendre le temps. Ajout de pages
+// FR-spécifiques.
+const TARGET_PATHS_EXHAUSTIVE = Object.freeze([
+  '/contact',
+  '/contactez-nous',
+  '/equipe',
+  '/notre-equipe',
+  '/a-propos',
+  '/qui-sommes-nous',
+  '/team',
+  '/about',
+  '/mentions-legales',
+  '/mentions',
+  '/legal',
+  '/cgv',
+  '/cgu',
+  '/conditions-generales',
+  '/',
+]);
+
+// Backward compat : TARGET_PATHS reste exposé en mode FAST (consommateurs FA).
+const TARGET_PATHS = TARGET_PATHS_FAST;
 
 // Local-parts "catch-all" qui ne portent pas d'identité individuelle.
 // Exception : on les remonte quand même avec confidence basse (0.40)
@@ -515,7 +536,18 @@ async function scrapeDomain(input = {}, opts = {}) {
     };
   }
 
-  const paths = Array.isArray(input.paths) && input.paths.length > 0 ? input.paths : TARGET_PATHS;
+  // S10 (8 mai 2026) — mode 'exhaustive' (AirWorker local) ou 'fast' (FA Azure).
+  // Si opts.mode='exhaustive', utilise la liste élargie avec mentions légales,
+  // CGV, etc. (mine d'or pour TPE FR où l'email gérant est légalement
+  // obligatoire en mentions légales).
+  let paths;
+  if (Array.isArray(input.paths) && input.paths.length > 0) {
+    paths = input.paths;
+  } else if (opts.mode === 'exhaustive') {
+    paths = TARGET_PATHS_EXHAUSTIVE;
+  } else {
+    paths = TARGET_PATHS_FAST;
+  }
   const maxEmails = Number.isFinite(opts.maxEmails) ? opts.maxEmails : 20;
   const globalTimeout = Number.isFinite(opts.globalTimeoutMs)
     ? opts.globalTimeoutMs
@@ -597,7 +629,7 @@ module.exports = {
   extractEmailsFromJsonLd,
   // exposé pour tests :
   _constants: {
-    TARGET_PATHS, JUNK_LOCAL_PARTS, ROLE_KEYWORDS,
+    TARGET_PATHS, TARGET_PATHS_FAST, TARGET_PATHS_EXHAUSTIVE, JUNK_LOCAL_PARTS, ROLE_KEYWORDS,
     DEFAULT_USER_AGENT, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_GLOBAL_TIMEOUT_MS,
   },
 };
