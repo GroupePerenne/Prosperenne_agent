@@ -30,6 +30,7 @@ const SECTORS_TO_NAF = require('./mappings/secteurs-to-naf.json');
 const { enrichBatchInPlace } = require('./enrichers/dirigeants-rne');
 const EFFECTIF_TO_TRANCHE = require('./mappings/effectif-to-tranche-insee.json');
 const NAF_EXCLUSIONS = require('./mappings/naf-exclusions.json');
+const { extractFirstName, extractLastName } = require('./lead-exhauster/patterns');
 
 const DEFAULT_BATCH_SIZE = Number(process.env.LEAD_SELECTOR_BATCH_SIZE || 10);
 const DEFAULT_HARD_LIMIT = Number(process.env.LEAD_SELECTOR_HARD_LIMIT || 2000);
@@ -272,8 +273,8 @@ function extractLeadFromEntity(entity) {
   if (!email) return null;
   return {
     siren: String(entity.siren || ''),
-    prenom: ((firstDirigeant && (firstDirigeant.prenoms || firstDirigeant.prenom)) || '').trim(),
-    nom: ((firstDirigeant && firstDirigeant.nom) || '').trim(),
+    prenom: extractFirstName((firstDirigeant && (firstDirigeant.prenoms || firstDirigeant.prenom)) || ''),
+    nom: extractLastName((firstDirigeant && firstDirigeant.nom) || ''),
     entreprise: entity.nom || '',
     email,
     secteur: entity.codeNaf || '',
@@ -309,8 +310,13 @@ function extractCandidateFromEntity(entity) {
   const parsed = parseFirstDirigeant(entity);
   const firstDirigeant = parsed.dirigeant;
 
-  const firstName = ((firstDirigeant && (firstDirigeant.prenoms || firstDirigeant.prenom)) || '').trim();
-  const lastName = ((firstDirigeant && firstDirigeant.nom) || '').trim();
+  // S1 fix bug normalisation RNE (8 mai 2026) : RNE renvoie `prenoms` avec
+  // tous les prénoms espacés (ex. "Laurent Jean-Claude Marcel") et parfois
+  // `nom` avec doublon nom_naissance + nom_usage ("Dorchies Dorchies").
+  // Sans extraction propre, normalizeNamePart aval strippe les espaces et
+  // produit des inputs corrompus pour Dropcontact / patterns email.
+  const firstName = extractFirstName((firstDirigeant && (firstDirigeant.prenoms || firstDirigeant.prenom)) || '');
+  const lastName = extractLastName((firstDirigeant && firstDirigeant.nom) || '');
   const companyName = entity.nom || '';
 
   // Au minimum : nom d'entreprise + (firstName OU lastName) pour permettre

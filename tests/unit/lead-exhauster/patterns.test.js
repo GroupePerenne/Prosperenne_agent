@@ -9,6 +9,8 @@ const assert = require('node:assert/strict');
 
 const {
   normalizeNamePart,
+  extractFirstName,
+  extractLastName,
   normalizeDomain,
   getBootstrapPatterns,
   rankPatternsForContext,
@@ -46,6 +48,104 @@ test('normalizeNamePart — retourne chaîne vide si falsy ou non-alpha', () => 
 test('normalizeNamePart — supprime tirets terminaux, compresse tirets multiples', () => {
   assert.equal(normalizeNamePart('-Jean-'), 'jean');
   assert.equal(normalizeNamePart('a---b'), 'a-b');
+});
+
+// ─── extractFirstName ──────────────────────────────────────────────────────
+// Bug observé en prod 8 mai 2026 — RNE renvoie `prenoms` avec tous les
+// prénoms espacés. Cas réels du run du 8 mai testés ici.
+
+test('extractFirstName — RNE multi-prénoms : prend le premier seul', () => {
+  assert.equal(extractFirstName('Laurent Jean-Claude Marcel'), 'Laurent');
+  assert.equal(extractFirstName('Christian Jean'), 'Christian');
+  assert.equal(extractFirstName('Cindy Arlette Ginette'), 'Cindy');
+  assert.equal(extractFirstName('Gaëtan Claude Marcel'), 'Gaëtan');
+});
+
+test('extractFirstName — préserve prénom composé à tiret', () => {
+  assert.equal(extractFirstName('Jean-Pierre'), 'Jean-Pierre');
+  assert.equal(extractFirstName('Marie-Claire Anne'), 'Marie-Claire');
+  assert.equal(extractFirstName('Anne-Sophie'), 'Anne-Sophie');
+});
+
+test('extractFirstName — préserve casse et accents (normalisation aval)', () => {
+  assert.equal(extractFirstName('Éloïse Marie'), 'Éloïse');
+  assert.equal(extractFirstName('FRANÇOIS'), 'FRANÇOIS');
+});
+
+test('extractFirstName — espaces multiples / leading / trailing', () => {
+  assert.equal(extractFirstName('  Marie   Hélène  '), 'Marie');
+  assert.equal(extractFirstName('\tPaul\n'), 'Paul');
+});
+
+test('extractFirstName — falsy', () => {
+  assert.equal(extractFirstName(null), '');
+  assert.equal(extractFirstName(undefined), '');
+  assert.equal(extractFirstName(''), '');
+  assert.equal(extractFirstName('   '), '');
+});
+
+// ─── extractLastName ───────────────────────────────────────────────────────
+// Bug observé en prod 8 mai 2026 — RNE renvoie parfois `nom` avec doublon
+// nom_naissance + nom_usage identiques concaténés.
+
+test('extractLastName — dédoublonne répétitions consécutives identiques', () => {
+  assert.equal(extractLastName('Dorchies Dorchies'), 'Dorchies');
+  assert.equal(extractLastName('Petit Petit'), 'Petit');
+  assert.equal(extractLastName('Luzy Luzy'), 'Luzy');
+});
+
+test('extractLastName — case-insensitive sur la dédup, garde la première occurrence', () => {
+  assert.equal(extractLastName('DUPONT Dupont'), 'DUPONT');
+  assert.equal(extractLastName('martin MARTIN'), 'martin');
+});
+
+test('extractLastName — préserve noms composés authentiques', () => {
+  assert.equal(extractLastName('Lancia Pin'), 'Lancia Pin');
+  assert.equal(extractLastName('Lancia-Pin'), 'Lancia-Pin');
+  assert.equal(extractLastName('de la Fontaine'), 'de la Fontaine');
+  assert.equal(extractLastName("d'Alembert"), "d'Alembert");
+});
+
+test('extractLastName — nom simple inchangé', () => {
+  assert.equal(extractLastName('Dupont'), 'Dupont');
+  assert.equal(extractLastName('Martin'), 'Martin');
+});
+
+test('extractLastName — triple répétition consécutive collapsée', () => {
+  assert.equal(extractLastName('Petit Petit Petit'), 'Petit');
+});
+
+test('extractLastName — répétitions non consécutives préservées', () => {
+  // Un cas théorique : "Pierre Dupont Pierre" — pas un doublon RNE.
+  assert.equal(extractLastName('Pierre Dupont Pierre'), 'Pierre Dupont Pierre');
+});
+
+test('extractLastName — falsy', () => {
+  assert.equal(extractLastName(null), '');
+  assert.equal(extractLastName(undefined), '');
+  assert.equal(extractLastName(''), '');
+  assert.equal(extractLastName('   '), '');
+});
+
+// ─── extractFirstName + normalizeNamePart : régression bug prod 8 mai ──────
+// Vérifie que la chaîne complète extraction → normalisation produit le
+// bon RowKey LeadContact pour les cas observés.
+
+test('régression bug 8 mai — laurentjean-claudemarcel devient laurent', () => {
+  assert.equal(normalizeNamePart(extractFirstName('Laurent Jean-Claude Marcel')), 'laurent');
+});
+
+test('régression bug 8 mai — christianetherese devient christiane', () => {
+  // Cas RowKey email_christianetherese_lanciapin
+  assert.equal(normalizeNamePart(extractFirstName('Christiane Thérèse')), 'christiane');
+});
+
+test('régression bug 8 mai — dorchiesdorchies devient dorchies', () => {
+  assert.equal(normalizeNamePart(extractLastName('Dorchies Dorchies')), 'dorchies');
+});
+
+test('régression bug 8 mai — luzyluzy devient luzy', () => {
+  assert.equal(normalizeNamePart(extractLastName('Luzy Luzy')), 'luzy');
 });
 
 // ─── normalizeDomain ───────────────────────────────────────────────────────
