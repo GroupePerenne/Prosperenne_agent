@@ -217,6 +217,109 @@ test('orchestrateur — dropcontact activé avec hit → ok dropcontact', async 
   assert.equal(r.cost_cents, 8);
 });
 
+// S2 (8 mai 2026) — seuil dédié Dropcontact : accepte catch_all (0.50)
+// en plus de nominative (0.95). Doctrine Paul 6 mai : false positives =
+// undelivered, no damage. Pay-on-success → catch_all non facturé.
+
+test('S2 — dropcontact catch_all 0.50 accepté avec seuil dédié défaut', async () => {
+  const { adapters } = makeAdapters({
+    scrapeDomain: async () => ({
+      emails: [], teamProfiles: [], pagesVisited: [], pagesFailed: [], signals: [],
+    }),
+    dropcontact: {
+      name: 'dropcontact',
+      enabled: true,
+      resolve: async () => ({
+        email: 'contact@acme.fr',
+        confidence: 0.50,
+        cost_cents: 0,
+        providerRaw: { qualification: 'catch_all' },
+      }),
+    },
+  });
+  const r = await leadExhauster(BASE_INPUT, { adapters });
+  // Avec le seuil dédié 0.50, catch_all passe (avant S2 il était rejeté).
+  assert.equal(r.status, 'ok');
+  assert.equal(r.email, 'contact@acme.fr');
+  assert.equal(r.source, 'dropcontact');
+  assert.equal(r.cost_cents, 0);
+});
+
+test('S2 — dropcontact role 0.30 reste rejeté (< seuil dédié 0.50)', async () => {
+  const { adapters } = makeAdapters({
+    scrapeDomain: async () => ({
+      emails: [], teamProfiles: [], pagesVisited: [], pagesFailed: [], signals: [],
+    }),
+    dropcontact: {
+      name: 'dropcontact',
+      enabled: true,
+      resolve: async () => ({
+        email: 'webmaster@acme.fr',
+        confidence: 0.30,
+        cost_cents: 0,
+        providerRaw: { qualification: 'role' },
+      }),
+    },
+  });
+  const r = await leadExhauster(BASE_INPUT, { adapters });
+  assert.equal(r.status, 'unresolvable');
+  assert.equal(r.email, null);
+});
+
+test('S2 — seuil dédié dropcontact configurable via input', async () => {
+  // Override input : seuil dédié monté à 0.95 → rejette catch_all 0.50
+  const { adapters } = makeAdapters({
+    scrapeDomain: async () => ({
+      emails: [], teamProfiles: [], pagesVisited: [], pagesFailed: [], signals: [],
+    }),
+    dropcontact: {
+      name: 'dropcontact',
+      enabled: true,
+      resolve: async () => ({
+        email: 'contact@acme.fr',
+        confidence: 0.50,
+        cost_cents: 0,
+        providerRaw: { qualification: 'catch_all' },
+      }),
+    },
+  });
+  const r = await leadExhauster(
+    { ...BASE_INPUT, dropcontactConfidenceThreshold: 0.95 },
+    { adapters },
+  );
+  assert.equal(r.status, 'unresolvable');
+});
+
+test('S2 — interne 0.85 supérieur à dropcontact catch_all 0.50 → interne gagne', async () => {
+  // Régression : on doit toujours préférer le meilleur candidate. Si patterns
+  // interne donne 0.88 et Dropcontact catch_all 0.50, on prend interne.
+  const { adapters } = makeAdapters({
+    scrapeDomain: async () => ({
+      emails: [{ email: 'jean.dupont@acme.fr', confidence: 0.88, sources: ['scraping:/contact'] }],
+      teamProfiles: [
+        { firstName: 'Jean', lastName: 'Dupont', role: 'CEO', roleKeyword: 'ceo', roleScore: 0.9, foundOn: '/contact' },
+      ],
+      pagesVisited: [{ path: '/contact', status: 200 }],
+      pagesFailed: [],
+      signals: [],
+    }),
+    dropcontact: {
+      name: 'dropcontact',
+      enabled: true,
+      resolve: async () => ({
+        email: 'contact@acme.fr',
+        confidence: 0.50,
+        cost_cents: 0,
+        providerRaw: { qualification: 'catch_all' },
+      }),
+    },
+  });
+  const r = await leadExhauster(BASE_INPUT, { adapters });
+  assert.equal(r.status, 'ok');
+  assert.equal(r.email, 'jean.dupont@acme.fr');
+  assert.notEqual(r.source, 'dropcontact');
+});
+
 test('orchestrateur — simulated=true → skip dropcontact', async () => {
   const { adapters } = makeAdapters({
     scrapeDomain: async () => ({

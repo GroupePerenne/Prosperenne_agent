@@ -77,6 +77,14 @@ async function leadExhauster(input = {}, opts = {}) {
   const threshold = Number.isFinite(input.confidenceThreshold)
     ? input.confidenceThreshold
     : DEFAULT_CONFIDENCE_THRESHOLD;
+  // S2 (8 mai 2026) — seuil dédié Dropcontact, distinct du seuil interne.
+  // Doctrine Paul 6 mai : "false positives = undelivered, no damage" → on
+  // accepte les qualif catch_all (0.50) en plus des nominative (0.95).
+  // Pay-on-success : catch_all n'est PAS facturé par Dropcontact, donc
+  // l'élargissement n'engage pas le quota 1500 crédits/mois additionnel.
+  const dropcontactThreshold = Number.isFinite(input.dropcontactConfidenceThreshold)
+    ? input.dropcontactConfidenceThreshold
+    : (Number(process.env.DROPCONTACT_MIN_CONFIDENCE) || 0.50);
   const experimentsApplied = extractAppliedExperiments(input.experimentsContext);
   const signals = [];
 
@@ -134,118 +142,39 @@ async function leadExhauster(input = {}, opts = {}) {
     signals.push('domain_unresolved');
   }
 
-  // ─── Étape 2 : résolution décideur ──────────────────────────────────────
-  // On scrape le domaine une seule fois pour nourrir à la fois
-  // resolveDecisionMaker (teamProfiles) et resolveEmail (emails/teamProfiles).
-  // Si le domaine est absent, le scraping est skippé.
-  let scrapedContext = { emails: [], teamProfiles: [], pagesVisited: [], pagesFailed: [], signals: [] };
-  if (domainResult.domain) {
-    const scraper = adapters.scrapeDomain || scrapeDomain;
-    scrapedContext = await scraper(
-      {
-        domain: domainResult.domain,
-        firstName: input.firstName,
-        lastName: input.lastName,
-      },
-      { fetchImpl: opts.fetchImpl, logger },
-    ).catch((err) => {
-      log(logger, 'warn', 'exhauster.scraping.error', { err: err && err.message });
-      return { emails: [], teamProfiles: [], pagesVisited: [], pagesFailed: [], signals: ['scraping_error'] };
-    });
-    signals.push(`scraped.${scrapedContext.pagesVisited.length}_visited.${scrapedContext.pagesFailed.length}_failed`);
-  }
-
-  const dmResolver = adapters.resolveDecisionMaker || resolveDecisionMaker;
-  const decisionMaker = dmResolver({
-    firstName: input.firstName,
-    lastName: input.lastName,
-    inseeRole: input.inseeRole,
-    trancheEffectif: input.trancheEffectif,
-    teamProfiles: scrapedContext.teamProfiles,
+  // ─── Étapes 2-4 : cascade interne (scrape + DM + email) || Dropcontact ─
+  // S3 (8 mai 2026) — parallélisation : la cascade interne et l'appel
+  // Dropcontact tournent en parallèle après resolveDomain. Latence totale
+  // = max(internal, dropcontact) au lieu de séquentiel. Dropcontact a son
+  // propre pay-on-success, donc l'élargissement n'engage pas le quota
+  // additionnel sur les misses ou catch_all.
+  const internalPromise = runInternalCascade({
+    input,
+    domainResult,
+    adapters,
+    threshold,
+    logger,
+    fetchImpl: opts.fetchImpl,
   });
-  if (decisionMaker) {
-    signals.push(...(decisionMaker.signals || []).map((s) => `dm.${s}`));
-  } else {
-    signals.push('dm.no_candidate');
-  }
+  const dropcontactPromise = runDropcontactCascade({
+    input,
+    domainResult,
+    adapters,
+    logger,
+  });
 
-  // ─── Étape 3 : résolution email interne ─────────────────────────────────
-  // resolveEmail exploite les mêmes inputs scrapés si on lui injecte un
-  // scraper qui retourne le cache. Sinon il re-scrape. Ici on optimise :
-  // on lui injecte un scraper-cache qui re-sert scrapedContext.
-  let emailResult = {
-    status: 'unresolvable',
-    email: null,
-    confidence: 0,
-    source: 'none',
-    signals: [],
-    candidateHint: null,
-  };
+  const [internalOutcome, dropcontactOutcome] = await Promise.all([
+    internalPromise,
+    dropcontactPromise,
+  ]);
 
-  // Si on n'a pas de domaine ou pas de décideur, on skip resolveEmail
-  // interne. Dropcontact peut encore faire son travail.
-  if (domainResult.domain && decisionMaker && (decisionMaker.firstName || decisionMaker.lastName)) {
-    const emailResolver = adapters.resolveEmail || resolveEmail;
-    const cachedScraper = async () => scrapedContext;
-    emailResult = await emailResolver(
-      {
-        domain: domainResult.domain,
-        firstName: decisionMaker.firstName,
-        lastName: decisionMaker.lastName,
-        companyName: input.companyName,
-        siren: input.siren,
-        companyLinkedInUrl: input.companyLinkedInUrl,
-        profileLinkedInUrl: input.profileLinkedInUrl,
-        naf: input.naf,
-        trancheEffectif: input.trancheEffectif,
-        confidenceThreshold: threshold,
-      },
-      {
-        scraper: cachedScraper,
-        logger,
-      },
-    ).catch((err) => {
-      log(logger, 'warn', 'exhauster.resolveEmail.error', { err: err && err.message });
-      return {
-        status: 'unresolvable',
-        email: null,
-        confidence: 0,
-        source: 'none',
-        signals: ['resolve_email_error'],
-        candidateHint: null,
-      };
-    });
-    signals.push(...(emailResult.signals || []).map((s) => `email.${s}`));
-  } else {
-    signals.push('email.skipped_missing_inputs');
-  }
+  const scrapedContext = internalOutcome.scrapedContext;
+  const decisionMaker = internalOutcome.decisionMaker;
+  const emailResult = internalOutcome.emailResult;
+  signals.push(...internalOutcome.signals);
 
-  // ─── Étape 4 : cascade Dropcontact ──────────────────────────────────────
-  // Stub Jalon 2 : l'adapter existe mais est désactivé par défaut, retourne
-  // toujours un résultat vide. Le câblage réel (budget check, circuit
-  // breaker, HTTP batch + polling) vient au Jalon 3.
-  let cascadeResult = null;
-  if (emailResult.status !== 'ok' && !input.simulated) {
-    const dropcontact = adapters.dropcontact || null;
-    if (dropcontact && typeof dropcontact.resolve === 'function' && dropcontact.enabled) {
-      const payload = {
-        firstName: (decisionMaker && decisionMaker.firstName) || input.firstName,
-        lastName: (decisionMaker && decisionMaker.lastName) || input.lastName,
-        companyName: input.companyName,
-        companyDomain: domainResult.domain,
-        siren: input.siren,
-      };
-      cascadeResult = await dropcontact.resolve(payload).catch((err) => {
-        log(logger, 'warn', 'exhauster.dropcontact.error', { err: err && err.message });
-        return { email: null, confidence: 0, cost_cents: 0, providerRaw: { error: 'throw' } };
-      });
-      signals.push(`cascade.dropcontact.${cascadeResult && cascadeResult.email ? 'hit' : 'miss'}`);
-    } else {
-      signals.push('cascade.skipped_dropcontact_off');
-    }
-  } else if (input.simulated) {
-    signals.push('cascade.skipped_simulated');
-  }
+  const cascadeResult = dropcontactOutcome.result;
+  signals.push(...dropcontactOutcome.signals);
 
   // ─── Choix du meilleur résultat ─────────────────────────────────────────
   const candidates = [];
@@ -257,7 +186,8 @@ async function leadExhauster(input = {}, opts = {}) {
       cost_cents: 0,
     });
   }
-  if (cascadeResult && cascadeResult.email && cascadeResult.confidence >= threshold) {
+  // S2 — seuil dédié Dropcontact (0.50 par défaut, accepte catch_all)
+  if (cascadeResult && cascadeResult.email && cascadeResult.confidence >= dropcontactThreshold) {
     candidates.push({
       email: cascadeResult.email,
       confidence: cascadeResult.confidence,
@@ -279,7 +209,13 @@ async function leadExhauster(input = {}, opts = {}) {
     finalCost = best.cost_cents;
   }
 
-  const status = (finalEmail && finalConfidence >= threshold)
+  // S2 — l'arbitrage final accepte aussi le seuil dédié Dropcontact quand
+  // le best candidate vient de cette source. Sans ce relâchement, un
+  // catch_all 0.50 serait re-rejeté par le seuil interne 0.80.
+  const effectiveThreshold = finalSource === SOURCES.DROPCONTACT
+    ? dropcontactThreshold
+    : threshold;
+  const status = (finalEmail && finalConfidence >= effectiveThreshold)
     ? STATUS.OK
     : STATUS.UNRESOLVABLE;
 
@@ -346,6 +282,136 @@ async function reportFeedback(p = {}) {
   } catch {
     return false;
   }
+}
+
+// ─── Cascades parallèles (S3) ──────────────────────────────────────────────
+
+/**
+ * Cascade interne : scrape domaine + resolveDecisionMaker + resolveEmail.
+ * Encapsule les étapes 2-3 historiques pour permettre la parallélisation
+ * avec Dropcontact (S3).
+ *
+ * Retourne { scrapedContext, decisionMaker, emailResult, signals[] }.
+ * Les signals sont retournés au caller pour évite les races sur l'array
+ * mutable shared.
+ */
+async function runInternalCascade({ input, domainResult, adapters, threshold, logger, fetchImpl }) {
+  const localSignals = [];
+  let scrapedContext = { emails: [], teamProfiles: [], pagesVisited: [], pagesFailed: [], signals: [] };
+
+  if (domainResult.domain) {
+    const scraper = adapters.scrapeDomain || scrapeDomain;
+    scrapedContext = await scraper(
+      {
+        domain: domainResult.domain,
+        firstName: input.firstName,
+        lastName: input.lastName,
+      },
+      { fetchImpl, logger },
+    ).catch((err) => {
+      log(logger, 'warn', 'exhauster.scraping.error', { err: err && err.message });
+      return { emails: [], teamProfiles: [], pagesVisited: [], pagesFailed: [], signals: ['scraping_error'] };
+    });
+    localSignals.push(`scraped.${scrapedContext.pagesVisited.length}_visited.${scrapedContext.pagesFailed.length}_failed`);
+  }
+
+  const dmResolver = adapters.resolveDecisionMaker || resolveDecisionMaker;
+  const decisionMaker = dmResolver({
+    firstName: input.firstName,
+    lastName: input.lastName,
+    inseeRole: input.inseeRole,
+    trancheEffectif: input.trancheEffectif,
+    teamProfiles: scrapedContext.teamProfiles,
+  });
+  if (decisionMaker) {
+    localSignals.push(...(decisionMaker.signals || []).map((s) => `dm.${s}`));
+  } else {
+    localSignals.push('dm.no_candidate');
+  }
+
+  let emailResult = {
+    status: 'unresolvable',
+    email: null,
+    confidence: 0,
+    source: 'none',
+    signals: [],
+    candidateHint: null,
+  };
+
+  if (domainResult.domain && decisionMaker && (decisionMaker.firstName || decisionMaker.lastName)) {
+    const emailResolver = adapters.resolveEmail || resolveEmail;
+    const cachedScraper = async () => scrapedContext;
+    emailResult = await emailResolver(
+      {
+        domain: domainResult.domain,
+        firstName: decisionMaker.firstName,
+        lastName: decisionMaker.lastName,
+        companyName: input.companyName,
+        siren: input.siren,
+        companyLinkedInUrl: input.companyLinkedInUrl,
+        profileLinkedInUrl: input.profileLinkedInUrl,
+        naf: input.naf,
+        trancheEffectif: input.trancheEffectif,
+        confidenceThreshold: threshold,
+      },
+      {
+        scraper: cachedScraper,
+        logger,
+      },
+    ).catch((err) => {
+      log(logger, 'warn', 'exhauster.resolveEmail.error', { err: err && err.message });
+      return {
+        status: 'unresolvable',
+        email: null,
+        confidence: 0,
+        source: 'none',
+        signals: ['resolve_email_error'],
+        candidateHint: null,
+      };
+    });
+    localSignals.push(...(emailResult.signals || []).map((s) => `email.${s}`));
+  } else {
+    localSignals.push('email.skipped_missing_inputs');
+  }
+
+  return { scrapedContext, decisionMaker, emailResult, signals: localSignals };
+}
+
+/**
+ * Cascade Dropcontact : appel direct au provider, indépendant de la cascade
+ * interne. Tourne en parallèle (S3) pour minimiser la latence totale.
+ *
+ * Retourne { result, signals[] } où result est null si skip.
+ */
+async function runDropcontactCascade({ input, domainResult, adapters, logger }) {
+  const localSignals = [];
+
+  if (input.simulated) {
+    localSignals.push('cascade.skipped_simulated');
+    return { result: null, signals: localSignals };
+  }
+
+  const dropcontact = adapters.dropcontact || null;
+  if (!dropcontact || typeof dropcontact.resolve !== 'function' || !dropcontact.enabled) {
+    localSignals.push('cascade.skipped_dropcontact_off');
+    return { result: null, signals: localSignals };
+  }
+
+  const payload = {
+    firstName: input.firstName,
+    lastName: input.lastName,
+    companyName: input.companyName,
+    companyDomain: domainResult.domain,
+    siren: input.siren,
+  };
+
+  const result = await dropcontact.resolve(payload).catch((err) => {
+    log(logger, 'warn', 'exhauster.dropcontact.error', { err: err && err.message });
+    return { email: null, confidence: 0, cost_cents: 0, providerRaw: { error: 'throw' } };
+  });
+
+  localSignals.push(`cascade.dropcontact.${result && result.email ? 'hit' : 'miss'}`);
+  return { result, signals: localSignals };
 }
 
 // ─── Helpers internes ──────────────────────────────────────────────────────
