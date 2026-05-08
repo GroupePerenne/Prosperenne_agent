@@ -80,7 +80,34 @@ function extractFirstName(raw) {
  */
 function extractLastName(raw) {
   if (!raw) return '';
-  const tokens = String(raw).trim().split(/\s+/).filter(Boolean);
+  // S1bis (8 mai 2026 PM) — gestion format RNE avec parenthèses : nom d'usage
+  // entre parenthèses différent du nom légal. Cas observés en prod 8 mai :
+  //   "DORCHIES (DORCHIES)"  → "DORCHIES"   (parenthèse identique = doublon)
+  //   "LANCIA (PIN)"         → "LANCIA-PIN" (parenthèse différente = composé)
+  //   "LUZY (LUZY)"          → "LUZY"
+  //   "ESCOFFIER (ESCOFFIER" → "ESCOFFIER"  (parenthèse mal fermée parfois)
+  //
+  // Stratégie : extraire le contenu entre parenthèses, comparer au nom hors
+  // parenthèses. Si identique (case-insensitive) → strip parenthèses. Sinon
+  // → fusionner avec tiret comme nom composé "Nom-Usage".
+  let s = String(raw).trim();
+  const parenMatch = s.match(/^([^(]+?)\s*\(([^)]*?)\)?\s*$/);
+  if (parenMatch) {
+    const outside = parenMatch[1].trim();
+    const inside = parenMatch[2].trim();
+    if (!inside) {
+      // Parenthèse vide ou mal fermée : strip
+      s = outside;
+    } else if (outside.toLowerCase() === inside.toLowerCase()) {
+      // Doublon identique : strip parenthèse, garder le nom unique
+      s = outside;
+    } else {
+      // Composé authentique : fusionner avec tiret pour donner "Lancia-Pin"
+      s = `${outside}-${inside}`;
+    }
+  }
+
+  const tokens = s.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return '';
   // Dédoublonne UNIQUEMENT les répétitions consécutives identiques (case-insensitive).
   // Ne pas dédoublonner partout : "Pierre Pierre Dupont" → "Pierre Dupont"

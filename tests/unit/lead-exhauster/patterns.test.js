@@ -127,6 +127,31 @@ test('extractLastName — falsy', () => {
   assert.equal(extractLastName('   '), '');
 });
 
+// S1bis (8 mai 2026 PM) — format RNE avec parenthèses (nom d'usage).
+// Cas observés en prod 8 mai sur leads Johnny + Morgane.
+test('S1bis — parenthèse identique (doublon nom usage = nom légal) → strip', () => {
+  assert.equal(extractLastName('DORCHIES (DORCHIES)'), 'DORCHIES');
+  assert.equal(extractLastName('LUZY (LUZY)'), 'LUZY');
+  assert.equal(extractLastName('PETIT (PETIT)'), 'PETIT');
+  assert.equal(extractLastName('GIROD (GIROD)'), 'GIROD');
+});
+
+test('S1bis — parenthèse différente → composé avec tiret', () => {
+  assert.equal(extractLastName('LANCIA (PIN)'), 'LANCIA-PIN');
+  assert.equal(extractLastName('Dupont (Martin)'), 'Dupont-Martin');
+});
+
+test('S1bis — parenthèse mal fermée ou vide → strip', () => {
+  assert.equal(extractLastName('ESCOFFIER (ESCOFFIER'), 'ESCOFFIER');
+  assert.equal(extractLastName('Dupont ()'), 'Dupont');
+  assert.equal(extractLastName('Dupont (   )'), 'Dupont');
+});
+
+test('S1bis — parenthèse case-insensitive sur match doublon', () => {
+  assert.equal(extractLastName('Dorchies (DORCHIES)'), 'Dorchies');
+  assert.equal(extractLastName('DUPONT (dupont)'), 'DUPONT');
+});
+
 // ─── extractFirstName + normalizeNamePart : régression bug prod 8 mai ──────
 // Vérifie que la chaîne complète extraction → normalisation produit le
 // bon RowKey LeadContact pour les cas observés.
