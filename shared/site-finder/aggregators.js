@@ -60,6 +60,25 @@ const AGGREGATOR_DOMAINS = new Set([
   '118000.fr',          // annuaire pro (préventif)
   'societeinfo.com',    // annuaire entreprises (sans tiret, vu v8)
   'kbis.fr',            // annuaire kbis publics (préventif)
+  // V8.2 (8 mai 2026 PM) — sites de presse/news qui ne sont JAMAIS des sites
+  // entreprises mais peuvent apparaître dans Google search avec articles
+  // citant le dirigeant. Cause faux positif Michel FONTAINE → lprventesweb@leprogres.fr.
+  'leprogres.fr',
+  'lemonde.fr',
+  'lefigaro.fr',
+  'liberation.fr',
+  'lesechos.fr',
+  'latribune.fr',
+  'ouest-france.fr',
+  'lavoixdunord.fr',
+  'sudouest.fr',
+  'ladepeche.fr',
+  'leparisien.fr',
+  'lefait.com',
+  'francebleu.fr',
+  'france3-regions.francetvinfo.fr',
+  'francetvinfo.fr',
+  'bfmtv.com',
   // Données publiques + presse
   'annuaire-entreprises.data.gouv.fr',
   'data.gouv.fr',
