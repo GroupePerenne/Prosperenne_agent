@@ -51,6 +51,15 @@ const AGGREGATOR_DOMAINS = new Set([
   // Observés polluants en prod 8 mai 2026 (LeadContacts run Morgane/Johnny)
   'repreneurs.com',     // annuaire cession entreprise
   'infonet.fr',         // annuaire fiches INPI
+  // Observés probe AirWorker 8 mai PM (Playwright Google)
+  'odella.fr',          // annuaire pompes funèbres + cession
+  'mappy.com',          // cartes + annuaire
+  'fr.mappy.com',
+  'mil.wf',             // annuaire automatisé sous-domaines avec siren dans URL
+  '118712.fr',          // annuaire pro (équivalent pages-jaunes)
+  '118000.fr',          // annuaire pro (préventif)
+  'societeinfo.com',    // annuaire entreprises (sans tiret, vu v8)
+  'kbis.fr',            // annuaire kbis publics (préventif)
   // Données publiques + presse
   'annuaire-entreprises.data.gouv.fr',
   'data.gouv.fr',
