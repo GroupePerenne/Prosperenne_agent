@@ -175,6 +175,25 @@ test('brave — 429 → SearchBlockedError(rate_limited)', async () => {
   );
 });
 
+// S7 (8 mai 2026) — fix bug 402 silencieux : Brave plan payant cap mensuel
+// atteint répondait 200 OK + body vide → return [] silencieux. Découvert
+// post-mortem 8 mai PM. Le code traite maintenant 402 explicitement comme
+// SearchBlockedError(quota_exceeded_server) pour basculer cascade + logger.
+test('brave — 402 USAGE_LIMIT_EXCEEDED → SearchBlockedError(quota_exceeded_server)', async () => {
+  const { stub } = makeFetchStub({
+    status: 402,
+    body: {
+      type: 'ErrorResponse',
+      error: { code: 'USAGE_LIMIT_EXCEEDED', detail: 'Usage limit exceeded.' },
+    },
+  });
+  const quota = makeQuotaStub();
+  await assert.rejects(
+    () => search('q', { fetchImpl: stub, apiKey: 'k', quotaImpl: quota.stub }),
+    (err) => err instanceof SearchBlockedError && err.reason === 'quota_exceeded_server' && err.status === 402,
+  );
+});
+
 test('brave — 422 invalid query → SearchTransientError', async () => {
   const { stub } = makeFetchStub({ status: 422, body: {} });
   const quota = makeQuotaStub();

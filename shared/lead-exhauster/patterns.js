@@ -40,6 +40,88 @@ function normalizeNamePart(raw) {
 }
 
 /**
+ * Extrait le PREMIER prénom d'un champ RNE `prenoms` qui contient tous les
+ * prénoms séparés par des espaces (ex. "Laurent Jean-Claude Marcel").
+ *
+ * Préserve les prénoms composés à tiret ("Jean-Pierre" reste tel quel) et
+ * casse uniquement sur espace. La casse et les accents originaux sont
+ * conservés (la normalisation pour patterns email / RowKey reste à la charge
+ * de `normalizeNamePart`).
+ *
+ *   extractFirstName("Laurent Jean-Claude Marcel") → "Laurent"
+ *   extractFirstName("Jean-Pierre")                → "Jean-Pierre"
+ *   extractFirstName("")                           → ""
+ *   extractFirstName("  Marie   Hélène ")          → "Marie"
+ *
+ * Bug observé en prod 8 mai 2026 : sans cette extraction, `prenoms` brut
+ * traverse le pipeline et `normalizeNamePart` strippe les espaces internes
+ * (ex. → "laurentjean-claudemarcel"), corrompant l'input Dropcontact.
+ */
+function extractFirstName(raw) {
+  if (!raw) return '';
+  const tokens = String(raw).trim().split(/\s+/);
+  return tokens[0] || '';
+}
+
+/**
+ * Nettoie un nom de famille en dédoublonnant les répétitions consécutives
+ * IDENTIQUES (insensibles à la casse). Préserve les noms composés.
+ *
+ *   extractLastName("Dorchies Dorchies") → "Dorchies"
+ *   extractLastName("Petit Petit")       → "Petit"
+ *   extractLastName("Lancia Pin")        → "Lancia Pin"  (composé authentique)
+ *   extractLastName("Lancia-Pin")        → "Lancia-Pin"
+ *   extractLastName("Dupont")            → "Dupont"
+ *
+ * Bug observé en prod 8 mai 2026 : RowKeys `dorchiesdorchies`, `luzyluzy`,
+ * `petitpetit` — RNE renvoie parfois nom_naissance + nom_usage identiques
+ * concaténés dans le champ `nom`. La déduplication évite de présenter à
+ * Dropcontact un nom irréel comme "Dorchiesdorchies".
+ */
+function extractLastName(raw) {
+  if (!raw) return '';
+  // S1bis (8 mai 2026 PM) — gestion format RNE avec parenthèses : nom d'usage
+  // entre parenthèses différent du nom légal. Cas observés en prod 8 mai :
+  //   "DORCHIES (DORCHIES)"  → "DORCHIES"   (parenthèse identique = doublon)
+  //   "LANCIA (PIN)"         → "LANCIA-PIN" (parenthèse différente = composé)
+  //   "LUZY (LUZY)"          → "LUZY"
+  //   "ESCOFFIER (ESCOFFIER" → "ESCOFFIER"  (parenthèse mal fermée parfois)
+  //
+  // Stratégie : extraire le contenu entre parenthèses, comparer au nom hors
+  // parenthèses. Si identique (case-insensitive) → strip parenthèses. Sinon
+  // → fusionner avec tiret comme nom composé "Nom-Usage".
+  let s = String(raw).trim();
+  const parenMatch = s.match(/^([^(]+?)\s*\(([^)]*?)\)?\s*$/);
+  if (parenMatch) {
+    const outside = parenMatch[1].trim();
+    const inside = parenMatch[2].trim();
+    if (!inside) {
+      // Parenthèse vide ou mal fermée : strip
+      s = outside;
+    } else if (outside.toLowerCase() === inside.toLowerCase()) {
+      // Doublon identique : strip parenthèse, garder le nom unique
+      s = outside;
+    } else {
+      // Composé authentique : fusionner avec tiret pour donner "Lancia-Pin"
+      s = `${outside}-${inside}`;
+    }
+  }
+
+  const tokens = s.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return '';
+  // Dédoublonne UNIQUEMENT les répétitions consécutives identiques (case-insensitive).
+  // Ne pas dédoublonner partout : "Pierre Pierre Dupont" → "Pierre Dupont"
+  // (un seul "Pierre"), mais "Pierre Dupont Pierre" reste "Pierre Dupont Pierre".
+  const out = [tokens[0]];
+  for (let i = 1; i < tokens.length; i++) {
+    if (tokens[i].toLowerCase() !== out[out.length - 1].toLowerCase()) {
+      out.push(tokens[i]);
+    }
+  }
+  return out.join(' ');
+}
+
+/**
  * Normalise un domaine :
  *   - strip https?:// et ftp://
  *   - strip www. initial
@@ -195,6 +277,8 @@ function confidenceForPattern(patternIdOrTemplate) {
 
 module.exports = {
   normalizeNamePart,
+  extractFirstName,
+  extractLastName,
   normalizeDomain,
   getBootstrapPatterns,
   rankPatternsForContext,
