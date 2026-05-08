@@ -37,6 +37,9 @@ const duckduckgoLite = require('./webSearchBackends/duckduckgoLite');
 const mojeek = require('./webSearchBackends/mojeek');
 const ecosia = require('./webSearchBackends/ecosia');
 const braveApi = require('./webSearchBackends/braveApi');
+// S9 (8 mai 2026) — Playwright Google scraper local (AirWorker mode).
+// Module léger au load (require playwright est lazy dans getBrowserContext).
+const playwrightGoogle = require('./webSearchBackends/playwrightGoogle');
 
 // Map BACKEND_ID → module pour résolution depuis env config.
 const BACKEND_REGISTRY = {
@@ -45,6 +48,7 @@ const BACKEND_REGISTRY = {
   [duckduckgoLite.BACKEND_ID]: duckduckgoLite,
   [mojeek.BACKEND_ID]: mojeek,
   [ecosia.BACKEND_ID]: ecosia,
+  [playwrightGoogle.BACKEND_ID]: playwrightGoogle,
 };
 
 // Brave en tête : qualité élevée + index propre. Kill-switch local quota

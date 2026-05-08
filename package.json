@@ -19,6 +19,7 @@
     "mem0ai": "^3.0.1"
   },
   "devDependencies": {
-    "@socialgouv/codes-naf": "^1.1.1"
+    "@socialgouv/codes-naf": "^1.1.1",
+    "playwright": "^1.59.1"
   }
 }
