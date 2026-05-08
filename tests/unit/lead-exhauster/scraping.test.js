@@ -304,10 +304,15 @@ test('scrapeDomain — pages failed tracées', async () => {
 
 // ─── Constants sanity ─────────────────────────────────────────────────────
 
-test('TARGET_PATHS contient les pages FR conventionnelles', () => {
+test('TARGET_PATHS contient les pages FR conventionnelles (S6 réduit 9→6)', () => {
   assert.ok(_constants.TARGET_PATHS.includes('/contact'));
   assert.ok(_constants.TARGET_PATHS.includes('/equipe'));
-  assert.ok(_constants.TARGET_PATHS.includes('/mentions-legales'));
+  assert.ok(_constants.TARGET_PATHS.includes('/a-propos'));
+  // S6 — pages retirées (rare contribution aux matches)
+  assert.equal(_constants.TARGET_PATHS.includes('/our-team'), false);
+  assert.equal(_constants.TARGET_PATHS.includes('/mentions-legales'), false);
+  assert.equal(_constants.TARGET_PATHS.includes('/qui-sommes-nous'), false);
+  assert.equal(_constants.TARGET_PATHS.length, 6);
 });
 
 test('JUNK_LOCAL_PARTS contient catch-all classiques', () => {

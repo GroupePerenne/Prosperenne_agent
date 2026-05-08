@@ -36,15 +36,20 @@ const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; PereneoBot/1.0; +https://os
 
 // Pages visées par ordre de probabilité d'y trouver des décideurs/emails.
 // La page d'accueil en dernier recours (signal plus dilué).
+//
+// S6 (8 mai 2026) — réduction 9 → 6 pages : pages retirées car contribuent
+// rarement à un match (mesure prod 8 mai sur 7 candidates avec scraping :
+// `email.pattern_contact_under_threshold` dans 6/7 cas, le scraping
+// trouvait des patterns déjà sous seuil 0.80, doublons de pages /a-propos
+// vs /qui-sommes-nous, /equipe vs /team déjà couverts par les pages courtes).
+// Gain estimé : ~24s/pire-cas (3 pages × 8s pageTimeout). Conserve coverage
+// majoritaire en gardant /contact, /equipe, /a-propos + équivalents EN.
 const TARGET_PATHS = Object.freeze([
   '/contact',
   '/equipe',
   '/a-propos',
-  '/about',
   '/team',
-  '/our-team',
-  '/mentions-legales',
-  '/qui-sommes-nous',
+  '/about',
   '/',
 ]);
 
