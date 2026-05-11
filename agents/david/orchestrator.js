@@ -195,9 +195,20 @@ Règles :
 
   // Consultant / internal : enqueue la réponse avec jitter humain (15-45 min
   // en heures ouvrées). Pas d'envoi instantané — voir shared/jitter.js doctrine.
+  //
+  // IDENTITÉ EXPÉDITEUR (fix 12 mai 2026 PM, recadrage Paul) : pour les classes
+  // consultant et internal, le `from` doit TOUJOURS être David, JAMAIS la
+  // boîte d'où vient le message d'origine. Incident vécu : un mail Pipedrive
+  // arrivé dans mila@oseys.fr (boîte multi-pollée par davidInbox), classifié
+  // internal, a généré un reply rédigé "Bonjour Paul, je viens de voir... David"
+  // mais envoyé DEPUIS mila@oseys.fr → schizophrénie d'identité.
+  //
+  // Cette règle ne s'applique PAS aux replies prospect (handleProspectReply
+  // ci-dessous) — celles-là doivent partir DEPUIS la boîte du commercial
+  // (Martin ou Mila) pour conserver la cohérence du thread mail prospect.
   if (decision.reply_draft && decision.reply_to && decision.reply_subject) {
     await enqueueReplyWithJitter({
-      mailbox: msg.mailbox || process.env.DAVID_EMAIL,
+      mailbox: process.env.DAVID_EMAIL,
       to: decision.reply_to,
       subject: decision.reply_subject,
       html: wrapHtml(decision.reply_draft),
