@@ -9,7 +9,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { resolveMem0Enrichments, sendFuzzyMatchEscalation } = require('../../shared/worker');
+const workerModule = require('../../shared/worker');
+const { resolveMem0Enrichments, sendFuzzyMatchEscalation } = workerModule;
+
+// Tests préexistants présupposent que les enrichments Mem0 sont actifs.
+// Active le flag globalement pour ces tests (depuis le fix anti-fuite 12 mai
+// PM, le flag WORKER_MEM0_ENRICHMENTS_ENABLED est désactivé par défaut).
+// Reset systématique du cache patterns entre tests pour isolation.
+process.env.WORKER_MEM0_ENRICHMENTS_ENABLED = '1';
+test.beforeEach(() => {
+  if (workerModule._resetPatternsCache) workerModule._resetPatternsCache();
+});
 
 function makeMem0Stub({ prospectResult = [], patternResult = [] } = {}) {
   const calls = { retrieveProspect: [], retrievePatterns: [] };
@@ -113,6 +123,69 @@ test('resolveMem0Enrichments — context absent : pas de throw, comportement ide
   const res = await resolveMem0Enrichments({ mem0, lead: { siren: '123', secteur: 'conseil' } });
   assert.deepEqual(calls.retrieveProspect, ['123']);
   assert.deepEqual(res, { prospectMemories: [], patternMemories: [] });
+});
+
+// ────────── Anti-fuite quota Mem0 — kill-switch + cache (12 mai 2026 PM) ──────────
+
+test('resolveMem0Enrichments — kill-switch OFF par défaut : aucun call Mem0, vide retourné', async () => {
+  delete process.env.WORKER_MEM0_ENRICHMENTS_ENABLED;
+  const { mem0, calls } = makeMem0Stub();
+  const res = await resolveMem0Enrichments({
+    mem0,
+    lead: { siren: '123', email: 'x@y.fr', secteur: 'conseil' },
+  });
+  assert.equal(calls.retrieveProspect.length, 0, 'aucun retrieveProspect quand kill-switch OFF');
+  assert.equal(calls.retrievePatterns.length, 0, 'aucun retrievePatterns quand kill-switch OFF');
+  assert.deepEqual(res, { prospectMemories: [], patternMemories: [] });
+  // Restaure pour les tests suivants
+  process.env.WORKER_MEM0_ENRICHMENTS_ENABLED = '1';
+});
+
+test('resolveMem0Enrichments — kill-switch valeur autre que "1" (ex "true") : aussi désactivé (strict match)', async () => {
+  process.env.WORKER_MEM0_ENRICHMENTS_ENABLED = 'true';
+  const { mem0, calls } = makeMem0Stub();
+  await resolveMem0Enrichments({ mem0, lead: { siren: '123', secteur: 'conseil' } });
+  assert.equal(calls.retrieveProspect.length, 0);
+  assert.equal(calls.retrievePatterns.length, 0);
+  process.env.WORKER_MEM0_ENRICHMENTS_ENABLED = '1';
+});
+
+test('resolveMem0Enrichments — cache patterns : 2 leads même secteur → 1 seul retrievePatterns', async () => {
+  const { mem0, calls } = makeMem0Stub({ patternResult: [{ id: 'pat-conseil' }] });
+  const lead1 = { siren: '111', secteur: 'conseil' };
+  const lead2 = { siren: '222', secteur: 'conseil' };
+
+  const r1 = await resolveMem0Enrichments({ mem0, lead: lead1 });
+  const r2 = await resolveMem0Enrichments({ mem0, lead: lead2 });
+
+  assert.equal(calls.retrieveProspect.length, 2, 'retrieveProspect une fois par lead (siren différents)');
+  assert.equal(calls.retrievePatterns.length, 1, 'retrievePatterns une seule fois grâce au cache sector');
+  assert.deepEqual(r1.patternMemories, [{ id: 'pat-conseil' }]);
+  assert.deepEqual(r2.patternMemories, [{ id: 'pat-conseil' }], 'lead2 récupère depuis cache');
+});
+
+test('resolveMem0Enrichments — cache patterns : 2 secteurs différents → 2 retrievePatterns', async () => {
+  const { mem0, calls } = makeMem0Stub();
+  await resolveMem0Enrichments({ mem0, lead: { siren: '1', secteur: 'btp' } });
+  await resolveMem0Enrichments({ mem0, lead: { siren: '2', secteur: 'industrie' } });
+  assert.equal(calls.retrievePatterns.length, 2);
+  assert.deepEqual(calls.retrievePatterns.map((c) => c.sector), ['btp', 'industrie']);
+});
+
+test('resolveMem0Enrichments — cache patterns : sector normalisé (case-insensitive + trim)', async () => {
+  const { mem0, calls } = makeMem0Stub();
+  await resolveMem0Enrichments({ mem0, lead: { siren: '1', secteur: 'BTP' } });
+  await resolveMem0Enrichments({ mem0, lead: { siren: '2', secteur: 'btp' } });
+  await resolveMem0Enrichments({ mem0, lead: { siren: '3', secteur: '  btp  ' } });
+  // Les 3 secteurs normalisent vers la même clé 'btp'
+  assert.equal(calls.retrievePatterns.length, 1, '1 seul call pattern grâce normalisation');
+});
+
+test('_isEnrichmentsEnabled reflète bien la valeur de l env', () => {
+  process.env.WORKER_MEM0_ENRICHMENTS_ENABLED = '0';
+  assert.equal(workerModule._isEnrichmentsEnabled(), false);
+  process.env.WORKER_MEM0_ENRICHMENTS_ENABLED = '1';
+  assert.equal(workerModule._isEnrichmentsEnabled(), true);
 });
 
 // ──────────────── 4.5 bis Item 2 — sendFuzzyMatchEscalation ────────────────
