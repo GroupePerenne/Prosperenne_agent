@@ -167,7 +167,7 @@ Depuis 1er mai 2026, `agents/david/orchestrator.js handleInboxPoll` itère sur `
 
 ### 5.4 Apps Entra v2
 
-- **`OSEYS-ProspectionAgent`** (Tenant `70f9e20f-964f-4925-8dc2-b72d62384629`) — permissions Application : `Mail.Send`, `Mail.Read`, `User.Read.All` (admin consent accordé)
+- **`OSEYS-ProspectionAgent`** (Tenant `70f9e20f-964f-4925-8dc2-b72d62384629`) — permissions Application : `Mail.Send`, `Mail.Read`, `Mail.ReadWrite`, `User.Read.All` (admin consent accordé). `Mail.ReadWrite` ajoutée 12 mai 2026 PM via `az rest POST appRoleAssignments` (la commande `az ad app permission admin-consent` n'a granté que les permissions existantes, bug à connaître). Sans `Mail.ReadWrite`, `markAsRead` PATCH renvoie 403 ErrorAccessDenied — root cause de l'incident triple envois Johnny du 11 mai (12 doublons).
 - **`Pereneo-Charli-MCP-Server`** (Container App auth) — permissions `mcp.access`
 - **`Pereneo-Charli-Wrapper-CLI`** (Niveau 1 Charli machine Paul) — Bearer Entra v2 client_credentials
 
