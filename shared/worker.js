@@ -94,20 +94,88 @@ function linkify(s) {
 }
 
 // ─── Mem0 enrichments (pur, testable en isolation) ─────────────────────────
-// Skip prospect si lead.siren absent (pas d'email-as-fallback — cf. CLAUDE.md
-// et arbitrage produit session 21 avril 2026). Patterns retrievés quoi qu'il
-// arrive. Les deux retrieves s'exécutent en parallèle.
+//
+// Diagnostic 12 mai 2026 PM (Paul) — fuite quota Mem0 cloud SaaS :
+//   6999/5000 SEARCH events consommés sur le mois (quota dépassé HTTP 429).
+//   Cause principale : `resolveMem0Enrichments` est appelée par `bootstrapSequence`
+//   à CHAQUE envoi de séquence prospect (J0 + relances J+14 + J+28). Pour
+//   chaque appel, on lance retrieveProspect(siren) ET retrievePatterns(sector)
+//   en parallèle = 2 search Mem0 par lead envoyé.
+//
+//   Pic observé : 11 mai matin, 237 exécutions Lead Selector → estim 300-400
+//   search Mem0 sur la matinée. Cumul mensuel : >6000 search.
+//
+//   Aggravant : en début de pilote, ces 2 calls retournent quasi-toujours
+//   vide (0% des prospects ont des mémoires antérieures, peu de patterns
+//   appris en 11 jours). On paie pour récupérer ~0 information utile.
+//
+// Fix triple :
+//   1. Kill-switch global via env `WORKER_MEM0_ENRICHMENTS_ENABLED` (défaut "0",
+//      désactivé). À activer ("1") seulement quand le pilote a accumulé une
+//      base de mémoires exploitable (signal d'inflexion ~3 mois).
+//   2. Skip retrieveProspect si pas de SIREN sur le lead (déjà en place).
+//   3. Cache session-level pour retrievePatterns(sector) : 1 seul call par
+//      sector par run, pas N appels × N leads d'un même secteur. Cache
+//      in-process, partage entre tous les workers du même process Node.
+// Lecture dynamique du flag (pas figée au require) pour faciliter le tuning
+// runtime via App Settings sans redéployer le code et pour permettre aux tests
+// de set/reset le flag entre cas.
+function isEnrichmentsEnabled() {
+  return process.env.WORKER_MEM0_ENRICHMENTS_ENABLED === '1';
+}
+
+// Cache patterns par sector — TTL 10 min (suffit pour 1 run Lead Selector + relances)
+const PATTERNS_CACHE_TTL_MS = Number(process.env.PATTERNS_CACHE_TTL_MS || 10 * 60 * 1000);
+const patternsCache = new Map(); // key = sector lowercase, value = { fetchedAt, memories }
+
+function _getCachedPatterns(sector) {
+  const key = String(sector || '').toLowerCase().trim();
+  const entry = patternsCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > PATTERNS_CACHE_TTL_MS) {
+    patternsCache.delete(key);
+    return null;
+  }
+  return entry.memories;
+}
+
+function _setCachedPatterns(sector, memories) {
+  const key = String(sector || '').toLowerCase().trim();
+  patternsCache.set(key, { fetchedAt: Date.now(), memories });
+}
+
 async function resolveMem0Enrichments({ mem0, lead, context }) {
   if (!mem0) return { prospectMemories: [], patternMemories: [] };
 
+  // Kill-switch global : retourne vide sans appeler Mem0. Empêche la fuite
+  // quota tant que le pilote n'a pas accumulé une base exploitable.
+  if (!isEnrichmentsEnabled()) {
+    return { prospectMemories: [], patternMemories: [] };
+  }
+
   const tasks = [];
+
+  // 1. retrieveProspect : skip si pas de SIREN (cas 99% en début de pilote)
   if (lead && lead.siren) {
     tasks.push(mem0.retrieveProspect(lead.siren));
   } else {
     warnLog(context, `[mem0] prospect retrieve skipped: no SIREN for lead ${(lead && lead.email) || '(no email)'}`);
     tasks.push(Promise.resolve([]));
   }
-  tasks.push(mem0.retrievePatterns({ sector: lead && lead.secteur }));
+
+  // 2. retrievePatterns : cache session par sector (TTL 10 min)
+  const sector = lead && lead.secteur;
+  const cached = _getCachedPatterns(sector);
+  if (cached) {
+    tasks.push(Promise.resolve(cached));
+  } else {
+    tasks.push(
+      mem0.retrievePatterns({ sector }).then((memories) => {
+        _setCachedPatterns(sector, memories);
+        return memories;
+      })
+    );
+  }
 
   const [prospectMemories, patternMemories] = await Promise.all(tasks);
   return { prospectMemories, patternMemories };
@@ -425,4 +493,7 @@ module.exports = {
   sendScheduledStep,
   resolveMem0Enrichments,
   sendFuzzyMatchEscalation,
+  // Exposés pour tests (reset cache patterns + observation flag)
+  _resetPatternsCache() { patternsCache.clear(); },
+  _isEnrichmentsEnabled: isEnrichmentsEnabled,
 };
