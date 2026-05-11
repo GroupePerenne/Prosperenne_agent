@@ -42,11 +42,14 @@ const { DropcontactAdapter } = require('../shared/lead-exhauster/adapters/dropco
 const { pMapLimit } = require('../shared/utils/p-map-limit');
 const { processLead } = require('./airworker-process-lead');
 const playwrightGoogle = require('../shared/site-finder/sources/webSearchBackends/playwrightGoogle');
+const { isWorkerKilled } = require('../shared/storage-tables/workersControl');
 
 const CONCURRENCY = Number(process.env.AIRWORKER_CONCURRENCY) || 2;
 const BATCH_SIZE = Number(process.env.AIRWORKER_BATCH_SIZE) || 10;
 const SLEEP_BATCH_MS = Number(process.env.AIRWORKER_SLEEP_BATCH_MS) || 30_000;
 const SLEEP_EMPTY_MS = Number(process.env.AIRWORKER_SLEEP_EMPTY_MS) || 300_000;
+const KILL_CHECK_INTERVAL_MS = Number(process.env.AIRWORKER_KILL_CHECK_INTERVAL_MS) || 60_000;
+const WORKER_ID = process.env.AIRWORKER_WORKER_ID || 'airworker';
 const DRY_RUN = process.env.AIRWORKER_DRY_RUN === '1';
 
 const POSITIVE_TTL_DAYS = Number(process.env.LEADCONTACTS_POSITIVE_TTL_DAYS) || 90;
@@ -378,6 +381,14 @@ async function processBackgroundFill(deps, stats) {
     if (_shutdownRequested) break;
     if (leadsThisBatch >= FILL_BATCH_LEADS) break;
 
+    // BL-52 — Check kill-switch entre chaque département (toutes les 5-30 min
+    // selon volume dept). Permet une réactivité raisonnable du kill-switch
+    // distant même au milieu d'un cycle background fill très long.
+    if (await isWorkerKilled(WORKER_ID)) {
+      console.log(`[airworker:fill] kill-switch detected during dept iteration — breaking out of background fill`);
+      break;
+    }
+
     const dept = FILL_DEPARTMENTS[i];
     const filter = buildFillFilter(dept);
     const client = getLeadBaseClient();
@@ -551,8 +562,27 @@ async function mainLoop() {
     totalErrors: 0,
   };
 
+  let _killSwitchActive = false;
   while (!_shutdownRequested) {
     try {
+      // BL-52 (11 mai 2026) — Kill-switch distant : check Storage Table avant
+      // chaque cycle. Si flag actif, sleep KILL_CHECK_INTERVAL_MS et retry.
+      // Permet à Charli/Paul de mettre AirWorker en pause depuis n'importe où
+      // sans accès SSH (cf. incident 9 mai matin où Paul a dû rentrer au bureau
+      // pour `launchctl unload`). Cf. shared/storage-tables/workersControl.js.
+      const killed = await isWorkerKilled(WORKER_ID);
+      if (killed) {
+        if (!_killSwitchActive) {
+          console.log(`[airworker] KILL-SWITCH ACTIVE (${WORKER_ID}) — pause mode, will recheck in ${KILL_CHECK_INTERVAL_MS / 1000}s`);
+          _killSwitchActive = true;
+        }
+        await new Promise((r) => setTimeout(r, KILL_CHECK_INTERVAL_MS));
+        continue;
+      } else if (_killSwitchActive) {
+        console.log(`[airworker] kill-switch released — resuming normal cycle`);
+        _killSwitchActive = false;
+      }
+
       const briefs = await loadActiveBriefs();
       if (briefs.length === 0) {
         console.log('[airworker] no active briefs, sleep');
