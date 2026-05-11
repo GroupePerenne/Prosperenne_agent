@@ -1,31 +1,38 @@
 /**
  * Timer trigger — 8h Paris, du lundi au vendredi.
  *
- * Pour chaque consultant actif, David envoie un mail récap de l'activité
- * Prospérenne de la veille : envois par agent (Martin/Mila), ouvertures
- * détectées, réponses reçues, RDV fixés. Un résumé narratif + 1-2
- * propositions d'actions du jour sont générés par Claude.
+ * Pour chaque consultant pilote actif, David envoie un récap quotidien de
+ * l activité Prospérenne de la veille + cumul 7 jours.
  *
- * Heure locale Paris : garantie par l'app setting `WEBSITE_TIME_ZONE=Romance
+ * Refonte 12 mai 2026 PM (recadrage Paul) :
+ *   Avant : prompt Claude avec instruction "1-2 propositions d actions
+ *   concrètes pour aujourd hui" + tutoiement par défaut → posture stagiaire
+ *   paniqué qui propose des choses à faire même sans matière.
+ *   Après : template HTML structuré factuel (cf. shared/consultant-digest.js),
+ *   tableau dans l esprit du récap COMEX mais scopé sur les chiffres du seul
+ *   consultant. Pas de Claude pour générer du texte. Vouvoiement par défaut,
+ *   tutoiement seulement si brief consultantOnboarding tutoiement:true.
+ *
+ * Source des chiffres : Storage Table `dailyMetrics` alimentée par
+ * dailyDigest 00h. Source du registre tu/vous : Storage Table
+ * `consultantOnboarding` champ responses.tutoiement.
+ *
+ * Heure locale Paris : garantie par l app setting `WEBSITE_TIME_ZONE=Romance
  * Standard Time` sur le Function App.
- *
- * Consultants pilotes (MVP) : Morgane et Johnny, hardcodés via env vars
- * MORGANE_EMAIL / JOHNNY_EMAIL. Quand la liste grandira, on stockera les
- * consultants actifs dans Pipedrive (custom user field `is_prosperenne`) ou
- * dans un endpoint dédié.
- *
- * Règle d'honneur respectée dans le prompt LLM : aucun chiffre en dehors
- * des métriques factuelles calculées.
  */
 
 const { app } = require('@azure/functions');
+const { TableClient } = require('@azure/data-tables');
 const { sendMail } = require('../../shared/graph-mail');
 const { recordAction } = require('../../shared/storage-tables/davidActions');
-const { callClaude } = require('../../shared/anthropic');
-const { davidSignatureHtml } = require('../../shared/templates');
 const { parisDateParts } = require('../../shared/holidays');
 const { readEventsSince, summarizeEventsHtml } = require('../../shared/leadSelectorTrace');
 const { makeSafeLogger } = require('../../shared/safe-log');
+const { davidSignatureHtml } = require('../../shared/templates');
+const { formatConsultantDigestHtml } = require('../../shared/consultant-digest');
+
+const DAILY_METRICS_TABLE = process.env.DAILY_METRICS_TABLE || 'dailyMetrics';
+const CONSULTANT_ONBOARDING_TABLE = process.env.CONSULTANT_ONBOARDING_TABLE || 'consultantOnboarding';
 
 // ─── Helpers dates ─────────────────────────────────────────────────────────
 function getYesterdayParisISO() {
@@ -42,105 +49,63 @@ function formatDateFR(isoDate) {
   return `${d}/${m}/${y}`;
 }
 
-// ─── Pipedrive minimaliste (inline) ────────────────────────────────────────
-async function callPipedrive(path, query = {}) {
-  const token = process.env.PIPEDRIVE_TOKEN;
-  const domain = process.env.PIPEDRIVE_COMPANY_DOMAIN;
-  if (!token || !domain) throw new Error('PIPEDRIVE_TOKEN/PIPEDRIVE_COMPANY_DOMAIN non défini');
-  const url = new URL(`https://${domain}.pipedrive.com/api/v1${path}`);
-  url.searchParams.set('api_token', token);
-  for (const [k, v] of Object.entries(query)) {
-    if (v !== undefined && v !== null) url.searchParams.set(k, v);
-  }
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`Pipedrive ${path} ${res.status}`);
-  const data = await res.json();
-  return data.data || [];
-}
+// ─── Lecture Storage Tables ────────────────────────────────────────────────
 
-async function findPipedriveUserId(email) {
-  const users = await callPipedrive('/users', { limit: 500 });
-  const match = (Array.isArray(users) ? users : []).find((u) => u.email?.toLowerCase() === email.toLowerCase());
-  return match?.id || null;
+/**
+ * Lit toutes les entries dailyMetrics sur les 8 derniers jours pour un
+ * consultant donné. Schéma cf. shared/comex-digest.js + dailyDigest.
+ */
+async function readConsultantMetrics(consultantPrenomLower, dateRefIso) {
+  const conn = process.env.LEADBASE_STORAGE_CONNECTION_STRING || process.env.AzureWebJobsStorage;
+  if (!conn) return [];
+  const tc = TableClient.fromConnectionString(conn, DAILY_METRICS_TABLE);
+
+  const refMs = Date.parse(`${dateRefIso}T00:00:00Z`);
+  const startMs = refMs - 7 * 24 * 3600_000;
+  const dateStart = new Date(startMs).toISOString().slice(0, 10);
+  const monthsToScan = new Set([dateRefIso.slice(0, 7), dateStart.slice(0, 7)]);
+
+  const entries = [];
+  for (const month of monthsToScan) {
+    try {
+      const iter = tc.listEntities({
+        queryOptions: { filter: `PartitionKey eq '${month}'` },
+      });
+      for await (const e of iter) {
+        if (!e || !e.date) continue;
+        if (String(e.consultant || '').toLowerCase() !== consultantPrenomLower) continue;
+        const t = Date.parse(`${e.date}T00:00:00Z`);
+        if (t >= startMs && t <= refMs) entries.push(e);
+      }
+    } catch {
+      // Best effort par mois
+    }
+  }
+  return entries;
 }
 
 /**
- * Compte les envois (type email) par agent, les ouvertures (type email_open)
- * par agent, les réponses (stage REPLIED/QUALIFIED) et RDV fixés (stage
- * RDV_SET) pour un consultant sur une date donnée.
- *
- * Les subjects des activités sont préfixés `[martin]` / `[mila]` par le
- * worker (cf. shared/pipedrive.js logEmailSent), on les distingue ainsi.
+ * Lit le brief consultant (champ tutoiement notamment) depuis
+ * `consultantOnboarding`. Retourne `tutoiement` bool, défaut false (vouvoiement).
  */
-async function fetchConsultantMetrics(userId, dateISO) {
-  const metrics = { martinSent: 0, milaSent: 0, martinOpens: 0, milaOpens: 0, replies: 0, rdvSet: 0 };
-
-  const activities = await callPipedrive('/activities', {
-    user_id: userId,
-    done: 1,
-    start_date: dateISO,
-    end_date: dateISO,
-    limit: 500,
-  });
-  for (const act of (activities || [])) {
-    const subject = (act.subject || '').toLowerCase();
-    if (act.type === 'email') {
-      if (subject.startsWith('[martin]')) metrics.martinSent++;
-      else if (subject.startsWith('[mila]')) metrics.milaSent++;
-    } else if (act.type === 'email_open') {
-      if (subject.startsWith('[martin]')) metrics.martinOpens++;
-      else if (subject.startsWith('[mila]')) metrics.milaOpens++;
+async function readConsultantBrief(consultantEmail) {
+  const conn = process.env.AzureWebJobsStorage;
+  if (!conn) return { tutoiement: false };
+  const tc = TableClient.fromConnectionString(conn, CONSULTANT_ONBOARDING_TABLE);
+  try {
+    const entity = await tc.getEntity('consultant', String(consultantEmail || '').toLowerCase());
+    if (entity && entity.responses) {
+      const responses = typeof entity.responses === 'string'
+        ? JSON.parse(entity.responses)
+        : entity.responses;
+      return {
+        tutoiement: Boolean(responses && responses.tutoiement),
+      };
     }
+  } catch {
+    // Best effort : pas de brief = vouvoiement par défaut
   }
-
-  const stageReplied = Number(process.env.PIPEDRIVE_STAGE_REPLIED);
-  const stageQualified = Number(process.env.PIPEDRIVE_STAGE_QUALIFIED);
-  const stageRdvSet = Number(process.env.PIPEDRIVE_STAGE_RDV_SET);
-  for (const stageId of [stageReplied, stageQualified, stageRdvSet]) {
-    if (!stageId) continue;
-    const deals = await callPipedrive('/deals', { user_id: userId, stage_id: stageId, limit: 100 });
-    for (const d of (deals || [])) {
-      const updateDate = (d.update_time || '').slice(0, 10);
-      if (updateDate === dateISO) {
-        if (stageId === stageRdvSet) metrics.rdvSet++;
-        else metrics.replies++;
-      }
-    }
-  }
-  return metrics;
-}
-
-async function generateSummary(consultant, metrics, dateISO) {
-  const prompt = `Tu es David, responsable commercial OSEYS. Tu écris à ${consultant.prenom} son rapport quotidien Prospérenne pour le ${formatDateFR(dateISO)}.
-
-Métriques de la veille (${formatDateFR(dateISO)}) :
-- Martin : ${metrics.martinSent} envois · ${metrics.martinOpens} ouvertures détectées
-- Mila : ${metrics.milaSent} envois · ${metrics.milaOpens} ouvertures détectées
-- Réponses reçues : ${metrics.replies}
-- RDV fixés : ${metrics.rdvSet}
-
-RÈGLE D'HONNEUR (non négociable) :
-- Aucun chiffre inventé. Travaille uniquement avec les chiffres ci-dessus.
-- Pas de promesse ni de prédiction.
-- Si tout est à zéro, le dis simplement sans dramatiser.
-
-Ton : posé, pragmatique, tutoiement (culture OSEYS).
-Format : 2-4 paragraphes courts, HTML minimal (<p>, <strong>, <em> uniquement).
-Structure :
-1. Résumé narratif de la journée (2-3 phrases factuelles)
-2. Si pertinent : analyse comparative Martin vs Mila
-3. 1-2 propositions d'actions concrètes pour aujourd'hui
-
-Pas de formule bateau ("voici ton rapport"). Commence directement par la substance.
-Pas de signature en bas (ajoutée automatiquement).`;
-
-  const { text } = await callClaude({
-    system: 'Tu es David, responsable commercial OSEYS. Tu écris en français, ton posé et direct.',
-    messages: [{ role: 'user', content: prompt }],
-    maxTokens: 1200,
-    temperature: 0.5,
-  });
-  return text.trim();
+  return { tutoiement: false };
 }
 
 // ─── Timer trigger ─────────────────────────────────────────────────────────
@@ -149,67 +114,66 @@ app.timer('dailyReport', {
   handler: async (myTimer, context) => {
     const log = makeSafeLogger(context);
 
-    // Flag d'activation pilote (cf. décision Paul 1er mai 2026 PM) : le
-    // dailyReport ne doit tourner qu'une fois la prospection réellement
-    // démarrée. Avant ça, pas de données à reporter → mails vides polluants.
     if (process.env.DAILY_REPORT_ENABLED !== '1') {
-      log('[dailyReport] skipped (DAILY_REPORT_ENABLED != 1) — pilote pas encore démarré');
+      log('[dailyReport] skipped (DAILY_REPORT_ENABLED != 1) — pilote pas activé');
       return;
     }
 
     const yesterday = getYesterdayParisISO();
-    log(`dailyReport tick for ${yesterday}`);
+    log(`[dailyReport] tick for ${yesterday}`);
 
     const consultants = [
       { email: process.env.MORGANE_EMAIL, prenom: 'Morgane' },
       { email: process.env.JOHNNY_EMAIL, prenom: 'Johnny' },
+      { email: process.env.ELIE_EMAIL, prenom: 'Elie' },
     ].filter((c) => c.email);
 
     if (consultants.length === 0) {
-      log.warn('dailyReport: aucun consultant configuré (MORGANE_EMAIL / JOHNNY_EMAIL absents)');
+      log.warn('[dailyReport] aucun consultant configuré (MORGANE_EMAIL / JOHNNY_EMAIL / ELIE_EMAIL absents)');
       return;
     }
 
     for (const consultant of consultants) {
       try {
-        const userId = await findPipedriveUserId(consultant.email);
-        if (!userId) {
-          log.warn(`dailyReport: user Pipedrive non trouvé pour ${consultant.email}, skip`);
-          continue;
-        }
+        const consultantLower = consultant.prenom.toLowerCase();
+        const entries = await readConsultantMetrics(consultantLower, yesterday);
+        const brief = await readConsultantBrief(consultant.email);
 
-        const metrics = await fetchConsultantMetrics(userId, yesterday);
-        const summary = await generateSummary(consultant, metrics, yesterday);
-        const html = `<div style="font-family:Arial,sans-serif;color:#1a1714">${summary}${davidSignatureHtml()}</div>`;
+        const html = formatConsultantDigestHtml({
+          consultantPrenom: consultant.prenom,
+          consultantEmail: consultant.email,
+          entries,
+          dateRefIso: yesterday,
+          tutoiement: brief.tutoiement,
+          alerts: [], // hook futur : sentItemsMonitor scopé consultant, bounces, etc.
+        });
 
         await sendMail({
           from: process.env.DAVID_EMAIL,
           to: consultant.email,
-          subject: `Ton point quotidien Prospérenne — ${formatDateFR(yesterday)}`,
+          subject: `Point quotidien Prospérenne — ${formatDateFR(yesterday)}`,
           html,
         });
-        log(`dailyReport sent to ${consultant.email} — metrics: ${JSON.stringify(metrics)}`);
+        log(`[dailyReport] sent to ${consultant.email} — ${entries.length} entries 8j`);
 
-        // Best-effort tracking PWA-M Cycle 1 — n'altère pas le flux si KO.
         await recordAction({
           consultantEmail: consultant.email,
           type: 'daily_brief_sent',
-          summary: `Brief quotidien Prospérenne envoyé pour le ${formatDateFR(yesterday)}`,
-          metadata: { date: yesterday, metrics },
+          summary: `Récap quotidien Prospérenne envoyé pour le ${formatDateFR(yesterday)}`,
+          metadata: { date: yesterday, entriesCount: entries.length, tutoiement: brief.tutoiement },
           at: new Date().toISOString(),
         }).catch(() => null);
       } catch (err) {
-        log.error(`dailyReport failed for ${consultant.email}: ${err.message}`);
+        log.error(`[dailyReport] failed for ${consultant.email}: ${err.message}`);
       }
     }
 
     // Section Lead Selector — mail séparé envoyé à direction (escalation),
-    // pas aux consultants. Best effort : si la table trace n'existe pas
-    // ou est vide, on n'envoie rien.
+    // pas aux consultants. Best effort.
     try {
       await sendLeadSelectorReport(yesterday, context);
     } catch (err) {
-      log.error(`dailyReport leadSelector section failed: ${err.message}`);
+      log.error(`[dailyReport] leadSelector section failed: ${err.message}`);
     }
   },
 });
@@ -236,3 +200,10 @@ async function sendLeadSelectorReport(yesterday, context) {
   });
   log(`[dailyReport] Lead Selector report sent to ${to} (${events.length} events)`);
 }
+
+module.exports = {
+  readConsultantMetrics,
+  readConsultantBrief,
+  getYesterdayParisISO,
+  formatDateFR,
+};
