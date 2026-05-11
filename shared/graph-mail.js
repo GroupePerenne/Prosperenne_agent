@@ -125,4 +125,57 @@ async function markAsRead({ mailbox, messageId }) {
   return true;
 }
 
-module.exports = { sendMail, listUnreadMessages, markAsRead, getToken };
+/**
+ * Forward un mail existant à un ou plusieurs destinataires, en maintenant le
+ * thread original (conversationId préservé côté destinataire). Utilisé par
+ * davidInbox pour transmettre les réponses prospects au consultant sans créer
+ * un nouveau mail unrelated (BL-52 audit, fix spam notifications).
+ *
+ * Cf. doc Graph : POST /users/{userId}/messages/{id}/forward
+ * https://learn.microsoft.com/en-us/graph/api/message-forward
+ *
+ * @param {Object} opts
+ * @param {string} opts.from         UPN propriétaire du mail à forwarder
+ *                                   (ex: "martin@oseys.fr" si le mail prospect
+ *                                   est arrivé dans la boîte de Martin)
+ * @param {string} opts.messageId    ID Graph du mail à forwarder
+ * @param {string|string[]} opts.to  Destinataire(s) du forward
+ * @param {string[]} [opts.cc]
+ * @param {string} [opts.comment]    Texte HTML à insérer en tête du mail forwardé
+ *                                   (commentaire David expliquant le contexte)
+ */
+async function forwardMessage({ from, messageId, to, cc = [], comment = '' }) {
+  if (!from) throw new Error('forwardMessage: from requis');
+  if (!messageId) throw new Error('forwardMessage: messageId requis');
+  const token = await getToken();
+  const url = `${GRAPH_BASE}/users/${encodeURIComponent(from)}/messages/${encodeURIComponent(messageId)}/forward`;
+
+  const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean).map((addr) => ({
+    emailAddress: { address: addr },
+  }));
+  const ccRecipients = (Array.isArray(cc) ? cc : [cc]).filter(Boolean).map((addr) => ({ emailAddress: { address: addr } }));
+
+  if (recipients.length === 0) throw new Error('forwardMessage: au moins un destinataire requis');
+
+  const payload = {
+    comment: comment || '',
+    toRecipients: recipients,
+    ...(ccRecipients.length ? { ccRecipients } : {}),
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Graph forward ${res.status} : ${err}`);
+  }
+  return { ok: true, from, messageId, to: recipients.map((r) => r.emailAddress.address) };
+}
+
+module.exports = { sendMail, listUnreadMessages, markAsRead, forwardMessage, getToken };

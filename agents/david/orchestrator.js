@@ -19,7 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { listUnreadMessages, markAsRead, sendMail } = require('../../shared/graph-mail');
+const { listUnreadMessages, markAsRead, sendMail, forwardMessage } = require('../../shared/graph-mail');
 const { callClaude, parseJson } = require('../../shared/anthropic');
 const { davidSignatureHtml } = require('../../shared/templates');
 const { purgeByDealId } = require('../../shared/queue');
@@ -28,6 +28,7 @@ const mila = require('../mila/worker');
 const pipedrive = require('../../shared/pipedrive');
 const { getMem0 } = require('../../shared/adapters/memory/mem0');
 const { recordAction: recordDavidAction } = require('../../shared/storage-tables/davidActions');
+const { tryAcquireLock, releaseLock } = require('../../shared/storage-tables/locks');
 
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -99,6 +100,10 @@ async function handleInboxPoll({ context, mailboxes } = {}) {
 
     for (const msg of unread) {
       try {
+        // BL-52 : injecte mailbox dans msg pour que forwardMessage en aval
+        // (alertConsultant) sache quelle boîte appeler côté Graph (le forward
+        // doit être émis depuis la boîte propriétaire du mail original).
+        msg.mailbox = mailbox;
         const decision = await routeMessage(msg, { context });
         results.push({ mailbox, id: msg.id, subject: msg.subject, ...decision });
         await markAsRead({ mailbox, messageId: msg.id });
@@ -251,7 +256,7 @@ async function handlePositive(msg, decision, ctx) {
       html: wrapHtml(decision.reply_draft),
     });
   }
-  await alertConsultant(ctx.consultantEmail, msg, decision, 'positive');
+  await alertConsultant(ctx.consultantEmail, msg, decision, 'positive', { context: ctx.context });
   // Fire-and-forget feedback exhauster (Jalon 3 Bouclea de feedback qualité)
   reportLeadExhausterFeedback({ ctx, status: 'replied' }).catch(() => {});
   return { classe: 'positive', confidence: decision.confidence, action: 'stopped+qualified', dealId: ctx.dealId };
@@ -288,7 +293,7 @@ async function handleNeutre(msg, decision, ctx) {
       html: wrapHtml(decision.reply_draft),
     });
   }
-  await alertConsultant(ctx.consultantEmail, msg, decision, 'neutre');
+  await alertConsultant(ctx.consultantEmail, msg, decision, 'neutre', { context: ctx.context });
   reportLeadExhausterFeedback({ ctx, status: 'replied' }).catch(() => {});
   return { classe: 'neutre', confidence: decision.confidence, action: 'stopped+ack', dealId: ctx.dealId };
 }
@@ -306,7 +311,7 @@ async function handleNegative(msg, decision, ctx) {
       html: wrapHtml(decision.reply_draft),
     });
   }
-  await alertConsultant(ctx.consultantEmail, msg, decision, 'negative');
+  await alertConsultant(ctx.consultantEmail, msg, decision, 'negative', { context: ctx.context });
   reportLeadExhausterFeedback({ ctx, status: 'replied' }).catch(() => {});
   return { classe: 'negative', confidence: decision.confidence, action: 'stopped+opt_out_permanent', dealId: ctx.dealId };
 }
@@ -331,22 +336,36 @@ async function handleBounceAction(targetAddress, ctx) {
       await pipedrive.updatePersonField(ctx.personId, fieldKey, new Date().toISOString().slice(0, 10));
     }
   }
-  // Alerter consultant + admin
+  // BL-52 (11 mai 2026) — Posture "service Prospérenne" : on n'inquiète pas
+  // le consultant avec un bounce (coquille interne, à corriger côté pipeline).
+  // L'alerte va uniquement à ADMIN_EMAIL (équipe Prospérenne — Paul / Constantin)
+  // pour qu'on suive la qualité base mail en interne. Le consultant lira
+  // l'info agrégée dans son digest quotidien si besoin (via davidActions).
   const admin = process.env.ADMIN_EMAIL;
-  const to = ctx.consultantEmail || admin;
-  const cc = ctx.consultantEmail && admin && admin !== ctx.consultantEmail ? [admin] : [];
-  if (to) {
+  if (admin) {
     await sendMail({
       from: process.env.DAVID_EMAIL,
-      to,
-      cc,
-      subject: `[Prospérenne] Email invalide détecté — ${targetAddress}`,
+      to: admin,
+      subject: `[Interne Prospérenne] Bounce détecté — ${targetAddress}`,
       html: wrapHtml(
         `L'adresse ${targetAddress} a généré un bounce (NDR). Séquence arrêtée, deal fermé. ` +
-        `Le champ email_bounced_at est posé sur le contact Pipedrive : aucune future campagne ne ciblera cette adresse.`
+        `email_bounced_at posé sur le contact Pipedrive : aucune future campagne ne ciblera cette adresse. ` +
+        `\n\nConsultant concerné : ${ctx.consultantEmail || 'non identifié'} (pas notifié — coquille interne).`
       ),
     });
   }
+
+  // Trace davidActions pour le digest quotidien du consultant si on a son email.
+  if (ctx.consultantEmail) {
+    await recordDavidAction({
+      consultantEmail: ctx.consultantEmail,
+      type: 'bounce_received',
+      summary: `Bounce sur ${targetAddress} — adresse retirée du pipeline`,
+      metadata: { targetAddress, dealId: ctx.dealId, personId: ctx.personId },
+      at: new Date().toISOString(),
+    }).catch(() => null);
+  }
+
   // Fire-and-forget : alimente LeadContacts.feedbackStatus='bounced' pour
   // que patterns-learner dégrade le pattern responsable au prochain batch.
   reportLeadExhausterFeedback({ ctx, status: 'bounced' }).catch(() => {});
@@ -438,21 +457,41 @@ async function reportLeadExhausterFeedback({ ctx, status, context }) {
   }
 }
 
-async function alertConsultant(consultantEmail, msg, decision, classe) {
+/**
+ * Trace une réponse prospect classifiée pour le digest quotidien du consultant.
+ *
+ * BL-52 (11 mai 2026) — Posture "service Prospérenne" (recadrage Paul) :
+ *   Les consultants OSEYS (Morgane, Johnny, futurs autres) sont des CLIENTS
+ *   du service David/Martin/Mila, pas des opérateurs techniques. On ne les
+ *   inquiète pas avec chaque coquille ou classification du pipeline.
+ *
+ *   Incident matin 11 mai : 3 jours de davidInbox accumulé flush à la
+ *   réactivation → spam classifications (1 mail par réponse). Au-delà du
+ *   bug threading, la racine est la *posture* : on traitait les consultants
+ *   comme des admins du pipeline alors qu'ils paient pour ne PAS avoir à
+ *   se soucier des coquilles.
+ *
+ *   Nouveau comportement : trace TOUJOURS en davidActions Storage Table
+ *   pour le digest quotidien (dailyReport 8h L-V). N'envoie JAMAIS de mail
+ *   instantané — peu importe la classe (positive, negative, neutre, OOO,
+ *   bounce). Le consultant reçoit 1 mail/jour, propre, agrégé.
+ *
+ *   Les leads chauds (positives) restent visibles via :
+ *     - le digest quotidien (résumé + lien deal Pipedrive)
+ *     - le stage Pipedrive "Qualifié" mis à jour par handlePositive
+ *     - le smart BCC qui copie le consultant sur les échanges du commercial
+ *
+ *   Cas exceptionnel (lead extraordinaire, urgence métier) → Paul/COMEX
+ *   tranchent une intervention manuelle, pas le pipeline en auto.
+ *
+ *   La signature conserve (consultantEmail, msg, decision, classe, opts) pour
+ *   compat call sites existants. `opts` est ignoré (plus de logique fallback).
+ */
+async function alertConsultant(consultantEmail, msg, decision, classe, _opts = {}) {
   if (!consultantEmail) return;
   const fromAddress = msg.from?.emailAddress?.address || '';
-  await sendMail({
-    from: process.env.DAVID_EMAIL,
-    to: consultantEmail,
-    subject: `[Prospérenne] ${classe} — ${fromAddress}`,
-    html: wrapHtml(
-      `Réponse classée "${classe}" de ${fromAddress}.\n\n` +
-      `Résumé : ${decision.resume_humain || '(pas de résumé)'}\n\n` +
-      `Objet du mail original : ${msg.subject}`
-    ),
-  });
 
-  // Best-effort tracking PWA-M Cycle 1 — n'altère pas le flux mail.
+  // Trace pour digest quotidien (dailyReport L-V 8h). Pas de mail instantané.
   await recordDavidAction({
     consultantEmail,
     type: classe === 'bounce' ? 'bounce_received' : 'reply_classified',
@@ -470,18 +509,22 @@ async function alertConsultant(consultantEmail, msg, decision, classe) {
 
 async function escalateToDirection({ subject, contexte, extraitMessage, propositions, recommendation, consultantEmail }) {
   const escalationTo = process.env.ESCALATION_EMAIL || 'direction@oseys.fr';
-  const cc = consultantEmail ? [consultantEmail] : [];
+  // BL-52 (11 mai 2026) — Posture "service Prospérenne" : on n'inquiète pas
+  // le consultant avec une escalation interne (cas confidence <0.7 nécessitant
+  // avis humain). L'escalation part uniquement à direction@oseys.fr (Paul/
+  // Constantin) qui décident s'il faut prévenir le consultant manuellement.
+  // L'info reste tracée en davidActions pour le digest quotidien si pertinent.
   const body =
     `Contexte : ${contexte}\n\n` +
     (extraitMessage ? `Extrait du message :\n"""\n${extraitMessage}\n"""\n\n` : '') +
     `Propositions d'action :\n` +
     propositions.map((p, i) => `${i + 1}. ${p}`).join('\n') +
     `\n\nRecommandation David : ${recommendation}\n\n` +
+    `Consultant concerné : ${consultantEmail || 'non identifié'} (pas notifié — escalation interne).\n` +
     `Attente : validation humaine avant toute action.`;
   await sendMail({
     from: process.env.DAVID_EMAIL,
     to: escalationTo,
-    cc,
     subject: `[ESCALATION] ${subject}`,
     html: wrapHtml(body),
   });
@@ -600,24 +643,72 @@ function pickMostRecent(deals) {
  * Item 1 — Dédup intra-pipe : réutilise un deal ouvert existant pour ce
  * prospect dans le pipe Prospérenne, sinon en crée un nouveau. pipedriveMod
  * injectable pour tests.
+ *
+ * BL-52 (11 mai 2026) — Hardening anti-race TOCTOU :
+ *   Le check findOpenDealsForPersonInOurPipe + createDeal n'est pas atomique
+ *   côté Pipedrive (latence indexation 200-500ms). Sans protection, deux
+ *   handlers concurrents voient "0 deals" et créent chacun un deal pour la
+ *   même personne. Incident 11 mai : 20 deals créés pour 7 prospects uniques.
+ *
+ * Fix : on enveloppe la séquence read-then-write dans un mutex distribué
+ * Storage Table sur personId. Le détenteur du lock re-checke findOpenDeals
+ * (le concurrent qui a peut-être déjà créé le deal apparaît maintenant),
+ * puis crée si vraiment absent. Lock release garantie via try/finally.
+ *
+ * En mode dégradé (storage indisponible), le lock n'est pas acquis mais on
+ * continue avec l'ancien comportement vulnérable — préférable à un blocage
+ * du pipeline. Un warn log signale la dégradation.
  */
 async function resolveOrCreateDeal({ consultant, lead, agentKey, person, org, context, pipedriveMod = pipedrive }) {
-  const existing = await pipedriveMod.findOpenDealsForPersonInOurPipe(person.id);
-  if (existing && existing.length > 0) {
-    if (existing.length > 1) {
-      warnLog(context, `[dedup] ${existing.length} open deals for person ${person.id} — taking most recent`);
-    }
-    const reused = pickMostRecent(existing);
-    infoLog(context, `[dedup] skipping createDeal: existing open deal ${reused.id} for person ${person.id}`);
-    return { deal: reused, reused: true };
-  }
-  const deal = await pipedriveMod.createDeal({
-    title: `${consultant.nom} → ${lead.entreprise}`,
-    personId: person.id,
-    orgId: org.id,
-    agent: agentKey,
+  const holder = `runSequence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const lock = await tryAcquireLock({
+    namespace: 'person',
+    key: String(person.id),
+    holder,
+    waitMs: 800, // 1 retry après 800ms si concurrent détient
   });
-  return { deal, reused: false };
+
+  if (!lock.acquired) {
+    // Un concurrent traite déjà cette personne. On ne crée PAS un nouveau deal.
+    // À la place, on attend brièvement que l'autre handler ait fini puis on
+    // récupère son résultat via findOpenDeals (le deal créé par le concurrent
+    // sera maintenant visible côté Pipedrive).
+    warnLog(context, `[dedup] lock held by ${lock.heldBy || 'unknown'} for person ${person.id} (${lock.reason}) — waiting for concurrent handler`);
+    await new Promise((r) => setTimeout(r, 2000));
+    const existing = await pipedriveMod.findOpenDealsForPersonInOurPipe(person.id);
+    if (existing && existing.length > 0) {
+      const reused = pickMostRecent(existing);
+      infoLog(context, `[dedup] concurrent handler created deal ${reused.id} for person ${person.id} — reusing`);
+      return { deal: reused, reused: true };
+    }
+    // Cas dégradé : concurrent tenait le lock mais n'a pas fini de créer.
+    // On accepte de créer le deal nous-mêmes (audit trace dans logs).
+    warnLog(context, `[dedup] lock waited but no deal visible for person ${person.id} — creating defensively`);
+  }
+
+  try {
+    // Re-check sous lock (atomique avec createDeal qui suit)
+    const existing = await pipedriveMod.findOpenDealsForPersonInOurPipe(person.id);
+    if (existing && existing.length > 0) {
+      if (existing.length > 1) {
+        warnLog(context, `[dedup] ${existing.length} open deals for person ${person.id} — taking most recent`);
+      }
+      const reused = pickMostRecent(existing);
+      infoLog(context, `[dedup] skipping createDeal: existing open deal ${reused.id} for person ${person.id}`);
+      return { deal: reused, reused: true };
+    }
+    const deal = await pipedriveMod.createDeal({
+      title: `${consultant.nom} → ${lead.entreprise}`,
+      personId: person.id,
+      orgId: org.id,
+      agent: agentKey,
+    });
+    return { deal, reused: false };
+  } finally {
+    if (lock.acquired && lock.lockKey) {
+      await releaseLock(lock.lockKey);
+    }
+  }
 }
 
 async function ensureOrg(lead) {
