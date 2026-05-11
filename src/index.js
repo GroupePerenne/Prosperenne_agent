@@ -8,6 +8,7 @@ require('./functions/scheduler');
 require('./functions/davidInbox');
 require('./functions/davidReplyFlusher');
 require('./functions/sentItemsMonitor');
+require('./functions/comexDigest');
 require('./functions/avatarProxy');
 require('./functions/dailyReport');
 require('./functions/dailyDigest');
