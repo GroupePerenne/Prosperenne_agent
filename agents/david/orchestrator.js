@@ -28,6 +28,7 @@ const mila = require('../mila/worker');
 const pipedrive = require('../../shared/pipedrive');
 const { getMem0 } = require('../../shared/adapters/memory/mem0');
 const { recordAction: recordDavidAction } = require('../../shared/storage-tables/davidActions');
+const { tryAcquireLock, releaseLock } = require('../../shared/storage-tables/locks');
 
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -600,24 +601,72 @@ function pickMostRecent(deals) {
  * Item 1 — Dédup intra-pipe : réutilise un deal ouvert existant pour ce
  * prospect dans le pipe Prospérenne, sinon en crée un nouveau. pipedriveMod
  * injectable pour tests.
+ *
+ * BL-52 (11 mai 2026) — Hardening anti-race TOCTOU :
+ *   Le check findOpenDealsForPersonInOurPipe + createDeal n'est pas atomique
+ *   côté Pipedrive (latence indexation 200-500ms). Sans protection, deux
+ *   handlers concurrents voient "0 deals" et créent chacun un deal pour la
+ *   même personne. Incident 11 mai : 20 deals créés pour 7 prospects uniques.
+ *
+ * Fix : on enveloppe la séquence read-then-write dans un mutex distribué
+ * Storage Table sur personId. Le détenteur du lock re-checke findOpenDeals
+ * (le concurrent qui a peut-être déjà créé le deal apparaît maintenant),
+ * puis crée si vraiment absent. Lock release garantie via try/finally.
+ *
+ * En mode dégradé (storage indisponible), le lock n'est pas acquis mais on
+ * continue avec l'ancien comportement vulnérable — préférable à un blocage
+ * du pipeline. Un warn log signale la dégradation.
  */
 async function resolveOrCreateDeal({ consultant, lead, agentKey, person, org, context, pipedriveMod = pipedrive }) {
-  const existing = await pipedriveMod.findOpenDealsForPersonInOurPipe(person.id);
-  if (existing && existing.length > 0) {
-    if (existing.length > 1) {
-      warnLog(context, `[dedup] ${existing.length} open deals for person ${person.id} — taking most recent`);
-    }
-    const reused = pickMostRecent(existing);
-    infoLog(context, `[dedup] skipping createDeal: existing open deal ${reused.id} for person ${person.id}`);
-    return { deal: reused, reused: true };
-  }
-  const deal = await pipedriveMod.createDeal({
-    title: `${consultant.nom} → ${lead.entreprise}`,
-    personId: person.id,
-    orgId: org.id,
-    agent: agentKey,
+  const holder = `runSequence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const lock = await tryAcquireLock({
+    namespace: 'person',
+    key: String(person.id),
+    holder,
+    waitMs: 800, // 1 retry après 800ms si concurrent détient
   });
-  return { deal, reused: false };
+
+  if (!lock.acquired) {
+    // Un concurrent traite déjà cette personne. On ne crée PAS un nouveau deal.
+    // À la place, on attend brièvement que l'autre handler ait fini puis on
+    // récupère son résultat via findOpenDeals (le deal créé par le concurrent
+    // sera maintenant visible côté Pipedrive).
+    warnLog(context, `[dedup] lock held by ${lock.heldBy || 'unknown'} for person ${person.id} (${lock.reason}) — waiting for concurrent handler`);
+    await new Promise((r) => setTimeout(r, 2000));
+    const existing = await pipedriveMod.findOpenDealsForPersonInOurPipe(person.id);
+    if (existing && existing.length > 0) {
+      const reused = pickMostRecent(existing);
+      infoLog(context, `[dedup] concurrent handler created deal ${reused.id} for person ${person.id} — reusing`);
+      return { deal: reused, reused: true };
+    }
+    // Cas dégradé : concurrent tenait le lock mais n'a pas fini de créer.
+    // On accepte de créer le deal nous-mêmes (audit trace dans logs).
+    warnLog(context, `[dedup] lock waited but no deal visible for person ${person.id} — creating defensively`);
+  }
+
+  try {
+    // Re-check sous lock (atomique avec createDeal qui suit)
+    const existing = await pipedriveMod.findOpenDealsForPersonInOurPipe(person.id);
+    if (existing && existing.length > 0) {
+      if (existing.length > 1) {
+        warnLog(context, `[dedup] ${existing.length} open deals for person ${person.id} — taking most recent`);
+      }
+      const reused = pickMostRecent(existing);
+      infoLog(context, `[dedup] skipping createDeal: existing open deal ${reused.id} for person ${person.id}`);
+      return { deal: reused, reused: true };
+    }
+    const deal = await pipedriveMod.createDeal({
+      title: `${consultant.nom} → ${lead.entreprise}`,
+      personId: person.id,
+      orgId: org.id,
+      agent: agentKey,
+    });
+    return { deal, reused: false };
+  } finally {
+    if (lock.acquired && lock.lockKey) {
+      await releaseLock(lock.lockKey);
+    }
+  }
 }
 
 async function ensureOrg(lead) {
