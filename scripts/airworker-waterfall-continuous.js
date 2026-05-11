@@ -52,6 +52,23 @@ const KILL_CHECK_INTERVAL_MS = Number(process.env.AIRWORKER_KILL_CHECK_INTERVAL_
 const WORKER_ID = process.env.AIRWORKER_WORKER_ID || 'airworker';
 const DRY_RUN = process.env.AIRWORKER_DRY_RUN === '1';
 
+// BL-53 (11 mai 2026) — Throttle anti-rate-limit Google
+// Google rate-limite l'IP bureau sur les queries Playwright Google générales
+// après volume continu. Détection captcha_or_consent dans signals + pause
+// défensive. Cf. mémoire systémique.
+const SLEEP_PER_LEAD_MS = Number(process.env.AIRWORKER_SLEEP_PER_LEAD_MS) || 0;
+const BLOCK_THRESHOLD = Number(process.env.AIRWORKER_BLOCK_THRESHOLD) || 5;
+const BLOCK_PAUSE_MS = Number(process.env.AIRWORKER_BLOCK_PAUSE_MS) || 30 * 60 * 1000;
+
+/**
+ * Détecte si le résultat processLead indique un block webSearch (Google
+ * captcha/consent, rate-limit), pour activer le throttle défensif.
+ */
+function isBlockSignal(result) {
+  if (!result || !Array.isArray(result.signals)) return false;
+  return result.signals.some((s) => /captcha|consent|blocked|rate.?limit/i.test(String(s)));
+}
+
 const POSITIVE_TTL_DAYS = Number(process.env.LEADCONTACTS_POSITIVE_TTL_DAYS) || 90;
 const NEGATIVE_RETRY_DAYS = Number(process.env.LEADCONTACTS_NEGATIVE_RETRY_DAYS) || 7;
 
@@ -376,6 +393,7 @@ async function processBackgroundFill(deps, stats) {
 
   let leadsThisBatch = 0;
   let lastSirenSeen = progress.lastSiren;
+  let consecutiveBlocks = 0; // BL-53 : throttle anti-rate-limit Google
 
   for (let i = startIdx; i < FILL_DEPARTMENTS.length; i++) {
     if (_shutdownRequested) break;
@@ -429,11 +447,37 @@ async function processBackgroundFill(deps, stats) {
 
           console.log(`[airworker:fill][${dept}] ${candidate.siren} ${candidate.firstName} ${candidate.lastName} → ${r.status} ${r.email || '(no)'} conf=${r.confidence} src=${r.source} ${r.elapsedMs}ms`);
 
+          // BL-53 (11 mai 2026) — Détection rate-limit Google. Si N blocks
+          // consécutifs (signals contiennent captcha/consent/blocked), on
+          // pause défensivement pour laisser Google reset son rate-limit.
+          // Évite de prolonger le ban en continuant à hammer.
+          if (isBlockSignal(r)) {
+            consecutiveBlocks++;
+            if (consecutiveBlocks >= BLOCK_THRESHOLD) {
+              console.log(`[airworker:fill] ${BLOCK_THRESHOLD} blocks Google consécutifs détectés — pause défensive ${BLOCK_PAUSE_MS / 60000}min pour reset rate-limit`);
+              await upsertLeadContact(r);
+              await logBackgroundJob(r);
+              await new Promise((res) => setTimeout(res, BLOCK_PAUSE_MS));
+              consecutiveBlocks = 0;
+              continue;
+            }
+          } else if (r.status === 'ok' || (r.signals && r.signals.length > 0 && !r.signals.some((s) => /error|failed/i.test(String(s))))) {
+            // Reset compteur dès qu'on a une vraie réponse pipeline (résolue
+            // ou unresolvable propre — pas une erreur réseau / Google block)
+            consecutiveBlocks = 0;
+          }
+
           await upsertLeadContact(r);
           await logBackgroundJob(r);
           lastSirenSeen = candidate.siren;
           await saveFillProgress({ lastDept: dept, lastSiren: lastSirenSeen, passCount: progress.passCount });
           leadsThisBatch++;
+
+          // BL-53 — Sleep défensif entre chaque lead pour respecter le
+          // rate-limit Google (espacement humain).
+          if (SLEEP_PER_LEAD_MS > 0 && leadsThisBatch < FILL_BATCH_LEADS) {
+            await new Promise((res) => setTimeout(res, SLEEP_PER_LEAD_MS));
+          }
         } catch (err) {
           stats.totalErrors++;
           console.warn(`[airworker:fill] error ${candidate.siren}: ${err.message}`);
