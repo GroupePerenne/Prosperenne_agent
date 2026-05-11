@@ -1,12 +1,12 @@
 /**
  * Worker partagé entre Martin et Mila.
  *
- * Rôle : envoyer un step d'une séquence (J0, J3, J7, J14) pour un lead donné,
+ * Rôle : envoyer un step d'une séquence (J0, J+14, J+28) pour un lead donné,
  * au nom d'un consultant, depuis la boîte de l'agent (martin@ ou mila@).
  *
  * Le worker n'est jamais appelé directement par un humain — il est déclenché :
  *   - par la function `runSequence` pour le J0 (bootstrap)
- *   - par la function `scheduler` pour les J3/J7/J14 (consommation de queue)
+ *   - par la function `scheduler` pour les J+14/J+28 (consommation de queue)
  */
 
 const path = require('path');

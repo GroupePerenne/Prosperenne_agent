@@ -1,7 +1,7 @@
 /**
- * Générateur de séquence de prospection J0 / J+4 / J+10 / J+18 / J+28
+ * Générateur de séquence de prospection J0 / J+14 / J+28
  *
- * Utilisé par Martin et Mila pour produire les 5 messages d'une séquence,
+ * Utilisé par Martin et Mila pour produire les 3 messages d'une séquence,
  * personnalisés au consultant, au lead et à l'agent expéditeur, en projetant
  * la proposition de valeur OSEYS via le module shared/oseys-vp/.
  *
@@ -29,11 +29,11 @@ const vp = require('./oseys-vp');
  *  resserrée historique 5 touches J0/J+4/J+10/J+18/J+28). */
 const SCHEDULE = [
   { jour: 'J0',    offsetBusinessDays: 0,   role: 'ouverture',
-    brief: 'Message d\'ouverture qui doit CATCH PUISSAMMENT. Le prospect doit comprendre concrètement ce qu\'on propose, sentir une vraie proposition de valeur, et avoir envie d\'en savoir plus. Structure cible : (1) ANCRAGE court sur le signal observable du prospect (1-2 phrases), (2) PRÉSENTATION DE LA DÉMARCHE OSEYS en 2-3 phrases concrètes : copilote économique mensuel (sessions 2-3h avec un consultant), lecture continue des marges et arbitrages structurants, soutenue par PilotagePro qui rend visible au quotidien ce que l\'expert-comptable sort une fois par trimestre. (3) TEASER tangible : lien "oseys.fr/dirigeant" pour voir à quoi cette lecture économique ressemble au quotidien. (4) QUESTION OUVERTE qui invite à savoir si l\'approche peut résonner avec sa période. (5) FORMULE DE POLITESSE. INTERDIT : pitch agency ("solution clé en main"), demande RDV/créneau, présentation institutionnelle raide ("Je m\'appelle Martin, Chargé d\'Affaires"), tirets cadratin "—" et "–", formulations présomptueuses ("j\'observe souvent", "ce que je rencontre"), chiffrage, mention IA.' },
+    brief: 'Message d\'ouverture qui doit CATCH PUISSAMMENT. Le prospect doit comprendre concrètement ce qu\'on propose, sentir une vraie proposition de valeur, et avoir envie d\'en savoir plus. Structure cible : (1) ANCRAGE court sur le signal observable du prospect (1-2 phrases), (2) PRÉSENTATION DE LA DÉMARCHE OSEYS en 2-3 phrases concrètes : copilote économique régulier, lecture continue des marges et arbitrages structurants, soutenue par PilotagePro pour voir les chiffres au fil de l\'eau plutôt que par à-coups. (3) TEASER tangible : mention simple "oseys.fr" (le pipeline d\'envoi linkifie automatiquement). (4) QUESTION OUVERTE qui invite à savoir si l\'approche peut résonner avec sa période. (5) FORMULE DE POLITESSE. INTERDIT : pitch agency ("solution clé en main"), demande RDV/créneau, présentation institutionnelle raide ("Je m\'appelle Martin, Chargé d\'Affaires"), tirets cadratin "—" et "–", formulations présomptueuses ("j\'observe souvent", "ce que je rencontre"), chiffrage tarifaire ou engagement temporel précis (heures/mois), mention IA, et tout dénigrement implicite de l\'expert-comptable (les EC sont des partenaires apporteurs OSEYS potentiels — formulation positive uniquement, type "en complément de l\'expert-comptable" et non "ce que l\'EC ne fait pas").' },
   { jour: 'J+14',  offsetBusinessDays: 14,  role: 'relance_valeur',
     brief: 'Première relance après 14 jours ouvrés (espacement assumé, on ne harcèle pas). 5-7 lignes. Apporter un ANGLE COMPLÉMENTAIRE : un proof point sourçable (Coface, Banque des Territoires) ou une observation métier qui donne plus d\'épaisseur à la démarche OSEYS. PAS "je reviens vers vous" ni "n\'ayant pas eu de retour". Le prospect peut être occupé, on ne lui en tient pas rigueur. Terminer par une question ouverte différente du J0 et une formule de politesse.' },
   { jour: 'J+28',  offsetBusinessDays: 28,  role: 'rupture',
-    brief: 'Dernière relance et rupture polie après 28 jours ouvrés. 4-5 lignes. Annoncer respectueusement qu\'on ne reviendra plus pour ne pas saturer. Laisser la porte ouverte (lien oseys.fr/dirigeant rappelé). Pas de reproche, pas de culpabilisation, ton apaisé. Formule de politesse type "Cordialement" ou "Bonne suite à [entreprise]".' },
+    brief: 'Dernière relance et rupture polie après 28 jours ouvrés. 4-5 lignes. Annoncer respectueusement qu\'on ne reviendra plus pour ne pas saturer. Laisser la porte ouverte (mention simple "oseys.fr", le pipeline linkifie). Pas de reproche, pas de culpabilisation, ton apaisé. Pas de nouvelle proposition de RDV. Formule de politesse type "Cordialement" ou "Bonne suite à [entreprise]".' },
 ];
 
 /**
@@ -178,6 +178,15 @@ ${consultant.offre || '(non précisée — utiliser le socle OSEYS pilotage éco
 Signal observé chez ce prospect : ${angle.id} — ${angle.pain_principal}.
 Formulation directrice (à incarner, pas à copier-coller) : « ${angle.formulation_directrice} »${angleGardeFou}${proofBlock}
 
+## Intention sincère — sous-texte de toute la séquence
+Tu portes en sous-texte (jamais explicitement) une conviction profonde : un dirigeant qui pilote seul, sans allié pour partager les arbitrages, finit par décider sous pression — au détriment de sa boîte ET de sa vie. OSEYS n'existe pas pour vendre un livrable de plus. On existe parce qu'on pense qu'un dirigeant qui peut s'appuyer sur quelqu'un de sérieux, ça change concrètement la solidité de l'entreprise et la sérénité de celui qui la porte. Cette conviction ne se DIT PAS. Elle se RESSENT dans le regard que tu portes sur le dirigeant : pas un client à conquérir, un humain qui porte beaucoup et qu'on aimerait ne pas laisser seul. Évite tout vocabulaire qui transforme la démarche en pitch ou en offre commerciale. Privilégie les formulations qui suggèrent une présence et une écoute, pas une prestation.
+
+## URL OSEYS — affichage
+Si tu mentionnes le site OSEYS dans le corps du message, écris UNIQUEMENT "oseys.fr" (sans path, sans /dirigeant, sans https://, sans http://). Le hyperlien complet est appliqué automatiquement par le pipeline d'envoi en aval (linkify dans shared/worker.js).
+
+## Garde-fou expert-comptable
+N'écris JAMAIS quoi que ce soit qui dénigre, minimise ou oppose la démarche OSEYS au travail de l'expert-comptable. Les EC sont des partenaires apporteurs OSEYS potentiels et structurels. Formulations interdites : "ce que l'expert-comptable ne fait pas", "ce que l'EC sort une fois par trimestre", "à la différence de votre comptable", etc. Formulations acceptables : "en complément de l'expert-comptable", "au côté des chiffres comptables", ou simplement ne pas le mentionner du tout.
+
 ## Calendrier de séquence à générer
 ${SCHEDULE.map(s => `- ${s.jour} (${s.offsetBusinessDays} jours ouvrés) — ${s.role.toUpperCase()} : ${s.brief}`).join('\n')}
 
@@ -258,7 +267,7 @@ function buildUserPrompt({ lead, enrichments, prospectProfile, angle }) {
 
   return `${base}${companyBlock}${dmBlock}${angleRappel}${prospect}${patterns}
 
-Génère les 5 messages de la séquence (J0/J+4/J+10/J+18/J+28). Sois naturel, pertinent, ancré sur la réalité du métier et du contexte du lead. Respecte la modulation DISC + l'angle d'entrée + les anti-patterns du system prompt.`;
+Génère les 3 messages de la séquence (J0/J+14/J+28). Sois naturel, pertinent, ancré sur la réalité du métier et du contexte du lead. Respecte la modulation DISC + l'angle d'entrée + les anti-patterns du system prompt.`;
 }
 
 // ─── formatMemories — anti-injection + wrapping Mem0 (inchangé) ────────────
