@@ -24,6 +24,7 @@ const { enrichAndProfileBatchForConsultant } = require('../../shared/enrichAndPr
 const { launchSequenceForConsultant } = require('../../agents/david/orchestrator');
 const { loadConsultantBrief } = require('../../shared/consultant-brief-loader');
 const { makeSafeLogger } = require('../../shared/safe-log');
+const { tryAcquireRun, markRunCompleted } = require('../../shared/storage-tables/leadSelectorRuns');
 
 const TABLE_NAME = 'leadSelectorJobs';
 
@@ -49,10 +50,28 @@ app.storageQueue('leadSelectorJobQueue', {
     const tableClient = getJobsTable();
     if (tableClient) await markStatus(tableClient, jobId, 'running');
 
+    // BL-52 (11 mai 2026) — Idempotence at-least-once delivery.
+    // Azure Queue Storage peut redélivrer le message si le handler crash entre
+    // enrichBatch et fin de launchSequence. Sans guard, on retraite tout →
+    // doublons deals Pipedrive + ré-envoi J0 prospects. Le briefId du brief
+    // consultant est la clé naturelle (1 brief = 1 run unique). On garde le
+    // jobId comme fallback si pas de briefId (anciens triggers manuels).
+    const briefId = (job.briefId || consultantId).toString();
+    const runAcquire = await tryAcquireRun({ consultantId, briefId, jobId });
+    if (!runAcquire.acquired) {
+      log(`[lead-selector-job] idempotence skip jobId=${jobId} consultantId=${consultantId} briefId=${briefId} reason=${runAcquire.reason}`);
+      await markStatus(tableClient, jobId, 'skipped_duplicate', { reason: runAcquire.reason, briefId });
+      return;
+    }
+    if (runAcquire.reclaimed) {
+      log.warn(`[lead-selector-job] reclaimed stale run jobId=${jobId} briefId=${briefId} — previous handler abandoned`);
+    }
+
     try {
       const consultantPayload = await loadConsultantBrief(consultantId, context);
       if (!consultantPayload) {
         await markStatus(tableClient, jobId, 'error', { error: 'consultant_brief_missing' });
+        await markRunCompleted({ consultantId, briefId, success: false, error: 'consultant_brief_missing' });
         return;
       }
 
@@ -84,6 +103,7 @@ app.storageQueue('leadSelectorJobQueue', {
         // (directive Paul 5 mai 2026 : David ne raconte pas sa vie).
         log(`[lead-selector-job] done jobId=${jobId} branch=empty_or_error status=${result.status} sequenceLaunched=false`);
         await markStatus(tableClient, jobId, 'done', { ...summary, sequenceLaunched: false });
+        await markRunCompleted({ consultantId, briefId, success: true });
         return;
       }
 
@@ -109,9 +129,13 @@ app.storageQueue('leadSelectorJobQueue', {
         sequenceOk: okCount,
         sequenceErrors: errorCount,
       });
+      await markRunCompleted({ consultantId, briefId, success: true });
     } catch (err) {
       log.error(`[lead-selector-job] exception: ${err.message}`, err);
       await markStatus(tableClient, jobId, 'error', { error: err.message });
+      await markRunCompleted({ consultantId, briefId, success: false, error: err.message });
+      throw err; // BL-52 : laisser remonter pour que la queue retry. La guard
+      // tryAcquireRun ci-dessus protège contre le retraitement intempestif.
     }
   },
 });
