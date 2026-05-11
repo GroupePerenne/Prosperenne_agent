@@ -7,6 +7,7 @@ require('./functions/trackOpen');
 require('./functions/scheduler');
 require('./functions/davidInbox');
 require('./functions/davidReplyFlusher');
+require('./functions/sentItemsMonitor');
 require('./functions/avatarProxy');
 require('./functions/dailyReport');
 require('./functions/dailyDigest');
