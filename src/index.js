@@ -6,6 +6,7 @@ require('./functions/runSequence');
 require('./functions/trackOpen');
 require('./functions/scheduler');
 require('./functions/davidInbox');
+require('./functions/davidReplyFlusher');
 require('./functions/avatarProxy');
 require('./functions/dailyReport');
 require('./functions/dailyDigest');

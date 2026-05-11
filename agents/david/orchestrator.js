@@ -29,6 +29,9 @@ const pipedrive = require('../../shared/pipedrive');
 const { getMem0 } = require('../../shared/adapters/memory/mem0');
 const { recordAction: recordDavidAction } = require('../../shared/storage-tables/davidActions');
 const { tryAcquireLock, releaseLock } = require('../../shared/storage-tables/locks');
+const { markProcessed } = require('../../shared/storage-tables/davidProcessedMessages');
+const { enqueuePendingReply } = require('../../shared/storage-tables/davidPendingReplies');
+const { computeScheduledAt, getJitterWindowForSenderType } = require('../../shared/jitter');
 
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -100,13 +103,33 @@ async function handleInboxPoll({ context, mailboxes } = {}) {
 
     for (const msg of unread) {
       try {
-        // BL-52 : injecte mailbox dans msg pour que forwardMessage en aval
-        // (alertConsultant) sache quelle boîte appeler côté Graph (le forward
-        // doit être émis depuis la boîte propriétaire du mail original).
         msg.mailbox = mailbox;
+
+        // 1) Idempotence dure : un même messageId ne doit JAMAIS être traité
+        // deux fois, même si markAsRead foire (cas vécu 11 mai : 12 doublons
+        // à Johnny suite à un markAsRead 403 silencieux).
+        const idem = await markProcessed({ messageId: msg.id, mailbox });
+        if (idem.alreadyProcessed) {
+          // Déjà traité — re-tente markAsRead idempotent puis skip.
+          await markAsRead({ mailbox, messageId: msg.id }).catch(() => {});
+          results.push({ mailbox, id: msg.id, skipped: 'already_processed' });
+          continue;
+        }
+
+        // 2) Marquer isRead AVANT routage. Si ça foire (perm révoquée, panne
+        // Graph), on abort sans envoyer pour ne pas risquer le doublon — la
+        // table DavidProcessedMessages garde la trace pour le prochain tick.
+        try {
+          await markAsRead({ mailbox, messageId: msg.id });
+        } catch (markErr) {
+          warnLog(context, `[handleInboxPoll] markAsRead failed for ${msg.id}: ${markErr.message} — abort sans envoi`);
+          results.push({ mailbox, id: msg.id, error: `markAsRead_failed: ${markErr.message}` });
+          continue;
+        }
+
+        // 3) Route + enqueue de la réponse différée (jitter humain).
         const decision = await routeMessage(msg, { context });
         results.push({ mailbox, id: msg.id, subject: msg.subject, ...decision });
-        await markAsRead({ mailbox, messageId: msg.id });
       } catch (err) {
         results.push({ mailbox, id: msg.id, error: err.message });
       }
@@ -170,16 +193,58 @@ Règles :
     return handleProspectReply(msg, decision, { context });
   }
 
-  // Consultant / internal : exécute l'action si reply_draft fourni
+  // Consultant / internal : enqueue la réponse avec jitter humain (15-45 min
+  // en heures ouvrées). Pas d'envoi instantané — voir shared/jitter.js doctrine.
   if (decision.reply_draft && decision.reply_to && decision.reply_subject) {
-    await sendMail({
-      from: process.env.DAVID_EMAIL,
+    await enqueueReplyWithJitter({
+      mailbox: msg.mailbox || process.env.DAVID_EMAIL,
       to: decision.reply_to,
       subject: decision.reply_subject,
       html: wrapHtml(decision.reply_draft),
+      senderType: decision.sender_type,
+      msg,
     });
   }
   return { classe: decision.sender_type, ...decision };
+}
+
+/**
+ * Helper : enqueue une réponse différée selon la doctrine jitter humain
+ * (12 mai 2026, recadrage Paul). Calcule scheduledAt via shared/jitter et
+ * persiste dans la table DavidPendingReplies. Le cron davidReplyFlusher
+ * (toutes les 15 min) envoie ensuite via Graph.
+ *
+ * @param {object} args
+ * @param {string} args.mailbox          - boîte d'envoi (david@, martin@, mila@)
+ * @param {string} args.to
+ * @param {string} args.subject
+ * @param {string} args.html
+ * @param {string} args.senderType       - prospect|consultant|internal
+ * @param {string} [args.prospectClass]  - positive|question|neutre|negative
+ * @param {string[]} [args.cc]
+ * @param {object} args.msg              - message d'origine (pour traçabilité)
+ * @param {string|number} [args.dealId]
+ * @param {string} [args.consultantEmail]
+ */
+async function enqueueReplyWithJitter({ mailbox, to, subject, html, senderType, prospectClass, cc, msg, dealId, consultantEmail }) {
+  const window = getJitterWindowForSenderType(senderType);
+  const scheduledAt = computeScheduledAt(new Date(), { minMs: window.minMs, maxMs: window.maxMs });
+  return enqueuePendingReply({
+    mailbox,
+    to,
+    subject,
+    html,
+    cc,
+    scheduledAt,
+    senderType,
+    prospectClass,
+    jitterKind: window.kind,
+    originalMessageId: msg && msg.id,
+    originalSubject: msg && msg.subject,
+    originalSender: msg && msg.from && msg.from.emailAddress && msg.from.emailAddress.address,
+    dealId,
+    consultantEmail,
+  });
 }
 
 // ─── Réponses prospects — 6 classes + escalation ───────────────────────────
@@ -245,15 +310,17 @@ async function handlePositive(msg, decision, ctx) {
     await stopSequence(ctx.dealId);
     await pipedrive.updateDealStage(ctx.dealId, Number(process.env.PIPEDRIVE_STAGE_QUALIFIED));
   }
-  // Réponse au prospect (inclut idéalement le lien Bookings du consultant —
-  // en MVP : le reply_draft de Claude ne contient pas encore le lien ;
-  // à ajouter quand on aura l'URL Bookings par consultant dans le brief)
   if (decision.reply_draft && decision.reply_to) {
-    await sendMail({
-      from: process.env.DAVID_EMAIL,
+    await enqueueReplyWithJitter({
+      mailbox: msg.mailbox || process.env.DAVID_EMAIL,
       to: decision.reply_to,
       subject: decision.reply_subject || `Re: ${msg.subject}`,
       html: wrapHtml(decision.reply_draft),
+      senderType: 'prospect',
+      prospectClass: 'positive',
+      msg,
+      dealId: ctx.dealId,
+      consultantEmail: ctx.consultantEmail,
     });
   }
   await alertConsultant(ctx.consultantEmail, msg, decision, 'positive', { context: ctx.context });
@@ -268,12 +335,17 @@ async function handleQuestion(msg, decision, ctx) {
     await pipedrive.updateDealStage(ctx.dealId, Number(process.env.PIPEDRIVE_STAGE_REPLIED));
   }
   if (decision.reply_draft && decision.reply_to) {
-    await sendMail({
-      from: process.env.DAVID_EMAIL,
+    await enqueueReplyWithJitter({
+      mailbox: msg.mailbox || process.env.DAVID_EMAIL,
       to: decision.reply_to,
       cc: ctx.consultantEmail ? [ctx.consultantEmail] : [],
       subject: decision.reply_subject || `Re: ${msg.subject}`,
       html: wrapHtml(decision.reply_draft),
+      senderType: 'prospect',
+      prospectClass: 'question',
+      msg,
+      dealId: ctx.dealId,
+      consultantEmail: ctx.consultantEmail,
     });
   }
   reportLeadExhausterFeedback({ ctx, status: 'replied' }).catch(() => {});
@@ -286,11 +358,16 @@ async function handleNeutre(msg, decision, ctx) {
     await pipedrive.updateDealStage(ctx.dealId, Number(process.env.PIPEDRIVE_STAGE_REPLIED));
   }
   if (decision.reply_draft && decision.reply_to) {
-    await sendMail({
-      from: process.env.DAVID_EMAIL,
+    await enqueueReplyWithJitter({
+      mailbox: msg.mailbox || process.env.DAVID_EMAIL,
       to: decision.reply_to,
       subject: decision.reply_subject || `Re: ${msg.subject}`,
       html: wrapHtml(decision.reply_draft),
+      senderType: 'prospect',
+      prospectClass: 'neutre',
+      msg,
+      dealId: ctx.dealId,
+      consultantEmail: ctx.consultantEmail,
     });
   }
   await alertConsultant(ctx.consultantEmail, msg, decision, 'neutre', { context: ctx.context });
@@ -304,11 +381,16 @@ async function handleNegative(msg, decision, ctx) {
     await pipedrive.markLeadPermanentOptOut(ctx.dealId);
   }
   if (decision.reply_draft && decision.reply_to) {
-    await sendMail({
-      from: process.env.DAVID_EMAIL,
+    await enqueueReplyWithJitter({
+      mailbox: msg.mailbox || process.env.DAVID_EMAIL,
       to: decision.reply_to,
       subject: decision.reply_subject || `Re: ${msg.subject}`,
       html: wrapHtml(decision.reply_draft),
+      senderType: 'prospect',
+      prospectClass: 'negative',
+      msg,
+      dealId: ctx.dealId,
+      consultantEmail: ctx.consultantEmail,
     });
   }
   await alertConsultant(ctx.consultantEmail, msg, decision, 'negative', { context: ctx.context });
