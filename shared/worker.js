@@ -17,6 +17,7 @@ const { scheduleRelance } = require('./queue');
 const { nextBusinessDayAt, addBusinessDays } = require('./holidays');
 const pipedrive = require('./pipedrive');
 const { getMem0 } = require('./adapters/memory/mem0');
+const { isLeadStillSendable } = require('./optOutGuard');
 
 /**
  * Résout l'adresse Smart BCC Pipedrive d'un consultant à partir de son
@@ -274,6 +275,20 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
   const j0 = steps[0];
   const consultantBCC = getConsultantBCC(adjustedConsultant.email);
   if (j0IsImmediate) {
+    // BL-52 (11 mai 2026) — Re-check opt-out serré juste avant J0 immédiat
+    // (le check initial dans launchSequenceForConsultant peut être périmé
+    // de quelques secondes si un opt-out a été posé entretemps par un autre
+    // canal — escalation, davidInbox, etc.).
+    if (personId) {
+      try {
+        const guard = await isLeadStillSendable({ personId });
+        if (!guard.sendable) {
+          return { sent: [], scheduled: [], skipped: true, reason: guard.reason };
+        }
+      } catch {
+        // Best effort : si check fail, on tente l'envoi
+      }
+    }
     const html = renderEmailHtml({
       identity, consultant: adjustedConsultant, corps: j0.corps, dealId, personId, day: 'J0',
     });
@@ -335,6 +350,24 @@ async function sendScheduledStep(job) {
   const identity = loadIdentity(agent);
 
   const { jour, objet, corps } = preGeneratedStep;
+
+  // BL-52 (11 mai 2026) — Garde-fou opt-out re-checké AVANT chaque sendMail
+  // différé (J+14, J+28). Sans ce check, un prospect ayant répondu négatif
+  // après le J0 (et marqué opt_out_until=9999-12-31 par davidInbox) recevrait
+  // quand même les relances déjà queued. Violation règle d'honneur §4.
+  if (personId) {
+    try {
+      const guard = await isLeadStillSendable({ personId });
+      if (!guard.sendable) {
+        // Skip silencieux : on ne renvoie pas le mail, on marque le step comme
+        // skippé. Le scheduler delete le message queue (return success).
+        return { sent: null, skipped: true, reason: guard.reason, until: guard.until, day: jour };
+      }
+    } catch {
+      // Best effort : si check fail, on tente l'envoi (ancien comportement)
+    }
+  }
+
   const html = renderEmailHtml({
     identity, consultant, corps, dealId, personId, day: jour,
   });
