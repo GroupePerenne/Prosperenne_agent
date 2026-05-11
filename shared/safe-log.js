@@ -33,6 +33,21 @@
  * Fix transverse BL-45 — Sprint 3 Phase 1 (1er mai 2026).
  */
 
+// Push parallèle vers Application Insights (best effort, fallback BL-04bis).
+// Le require est paresseux pour ne pas charger applicationinsights au boot des
+// tests qui ne l'utilisent pas (et pour éviter l'init prématurée si le module
+// est consommé dans un contexte non-FA comme un script CLI).
+let _aiRef = null;
+function getAI() {
+  if (_aiRef !== null) return _aiRef;
+  try {
+    _aiRef = require('./app-insights');
+  } catch {
+    _aiRef = { trackTrace: () => {}, trackException: () => {} };
+  }
+  return _aiRef;
+}
+
 function noop() {}
 
 /**
@@ -87,12 +102,38 @@ function makeSafeLogger(context) {
   const safeWarn = safe(rawWarn, 'warn');
   const safeError = safe(rawError, 'error');
 
-  // Logger callable : log(msg) route vers safeInfo (compat avec
-  // context.log(msg) direct utilisé dans les call sites historiques).
-  const logger = (...args) => safeInfo(...args);
-  logger.info = safeInfo;
-  logger.warn = safeWarn;
-  logger.error = safeError;
+  // Push parallèle AI (BL-04bis fix). On garde le call context.log natif
+  // pour ne pas casser l'auto-instrumentation runtime, ET on pousse explicite
+  // via TelemetryClient pour garantir l'ingestion AI même si context.log foire.
+  const ai = getAI();
+  const pushAi = (severity) => (...args) => {
+    try {
+      const [msg, ...rest] = args;
+      const properties = (rest.length === 1 && typeof rest[0] === 'object' && rest[0] !== null) ? rest[0] : (rest.length > 0 ? { extra: rest } : {});
+      if (severity === 'error' && (rest[0] instanceof Error || msg instanceof Error)) {
+        ai.trackException(msg instanceof Error ? msg : rest[0], { logMessage: String(msg).slice(0, 500) });
+      } else {
+        ai.trackTrace(String(msg || ''), properties, severity);
+      }
+    } catch {
+      // Best effort
+    }
+  };
+
+  const wrap = (safeFn, severity) => (...args) => {
+    pushAi(severity)(...args);
+    return safeFn(...args);
+  };
+
+  const wrappedInfo = wrap(safeInfo, 'info');
+  const wrappedWarn = wrap(safeWarn, 'warn');
+  const wrappedError = wrap(safeError, 'error');
+
+  // Logger callable : log(msg) route vers wrappedInfo.
+  const logger = (...args) => wrappedInfo(...args);
+  logger.info = wrappedInfo;
+  logger.warn = wrappedWarn;
+  logger.error = wrappedError;
   return logger;
 }
 
