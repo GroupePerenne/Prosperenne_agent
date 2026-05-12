@@ -94,7 +94,7 @@ function parisDateTime(isoDate, hour, minute = 0) {
  * Retourne le prochain créneau d'envoi (9h Paris par défaut) en jour ouvré.
  *
  * - Si la date passée est déjà dans un créneau valide (jour ouvré,
- *   9h ≤ heure Paris < 11h), elle est retournée telle quelle.
+ *   9h ≤ heure Paris < 18h), elle est retournée telle quelle.
  * - Sinon, on avance jusqu'au prochain jour ouvré et on positionne à
  *   hourLocal:minuteLocal Paris.
  *

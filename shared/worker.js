@@ -332,7 +332,7 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
   });
 
   // 2. Détermine le slot J0 (maintenant si on est dans le créneau ouvré
-  // 9h-11h Paris, sinon prochain créneau ouvré à 9h Paris)
+  // 9h-18h Paris, sinon prochain créneau ouvré à 9h Paris)
   const now = new Date();
   const j0Slot = nextBusinessDayAt(now);
   const j0IsImmediate = j0Slot.getTime() - now.getTime() < 60_000; // < 1 min = on considère immédiat

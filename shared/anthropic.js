@@ -93,6 +93,16 @@ async function callClaude({
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY non défini');
 
+  // Prompt caching ephemeral sur system prompt — Anthropic facture 10% du
+  // tarif input pour ~5min après le 1er appel. Économie ~60-70% sur les
+  // appels en batch (générateur séquence, profil prospect) où le system
+  // prompt VP 3 couches est identique d'un prospect à l'autre. Minimum
+  // 1024 tokens (Sonnet) / 2048 (Haiku) pour que le cache s'active ; en
+  // dessous, l'API ignore silencieusement et applique le tarif standard.
+  const systemForApi = typeof system === 'string' && system.length > 0
+    ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+    : system;
+
   const res = await fetch(API_URL, {
     method: 'POST',
     headers: {
@@ -104,7 +114,7 @@ async function callClaude({
       model,
       max_tokens: maxTokens,
       temperature,
-      system,
+      system: systemForApi,
       messages,
     }),
   });
