@@ -680,7 +680,32 @@ async function selectCandidatesForConsultant(params = {}) {
     const sortedCandidates = enriched.map((x) => x.candidate);
     const excludedNoGps = toEnrich.filter((e) => !entityCoords(e)).length;
 
-    const selected = sortedCandidates.slice(0, maxCandidates);
+    // Filtrage amont (fix 12 mai 2026 PM) : exclure les candidates dont
+    // l'entreprise a déjà un deal ouvert dans le pipeline Prospérenne.
+    // Sans ça, le selector retourne stable les TOP-N selon distance/RNE et
+    // recycle les mêmes prospects à chaque appel (incident 11-12 mai : 14
+    // deals stage NEW orphelins parce que LeadSelector pickait toujours les
+    // mêmes 10 leads). 1 call HTTP Pipedrive (~300ms), filtre local O(n).
+    // Best effort : si Pipedrive est down, on retourne tous les candidates
+    // (mieux que tout bloquer).
+    let alreadyInPipe = new Set();
+    let excludedAlreadyInPipe = 0;
+    try {
+      const pipedrive = require('./pipedrive');
+      alreadyInPipe = await pipedrive.getOrgNamesWithOpenDealInOurPipe();
+    } catch (err) {
+      logInfo(context, `[leadSelector] getOrgNamesWithOpenDealInOurPipe failed (${err.message}), no exclusion applied`);
+    }
+    const freshCandidates = sortedCandidates.filter((c) => {
+      const norm = String(c.entreprise || '').toLowerCase().trim();
+      if (norm && alreadyInPipe.has(norm)) {
+        excludedAlreadyInPipe++;
+        return false;
+      }
+      return true;
+    });
+
+    const selected = freshCandidates.slice(0, maxCandidates);
 
     const status = selected.length === 0
       ? 'empty'
@@ -698,6 +723,7 @@ async function selectCandidatesForConsultant(params = {}) {
         excludedByRules: excluded.length,
         excludedNoDirigeant,
         excludedNoGps,
+        excludedAlreadyInPipe,
         returned: selected.length,
         nafCodesQueried: filters.nafCodes,
         effectifCodesQueried: filters.effectifCodes,

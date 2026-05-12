@@ -143,6 +143,43 @@ async function findOpenDealsForPersonInOurPipe(personId, { includeClosed = false
   return all.filter((d) => d.pipeline_id === ourPipe);
 }
 
+/**
+ * Récupère l'ensemble des noms d'organisations (lowercased + trimmed) qui
+ * ont au moins un deal ouvert dans le pipeline Prospérenne. Utilisé par
+ * Lead Selector pour exclure du pool de candidats les prospects déjà tentés.
+ *
+ * Contexte 12 mai 2026 PM : Lead Selector retournait stable les TOP-10 par
+ * distance/RNE sans filtrer les SIRENs déjà en deal pipe 28. Chaque cron
+ * matinal repickait les mêmes 10 prospects → doublons stage NEW orphelins.
+ * Cette fonction permet le filtrage amont via le nom d'entreprise (le SIREN
+ * custom field n'est pas systématiquement renseigné côté Pipedrive).
+ *
+ * 1 call HTTP suffit (Pipedrive /deals retourne org_id.name dans la réponse).
+ * Pagination 500/page, max 20 pages pour le garde-fou.
+ *
+ * @returns {Promise<Set<string>>} noms d'orgs lowercased + trimmed.
+ */
+async function getOrgNamesWithOpenDealInOurPipe() {
+  const ourPipe = Number(process.env.PIPEDRIVE_PIPELINE_ID);
+  if (!Number.isFinite(ourPipe)) return new Set();
+  const names = new Set();
+  let start = 0;
+  const PAGE = 500;
+  for (let i = 0; i < 20; i++) {
+    const data = await call('/deals', {
+      query: { pipeline_id: ourPipe, status: 'open', limit: PAGE, start },
+    });
+    if (!Array.isArray(data) || data.length === 0) break;
+    for (const d of data) {
+      const n = d.org_id && d.org_id.name;
+      if (n) names.add(String(n).toLowerCase().trim());
+    }
+    if (data.length < PAGE) break;
+    start += PAGE;
+  }
+  return names;
+}
+
 /** Récupère l'email d'un utilisateur Pipedrive par son user_id (= owner d'un deal) */
 async function getUserEmail(userId) {
   if (!userId) return null;
@@ -316,6 +353,7 @@ module.exports = {
   updateDealStage,
   findExistingDealsAcrossAllPipes,
   findOpenDealsForPersonInOurPipe,
+  getOrgNamesWithOpenDealInOurPipe,
   getUserEmail,
   markLeadForRetry,
   markLeadPermanentOptOut,

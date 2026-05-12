@@ -286,37 +286,28 @@ function renderUnattributableEmailHtml({ lead, dealLink }) {
 // calculer l'angle d'entrée et la modulation DISC. Si absent, fallback
 // 'pas_de_signal' + ton standard (cohérent VP OSEYS socle, cas le plus fréquent).
 async function bootstrapSequence({ agent, consultant, lead, dealId, personId, orgId, context, mem0: mem0Override, prospectProfile }) {
-  const _bsTag = `[bs ${agent} dealId=${dealId} leadEmail=${lead && lead.email}]`;
-  console.log(`${_bsTag} START`);
   const identity = loadIdentity(agent);
 
-  // 0. Filtrage leads existants : si le prospect est déjà dans un deal actif
-  // d'un autre pipeline Pipedrive, on skippe.
-  // - Match clair (même person_id) → skip silencieux, pas d'envoi
-  // - Match flou (même org_id mais person_id différent) → skip + mail
-  //   d'escalation au consultant owner du deal existant (best effort).
-  if (personId || orgId) {
+  // 0. Filtrage leads existants — INTRA-PIPE 28 SEULEMENT (correction 12 mai PM).
+  // Doctrine précédente "cross-pipes" : skip si la person a un deal ouvert dans
+  // n'importe quel pipeline OSEYS. Bloquant en pratique : pollution historique
+  // searchPerson fuzzy a agrégé des deals legacy sur des persons mal-matchées
+  // (ex: person 53801 = 134 deals dont 120 dans pipes 10/12/22/24 qui n'ont
+  // rien à voir). Le step 0 cross-pipes faux-positivait à grande échelle et
+  // bloquait l'envoi de TOUS les J0. Intra-pipe 28 : check uniquement notre
+  // pipeline Prospérenne — empêche les vrais doublons sans payer la dette
+  // legacy. La pollution Pipedrive ancienne doit être traitée séparément.
+  if (personId) {
     try {
-      console.log(`${_bsTag} step0 findExistingDealsAcrossAllPipes starting`);
-      const existing = await pipedrive.findExistingDealsAcrossAllPipes({ personId, orgId });
-      console.log(`${_bsTag} step0 findExistingDeals done, count=${existing.length}`);
-      if (existing.length > 0) {
-        const clearMatch = personId ? existing.find((d) => d.person_id?.value === personId) : null;
-        if (clearMatch) {
-          console.log(`${_bsTag} step0 SKIP existing_deal_clear matchDealId=${clearMatch.id}`);
-          return { skipped: true, reason: 'existing_deal_clear', matchDealId: clearMatch.id, matchPipeline: clearMatch.pipeline_id };
-        }
-        const fuzzyMatch = orgId ? existing.find((d) => d.org_id?.value === orgId) : null;
-        if (fuzzyMatch) {
-          console.log(`${_bsTag} step0 SKIP existing_deal_fuzzy matchDealId=${fuzzyMatch.id}`);
-          await sendFuzzyMatchEscalation({ fuzzyDeal: fuzzyMatch, lead, context });
-          return { skipped: true, reason: 'existing_deal_fuzzy', matchDealId: fuzzyMatch.id, matchPipeline: fuzzyMatch.pipeline_id, needsEscalation: true, escalationSent: true };
-        }
+      const existing = await pipedrive.findOpenDealsForPersonInOurPipe(personId);
+      // Exclure le deal courant (créé juste avant par resolveOrCreateDeal).
+      const others = existing.filter((d) => Number(d.id) !== Number(dealId));
+      if (others.length > 0) {
+        const reused = others[0];
+        return { skipped: true, reason: 'existing_deal_in_our_pipe', matchDealId: reused.id };
       }
     } catch (err) {
-      // Si Pipedrive est down, on log mais on ne bloque pas l'envoi.
-      // (l'appelant aura les infos via le log ; on préfère envoyer que de rater)
-      console.warn(`${_bsTag} step0 findExistingDeals FAILED (${err.message}), continuing`);
+      console.warn(`bootstrapSequence: findOpenDealsForPersonInOurPipe failed (${err.message}), continuing`);
     }
   }
 
@@ -326,26 +317,16 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
     ton: consultant.ton || identity.ton_ajustements.registre_par_defaut,
   };
 
-  console.log(`${_bsTag} step1 resolveMem0Enrichments starting`);
   const mem0 = mem0Override !== undefined ? mem0Override : getMem0(context);
   const enrichments = await resolveMem0Enrichments({ mem0, lead, context });
-  console.log(`${_bsTag} step1 enrichments done, mem0_active=${!!mem0}`);
 
-  console.log(`${_bsTag} step2 generateSequence (Sonnet) starting`);
-  let steps;
-  try {
-    steps = await generateSequence({
-      consultant: adjustedConsultant,
-      agent: { prenom: identity.prenom, mail: identity.email, signature: identity.signature_html },
-      lead,
-      enrichments,
-      prospectProfile,
-    });
-    console.log(`${_bsTag} step2 generateSequence done, ${steps.length} steps generated`);
-  } catch (err) {
-    console.error(`${_bsTag} step2 generateSequence FAILED: ${err.message}`);
-    throw err;
-  }
+  const steps = await generateSequence({
+    consultant: adjustedConsultant,
+    agent: { prenom: identity.prenom, mail: identity.email, signature: identity.signature_html },
+    lead,
+    enrichments,
+    prospectProfile,
+  });
 
   // 2. Détermine le slot J0 (maintenant si on est dans le créneau ouvré
   // 9h-18h Paris, sinon prochain créneau ouvré à 9h Paris)
@@ -358,7 +339,6 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
   // 3. J0 : envoi direct si dans le créneau, sinon push en queue
   const j0 = steps[0];
   const consultantBCC = getConsultantBCC(adjustedConsultant.email);
-  console.log(`${_bsTag} step3 j0IsImmediate=${j0IsImmediate} j0Slot=${j0Slot.toISOString()}`);
   if (j0IsImmediate) {
     // BL-52 (11 mai 2026) — Re-check opt-out serré juste avant J0 immédiat
     // (le check initial dans launchSequenceForConsultant peut être périmé
@@ -368,45 +348,30 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
       try {
         const guard = await isLeadStillSendable({ personId });
         if (!guard.sendable) {
-          console.log(`${_bsTag} step3 SKIP opt_out_guard reason=${guard.reason}`);
           return { sent: [], scheduled: [], skipped: true, reason: guard.reason };
         }
-      } catch (e) {
-        console.warn(`${_bsTag} step3 isLeadStillSendable error: ${e.message}, continuing`);
+      } catch {
+        // Best effort : si check fail, on tente l'envoi
       }
     }
-    console.log(`${_bsTag} step4 sendMail starting to=${lead.email}`);
     const html = renderEmailHtml({
       identity, consultant: adjustedConsultant, corps: j0.corps, dealId, personId, day: 'J0',
     });
-    try {
-      await sendMail({
-        from: identity.email,
-        to: lead.email,
-        bcc: consultantBCC ? [consultantBCC] : [],
-        subject: j0.objet,
-        html,
-        // Pas de replyTo explicite : les réponses prospects arrivent
-        // nativement dans la boîte de l'expéditeur (martin@oseys.fr ou
-        // mila@oseys.fr).
-      });
-      console.log(`${_bsTag} step4 sendMail done`);
-    } catch (err) {
-      console.error(`${_bsTag} step4 sendMail FAILED: ${err.message}`);
-      throw err;
-    }
+    await sendMail({
+      from: identity.email,
+      to: lead.email,
+      bcc: consultantBCC ? [consultantBCC] : [],
+      subject: j0.objet,
+      html,
+      // Pas de replyTo explicite : les réponses prospects arrivent
+      // nativement dans la boîte de l'expéditeur (martin@oseys.fr ou
+      // mila@oseys.fr).
+    });
     if (dealId || personId) {
-      console.log(`${_bsTag} step5 logEmailSent starting`);
-      try {
-        await pipedrive.logEmailSent({
-          dealId, personId, sender: identity.prenom, day: 'J0',
-          subject: j0.objet, bodyPreview: j0.corps.slice(0, 200),
-        });
-        console.log(`${_bsTag} step5 logEmailSent done`);
-      } catch (err) {
-        console.error(`${_bsTag} step5 logEmailSent FAILED: ${err.message}`);
-        // Pas throw — le mail est parti, on accepte de perdre la trace Pipedrive
-      }
+      await pipedrive.logEmailSent({
+        dealId, personId, sender: identity.prenom, day: 'J0',
+        subject: j0.objet, bodyPreview: j0.corps.slice(0, 200),
+      });
     }
     // Fire-and-forget feedback exhauster : le mail vient de sortir, on
     // l'enregistre comme 'delivered' (Graph n'émet pas d'accusé réception
