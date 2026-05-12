@@ -76,8 +76,14 @@ async function createOrganization({ name, address, ownerId }) {
 // ─── Personnes ──────────────────────────────────────────────────────────────
 
 async function searchPerson(term) {
+  // exact_match=true : critique pour ensurePerson (orchestrator). Sans ça, la
+  // recherche fuzzy ramène la première personne dont l'email "contient" le
+  // term. Incident 12 mai 2026 PM : person 53801 (benjamin basset) avait
+  // 133 deals attachés (différents prospects "benjamin.*") car ensurePerson
+  // recevait toujours la première personne fuzzy-matchée. Fix : exact_match.
+  // Limite côté client à 10 (jamais plus de matches exacts pour 1 email valide).
   const data = await call('/persons/search', {
-    query: { term, exact_match: false, limit: 10 },
+    query: { term, exact_match: true, fields: 'email', limit: 10 },
   });
   return data?.items?.map((i) => i.item) || [];
 }
@@ -110,14 +116,31 @@ async function updatePersonField(personId, fieldKey, value) {
  * Avec { includeClosed: true } : tous les deals non supprimés (pour lecture
  * des champs de cooldown retry_available_after / opt_out_until qui sont
  * portés sur des deals déjà fermés).
+ *
+ * Incident 12 mai 2026 PM : la version précédente utilisait limit=100 puis
+ * filter client-side pipeline_id. Si la personne a >100 deals dans d'autres
+ * pipelines OSEYS, les deals pipeline 28 (IDs élevés) sortent du top-100,
+ * filter retourne [], resolveOrCreateDeal crée un nouveau deal alors qu'il
+ * existait → orphelins stage NEW. Fix : pagination complete via boucle start.
  */
 async function findOpenDealsForPersonInOurPipe(personId, { includeClosed = false } = {}) {
   if (!personId) return [];
   const ourPipe = Number(process.env.PIPEDRIVE_PIPELINE_ID);
-  const query = { person_id: personId, limit: 100 };
-  if (!includeClosed) query.status = 'open';
-  const data = await call('/deals', { query });
-  return Array.isArray(data) ? data.filter((d) => d.pipeline_id === ourPipe) : [];
+  const all = [];
+  let start = 0;
+  const PAGE = 500;
+  // Garde-fou : max 20 pages (10000 deals/personne). Au-delà, on suppose
+  // une pollution massive de la personne et on stoppe (mieux que boucle infinie).
+  for (let i = 0; i < 20; i++) {
+    const query = { person_id: personId, limit: PAGE, start };
+    if (!includeClosed) query.status = 'open';
+    const data = await call('/deals', { query });
+    if (!Array.isArray(data) || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE) break;
+    start += PAGE;
+  }
+  return all.filter((d) => d.pipeline_id === ourPipe);
 }
 
 /** Récupère l'email d'un utilisateur Pipedrive par son user_id (= owner d'un deal) */
