@@ -10,7 +10,8 @@
   "scripts": {
     "start": "func start",
     "test": "node --test 'tests/**/*.test.js'",
-    "build:naf": "node scripts/build-naf-rev2.js"
+    "build:naf": "node scripts/build-naf-rev2.js",
+    "smoke:prefill": "node scripts/smoke-prefill.js"
   },
   "dependencies": {
     "@azure/data-tables": "^13.3.2",
