@@ -2,6 +2,7 @@ require('./functions/sendMail');
 require('./functions/sendOnboarding');
 require('./functions/choixNiveau');
 require('./functions/onQualification');
+require('./functions/getConsultantBrief');
 require('./functions/runSequence');
 require('./functions/trackOpen');
 require('./functions/scheduler');
