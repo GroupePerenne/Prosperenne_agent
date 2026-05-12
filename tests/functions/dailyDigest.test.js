@@ -24,6 +24,8 @@ const {
   aggregateMetrics,
   buildDigestSummary,
   writeDailyMetricsToTable,
+  fetchConsultantMetrics,
+  loadPipelineDealsIndex,
 } = require('../../src/functions/dailyDigest');
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -41,7 +43,7 @@ function makeContext() {
 }
 
 function makeDeps({
-  consultants = [{ email: 'morgane@oseys.fr', prenom: 'morgane' }],
+  consultants = [{ email: 'morgane@oseys.fr', prenom: 'morgane', fullName: 'Morgane DE JESSEY' }],
   findUserIdReturn = 42,
   metricsReturn = { martinSent: 5, milaSent: 6, martinOpens: 2, milaOpens: 3, replies: 1, rdvSet: 0 },
   writeResult = { ok: true, written: 1 },
@@ -62,11 +64,13 @@ function makeDeps({
         findCalls.push(email);
         return typeof findUserIdReturn === 'function' ? findUserIdReturn(email) : findUserIdReturn;
       },
-      fetchConsultantMetrics: async (userId, dateISO) => {
-        metricsCalls.push({ userId, dateISO });
+      // Nouvelle signature post-fix 12 mai 2026 : (consultantFullName, dateISO).
+      // Cf. dailyDigest.js fetchConsultantMetrics — attribution par titre deal.
+      fetchConsultantMetrics: async (consultantFullName, dateISO) => {
+        metricsCalls.push({ consultantFullName, dateISO });
         if (metricsThrows) throw metricsThrows;
         if (typeof metricsReturn === 'function') {
-          const r = metricsReturn(userId);
+          const r = metricsReturn(consultantFullName);
           if (r && r.__throw) throw new Error(r.__throw);
           return r;
         }
@@ -202,11 +206,11 @@ test('handleDailyDigest — fail-open si reportToCharli {ok:false}, ne throw pas
 test('handleDailyDigest — digest dégradé si Pipedrive partial fail (1 consultant throw)', async () => {
   const { deps, reportCalls } = makeDeps({
     consultants: [
-      { email: 'morgane@oseys.fr', prenom: 'morgane' },
-      { email: 'johnny@oseys.fr', prenom: 'johnny' },
+      { email: 'morgane@oseys.fr', prenom: 'morgane', fullName: 'Morgane DE JESSEY' },
+      { email: 'johnny@oseys.fr', prenom: 'johnny', fullName: 'Johnny SERRA' },
     ],
     findUserIdReturn: (email) => email.includes('morgane') ? 42 : 99,
-    metricsReturn: (userId) => userId === 99
+    metricsReturn: (fullName) => /johnny/i.test(fullName)
       ? { __throw: 'Pipedrive 500 Johnny' }
       : { martinSent: 3, milaSent: 4, martinOpens: 1, milaOpens: 2, replies: 0, rdvSet: 0 },
   });
@@ -230,4 +234,232 @@ test('handleDailyDigest — séquence stricte write Table puis reportToCharli (o
     ['write', 'report'],
     `ordre attendu ['write','report'], reçu ${JSON.stringify(callOrder)}`,
   );
+});
+
+// ─── fetchConsultantMetrics (refonte 12 mai 2026 — attribution par titre deal)─
+//
+// Diagnostic (cf. handover Paul 12 mai 2026 PM) :
+//   - Pipedrive en prod OSEYS remappe `type:'email'` source → `appel_de_relance`
+//   - Owner deals + activités = David (30884421), pas le consultant
+//   - Attribution réelle au consultant = parsing du titre du deal
+//
+// Helper minimal pour simuler le client Pipedrive injecté via opts.pipedriveCall.
+
+function makePipedriveStub({ activities = [], dealsByPipeline = {}, dealsByStage = {} } = {}) {
+  const calls = [];
+  return {
+    calls,
+    pipedriveCall: async (path, query = {}) => {
+      calls.push({ path, query });
+      if (path === '/activities') {
+        return activities;
+      }
+      if (path === '/deals' && query.pipeline_id) {
+        return dealsByPipeline[query.pipeline_id] || [];
+      }
+      if (path === '/deals' && query.stage_id) {
+        return dealsByStage[query.stage_id] || [];
+      }
+      return [];
+    },
+  };
+}
+
+test('fetchConsultantMetrics — compte les envois Martin sur activités appel_de_relance owner David', async () => {
+  const dealsP28 = [
+    { id: 1001, title: 'Morgane DE JESSEY → SOCIETE DE POSE NORMANDE', pipeline_id: 28 },
+    { id: 1002, title: 'Morgane DE JESSEY → ENTREPRISE DURAND', pipeline_id: 28 },
+    { id: 1003, title: 'Johnny SERRA → CHRISTIAN NEVEU ELECTRICITE', pipeline_id: 28 },
+  ];
+  const activities = [
+    // 2 envois Martin sur deals Morgane (owner David user_id=30884421, type appel_de_relance)
+    { id: 1, type: 'appel_de_relance', subject: '[Martin] J0 — Bonjour', deal_id: 1001, user_id: 30884421 },
+    { id: 2, type: 'appel_de_relance', subject: '[Martin] J14 — Relance', deal_id: 1002, user_id: 30884421 },
+    // 1 envoi Mila sur deal Morgane
+    { id: 3, type: 'appel_de_relance', subject: '[Mila] J0 — Bonjour', deal_id: 1002, user_id: 30884421 },
+    // 1 envoi Martin sur deal Johnny — NE DOIT PAS compter pour Morgane
+    { id: 4, type: 'appel_de_relance', subject: '[Martin] J0 — Bonjour', deal_id: 1003, user_id: 30884421 },
+  ];
+  const { pipedriveCall } = makePipedriveStub({
+    activities,
+    dealsByPipeline: { 28: dealsP28 },
+  });
+  const m = await fetchConsultantMetrics('Morgane DE JESSEY', '2026-05-11', {
+    pipelineId: 28,
+    pipedriveCall,
+  });
+  assert.equal(m.martinSent, 2, 'devrait compter 2 envois Martin sur Morgane');
+  assert.equal(m.milaSent, 1, 'devrait compter 1 envoi Mila sur Morgane');
+});
+
+test('fetchConsultantMetrics — scoping consultant : titre Johnny ne compte pas pour Morgane', async () => {
+  const dealsP28 = [
+    { id: 1003, title: 'Johnny SERRA → CHRISTIAN NEVEU ELECTRICITE', pipeline_id: 28 },
+  ];
+  const activities = [
+    { id: 10, type: 'appel_de_relance', subject: '[Martin] J0 — Bonjour', deal_id: 1003, user_id: 30884421 },
+  ];
+  const { pipedriveCall } = makePipedriveStub({
+    activities,
+    dealsByPipeline: { 28: dealsP28 },
+  });
+  const m = await fetchConsultantMetrics('Morgane DE JESSEY', '2026-05-11', {
+    pipelineId: 28,
+    pipedriveCall,
+  });
+  assert.equal(m.martinSent, 0);
+  assert.equal(m.milaSent, 0);
+});
+
+test('fetchConsultantMetrics — accepte les deux types email et appel_de_relance (back-compat tenant)', async () => {
+  const dealsP28 = [
+    { id: 1001, title: 'Morgane DE JESSEY → SOCIETE X', pipeline_id: 28 },
+  ];
+  const activities = [
+    { id: 1, type: 'email', subject: '[Martin] J0 — Bonjour', deal_id: 1001 },
+    { id: 2, type: 'appel_de_relance', subject: '[Martin] J14 — Relance', deal_id: 1001 },
+  ];
+  const { pipedriveCall } = makePipedriveStub({
+    activities,
+    dealsByPipeline: { 28: dealsP28 },
+  });
+  const m = await fetchConsultantMetrics('Morgane DE JESSEY', '2026-05-11', {
+    pipelineId: 28,
+    pipedriveCall,
+  });
+  assert.equal(m.martinSent, 2, 'compte les deux types (email legacy + appel_de_relance prod)');
+});
+
+test('fetchConsultantMetrics — types non supportés ignorés (meeting, call)', async () => {
+  const dealsP28 = [
+    { id: 1001, title: 'Morgane DE JESSEY → SOCIETE X', pipeline_id: 28 },
+  ];
+  const activities = [
+    { id: 1, type: 'meeting', subject: '[Martin] RDV', deal_id: 1001 },
+    { id: 2, type: 'call', subject: '[Mila] Appel', deal_id: 1001 },
+    { id: 3, type: 'task', subject: '[Martin] Todo', deal_id: 1001 },
+  ];
+  const { pipedriveCall } = makePipedriveStub({
+    activities,
+    dealsByPipeline: { 28: dealsP28 },
+  });
+  const m = await fetchConsultantMetrics('Morgane DE JESSEY', '2026-05-11', {
+    pipelineId: 28,
+    pipedriveCall,
+  });
+  assert.equal(m.martinSent, 0);
+  assert.equal(m.milaSent, 0);
+});
+
+test('fetchConsultantMetrics — activité sur deal hors pipeline cible : ignorée', async () => {
+  const dealsP28 = [
+    { id: 1001, title: 'Morgane DE JESSEY → SOCIETE X', pipeline_id: 28 },
+    // Deal 1099 dans un AUTRE pipeline mais titre contenant "Morgane" → pas dans index P28
+  ];
+  const activities = [
+    // deal_id=1099 inconnu de l'index P28 → ignoré
+    { id: 1, type: 'appel_de_relance', subject: '[Martin] J0', deal_id: 1099 },
+    // deal_id=1001 dans P28 → compté
+    { id: 2, type: 'appel_de_relance', subject: '[Martin] J0', deal_id: 1001 },
+  ];
+  const { pipedriveCall } = makePipedriveStub({
+    activities,
+    dealsByPipeline: { 28: dealsP28 },
+  });
+  const m = await fetchConsultantMetrics('Morgane DE JESSEY', '2026-05-11', {
+    pipelineId: 28,
+    pipedriveCall,
+  });
+  assert.equal(m.martinSent, 1);
+});
+
+test('fetchConsultantMetrics — activité sans deal_id : ignorée', async () => {
+  const dealsP28 = [
+    { id: 1001, title: 'Morgane DE JESSEY → SOCIETE X', pipeline_id: 28 },
+  ];
+  const activities = [
+    { id: 1, type: 'appel_de_relance', subject: '[Martin] J0', deal_id: null },
+  ];
+  const { pipedriveCall } = makePipedriveStub({
+    activities,
+    dealsByPipeline: { 28: dealsP28 },
+  });
+  const m = await fetchConsultantMetrics('Morgane DE JESSEY', '2026-05-11', {
+    pipelineId: 28,
+    pipedriveCall,
+  });
+  assert.equal(m.martinSent, 0);
+});
+
+test('fetchConsultantMetrics — pipeline ID absent retourne zéro (garde-fou)', async () => {
+  const { pipedriveCall } = makePipedriveStub({ activities: [] });
+  const prevPipeline = process.env.PIPEDRIVE_PIPELINE_ID;
+  delete process.env.PIPEDRIVE_PIPELINE_ID;
+  try {
+    const m = await fetchConsultantMetrics('Morgane DE JESSEY', '2026-05-11', { pipedriveCall });
+    assert.equal(m.martinSent, 0);
+    assert.equal(m.milaSent, 0);
+  } finally {
+    if (prevPipeline) process.env.PIPEDRIVE_PIPELINE_ID = prevPipeline;
+  }
+});
+
+test('fetchConsultantMetrics — compte replies (stage replied) et rdvSet (stage rdv_set) avec matching par titre', async () => {
+  const dealsP28 = [
+    { id: 1001, title: 'Morgane DE JESSEY → SOCIETE X', pipeline_id: 28 },
+  ];
+  const dealsRepliedStage = [
+    { id: 1001, title: 'Morgane DE JESSEY → SOCIETE X', pipeline_id: 28, update_time: '2026-05-11 12:30:00' },
+  ];
+  const dealsRdvStage = [
+    { id: 1001, title: 'Morgane DE JESSEY → SOCIETE X', pipeline_id: 28, update_time: '2026-05-11 14:00:00' },
+    { id: 1004, title: 'Johnny SERRA → AUTRE', pipeline_id: 28, update_time: '2026-05-11 10:00:00' }, // doit être ignoré
+  ];
+  const { pipedriveCall } = makePipedriveStub({
+    activities: [],
+    dealsByPipeline: { 28: dealsP28 },
+    dealsByStage: { 254: dealsRepliedStage, 257: dealsRdvStage },
+  });
+  const prevReplied = process.env.PIPEDRIVE_STAGE_REPLIED;
+  const prevQualified = process.env.PIPEDRIVE_STAGE_QUALIFIED;
+  const prevRdv = process.env.PIPEDRIVE_STAGE_RDV_SET;
+  process.env.PIPEDRIVE_STAGE_REPLIED = '254';
+  delete process.env.PIPEDRIVE_STAGE_QUALIFIED;
+  process.env.PIPEDRIVE_STAGE_RDV_SET = '257';
+  try {
+    const m = await fetchConsultantMetrics('Morgane DE JESSEY', '2026-05-11', {
+      pipelineId: 28,
+      pipedriveCall,
+    });
+    assert.equal(m.replies, 1, 'doit compter 1 reply sur stage replied');
+    assert.equal(m.rdvSet, 1, 'doit compter 1 rdvSet (Morgane), Johnny ignoré');
+  } finally {
+    if (prevReplied) process.env.PIPEDRIVE_STAGE_REPLIED = prevReplied; else delete process.env.PIPEDRIVE_STAGE_REPLIED;
+    if (prevQualified) process.env.PIPEDRIVE_STAGE_QUALIFIED = prevQualified;
+    if (prevRdv) process.env.PIPEDRIVE_STAGE_RDV_SET = prevRdv; else delete process.env.PIPEDRIVE_STAGE_RDV_SET;
+  }
+});
+
+test('loadPipelineDealsIndex — itère sur la pagination Pipedrive (multi-pages)', async () => {
+  let page = 0;
+  const pipedriveCall = async (path, query) => {
+    assert.equal(path, '/deals');
+    assert.equal(query.pipeline_id, 28);
+    page++;
+    if (page === 1) {
+      // page 1 pleine (500 items simulés par 2 pour test rapide → on simule plein avec limit=2)
+      // En vrai limit=500, on simule juste qu'on a "limit" items pour déclencher la page 2
+      const arr = [];
+      for (let i = 0; i < query.limit; i++) {
+        arr.push({ id: query.start + i + 1, title: `Deal ${query.start + i + 1}`, pipeline_id: 28 });
+      }
+      return arr;
+    }
+    // page 2 partielle → stop
+    return [{ id: 9999, title: 'Last deal', pipeline_id: 28 }];
+  };
+  const index = await loadPipelineDealsIndex(28, pipedriveCall);
+  // 500 + 1 = 501 deals
+  assert.equal(index.size, 501);
+  assert.ok(index.has(9999));
 });
