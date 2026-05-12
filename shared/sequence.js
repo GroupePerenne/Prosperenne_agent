@@ -67,6 +67,11 @@ async function generateSequence({ consultant, agent, lead, enrichments, prospect
   const systemPrompt = buildSystemPrompt({ consultant, agent, angle, discModulation, proofPoints, offerSpec });
   const userPrompt = buildUserPrompt({ lead, enrichments, prospectProfile, angle });
 
+  // Prompt caching ephemeral sur system VP 3 couches (cf. shared/anthropic.js).
+  // generateSequence est le plus gros consommateur Anthropic du repo. Le system
+  // prompt construit ici (8-10k tokens VP + brief + DISC + proof points) est
+  // identique pour tous les prospects d'un même brief consultant. Cache éphémère
+  // 5min → 90% de réduction tarif input sur les appels 2..N du batch.
   const res = await fetch(ANTHROPIC_URL, {
     method: 'POST',
     headers: {
@@ -77,7 +82,7 @@ async function generateSequence({ consultant, agent, lead, enrichments, prospect
     body: JSON.stringify({
       model: MODEL,
       max_tokens: 2500,
-      system: systemPrompt,
+      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: userPrompt }],
     }),
   });
