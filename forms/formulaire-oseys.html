@@ -273,6 +273,10 @@
 
   <div class="progress-wrap"><div class="progress-bar" id="progress"></div></div>
 
+  <div class="callout" id="prefill-notice" style="display:none;">
+    <strong>Tes réponses précédentes ont été pré-chargées.</strong> Modifie ce qui doit l'être puis renvoie le formulaire.
+  </div>
+
   <form id="form">
 
     <!-- ─── Section 1 : Identité (pré-remplie via URL) ─── -->
@@ -535,7 +539,9 @@
 
 <script>
   // ─── Configuration ────────────────────────────────────────────────────────
-  const SUBMIT_ENDPOINT = 'https://pereneo-mail-sender.azurewebsites.net/api/onQualification';
+  const FUNCTION_HOST = 'https://pereneo-mail-sender.azurewebsites.net';
+  const SUBMIT_ENDPOINT = FUNCTION_HOST + '/api/onQualification';
+  const PREFILL_ENDPOINT = FUNCTION_HOST + '/api/getConsultantBrief';
   const STORAGE_KEY = 'oseys_qualification_draft';
 
   // ─── Pré-remplissage via paramètres URL ───────────────────────────────────
@@ -1102,7 +1108,155 @@
     });
   }
 
+  // ─── Pré-remplissage depuis le backend (correction d'un brief existant) ──
+  // Quand le formulaire est appelé avec ?email=...&code=<function-key>, on
+  // tente de récupérer les réponses précédentes via /api/getConsultantBrief
+  // pour pré-remplir TOUS les champs (pas seulement nom + email). Cas d'usage :
+  // un consultant qui veut corriger une coquille dans un brief déjà soumis.
+  // En cas de 404 (consultant_not_found) ou erreur réseau, fallback silencieux :
+  // le formulaire reste vide, prêt pour une saisie initiale.
+  async function prefillFromBackend() {
+    const params = new URLSearchParams(window.location.search);
+    const email = params.get('email');
+    const code = params.get('code');
+    if (!email || !code) return false;
+
+    try {
+      const url = `${PREFILL_ENDPOINT}?` + new URLSearchParams({ email, code }).toString();
+      const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (!data || !data.ok || !data.responses) return false;
+      applyResponses(data.responses, data.consultantName);
+      const notice = document.getElementById('prefill-notice');
+      if (notice) notice.style.display = 'block';
+      return true;
+    } catch (err) {
+      console.warn('[prefill] fetch failed', err);
+      return false;
+    }
+  }
+
+  // Hydrate les champs du formulaire depuis le schéma consultantMemory
+  // (voir buildConsultantMemory dans src/functions/onQualification.js).
+  // Schéma source : display_name, preferred_tone, tutoiement, favorite_sectors,
+  // commercial_strategy, usable_anecdotes, autonomy_level, secteurs_autres,
+  // effectif, zone, zone_rayon, adresse, ville, prospecteur, email,
+  // offre_choisie, mise_en_copie_consultant, cible_specifique,
+  // methode_consultant, anecdotes_anonymisees.
+  function applyResponses(r, consultantName) {
+    if (!r || typeof r !== 'object') return;
+
+    // Champs texte simples
+    const setText = (id, val) => {
+      const el = document.getElementById(id);
+      if (!el || val == null || val === '') return;
+      el.value = String(val);
+      el.classList.add('prefilled');
+      markPrefilledLabel(el);
+    };
+
+    // Nom : priorité consultantName (top-level) sur display_name
+    setText('f_nom', consultantName || r.display_name);
+    setText('f_email', r.email);
+    setText('f_ville', r.ville || r.adresse);
+
+    // Offre (textarea) : commercial_strategy. Si présent, sort de l'état
+    // "prefilled exemple" pour ne plus être effacé au focus.
+    if (r.commercial_strategy) {
+      const offre = document.getElementById('f_offre');
+      if (offre) {
+        offre.value = String(r.commercial_strategy);
+        offre.classList.remove('prefilled'); // c'est une vraie valeur, pas l'exemple
+      }
+    }
+
+    // Méthode consultant (textarea)
+    setText('f_methode', r.methode_consultant);
+
+    // Cible spécifique (texte libre)
+    setText('f_cible_specifique', r.cible_specifique);
+
+    // Anecdotes : array → textarea multi-lignes
+    if (Array.isArray(r.anecdotes_anonymisees) && r.anecdotes_anonymisees.length > 0) {
+      const anec = document.getElementById('f_anecdotes');
+      if (anec) {
+        anec.value = r.anecdotes_anonymisees.map((a) => '- ' + String(a)).join('\n');
+        anec.classList.add('prefilled');
+        markPrefilledLabel(anec);
+      }
+    }
+
+    // Prospecteur (martin/mila/both) — choice card
+    if (r.prospecteur && ['martin', 'mila', 'both'].includes(r.prospecteur)) {
+      document.querySelectorAll('[data-choice]').forEach((c) => c.classList.remove('selected'));
+      const target = document.querySelector(`[data-choice="${r.prospecteur}"]`);
+      if (target) {
+        target.classList.add('selected');
+        document.getElementById('f_prospecteur').value = r.prospecteur;
+      }
+    }
+
+    // Offre choisie (lead / rdv-cale) — single-select tag
+    if (r.offre_choisie && ['lead', 'rdv-cale'].includes(r.offre_choisie)) {
+      document.querySelectorAll('[data-tags="offre_choisie"] .tag').forEach((t) => t.classList.remove('selected'));
+      const target = document.querySelector(`[data-tags="offre_choisie"] .tag[data-value="${r.offre_choisie}"]`);
+      if (target) target.classList.add('selected');
+      document.getElementById('f_offre_choisie').value = r.offre_choisie;
+    }
+
+    // Mise en copie consultant — radio
+    if (typeof r.mise_en_copie_consultant === 'boolean') {
+      const val = r.mise_en_copie_consultant ? 'true' : 'false';
+      const radio = document.querySelector(`input[name="mise_en_copie_choice"][value="${val}"]`);
+      if (radio) {
+        document.querySelectorAll('input[name="mise_en_copie_choice"]').forEach((r2) => { r2.checked = false; });
+        radio.checked = true;
+        document.getElementById('f_mise_en_copie').value = val;
+      }
+    }
+
+    // Secteurs (multi-select tags)
+    if (Array.isArray(r.favorite_sectors) && r.favorite_sectors.length > 0) {
+      document.querySelectorAll('[data-tags="secteurs"] .tag').forEach((t) => t.classList.remove('selected'));
+      r.favorite_sectors.forEach((v) => {
+        const tag = document.querySelector(`[data-tags="secteurs"] .tag[data-value="${v}"]`);
+        if (tag) tag.classList.add('selected');
+      });
+      syncSecteurs();
+    }
+
+    // Effectif (multi-select tags, valeurs séparées par virgule en stockage)
+    if (r.effectif) {
+      const values = String(r.effectif).split(',').map((s) => s.trim()).filter(Boolean);
+      document.querySelectorAll('[data-tags="effectif"] .tag').forEach((t) => t.classList.remove('selected'));
+      values.forEach((v) => {
+        const tag = document.querySelector(`[data-tags="effectif"] .tag[data-value="${v}"]`);
+        if (tag) tag.classList.add('selected');
+      });
+      syncEffectif();
+    }
+
+    // Zone géographique + rayon
+    if (r.zone) restoreZoneFromValue(r.zone);
+    if (r.zone_rayon != null && r.zone_rayon !== '') restoreRayonFromValue(r.zone_rayon);
+
+    // NAF (codes secteurs_autres en CSV)
+    if (r.secteurs_autres) restoreNafFromValue(r.secteurs_autres);
+
+    updateProgress();
+  }
+
   // ─── Init ────────────────────────────────────────────────────────────────
+  // Ordre d'application des valeurs (le dernier appliqué l'emporte) :
+  //   1. initOffreExample      — exemple effaçable dans f_offre
+  //   2. loadDraft             — brouillon local
+  //   3. applyUrlParams        — params URL (?nom=&email=...)
+  //   4. prefillFromBackend    — réponses existantes du backend (cas correction)
+  //
+  // prefillFromBackend est async (fetch) et appliqué en dernier pour qu'un
+  // brief existant écrase systématiquement l'exemple, le brouillon et les
+  // params URL — l'intention "correction" prime sur les valeurs par défaut.
   initNafAutocomplete();   // lance le fetch NAF en parallèle (non bloquant)
   wireNafAutocomplete();   // branche le handler sur l'input de recherche NAF
   wireAdresseAutocomplete(); // branche le handler sur l'input adresse (BAN data.gouv.fr)
@@ -1110,6 +1264,9 @@
   loadDraft();             // puis le brouillon local (prime sur l'exemple)
   applyUrlParams();        // puis les params URL (qui prennent le dessus)
   updateProgress();
+  // Pré-remplissage backend en async (non bloquant). Si succès, écrase
+  // l'exemple + draft + params URL avec les vraies réponses précédentes.
+  prefillFromBackend().then((applied) => { if (applied) updateProgress(); });
 </script>
 </body>
 </html>
