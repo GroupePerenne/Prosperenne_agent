@@ -165,12 +165,16 @@ async function getOrgNamesWithOpenDealInOurPipe() {
   const names = new Set();
   let start = 0;
   const PAGE = 500;
+  // L'API Pipedrive /deals ne filtre pas toujours par pipeline_id en query
+  // (constaté 12 mai 2026 PM : avec pipeline_id=28, 86 deals retournés dont
+  // beaucoup pipes 10/12/22/24). Filter côté client par sécurité.
   for (let i = 0; i < 20; i++) {
     const data = await call('/deals', {
       query: { pipeline_id: ourPipe, status: 'open', limit: PAGE, start },
     });
     if (!Array.isArray(data) || data.length === 0) break;
     for (const d of data) {
+      if (d.pipeline_id !== ourPipe) continue;
       const n = d.org_id && d.org_id.name;
       if (n) names.add(String(n).toLowerCase().trim());
     }
