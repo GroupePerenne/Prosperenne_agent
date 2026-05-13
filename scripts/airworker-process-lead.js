@@ -222,16 +222,30 @@ async function processLead(candidate, deps = {}) {
     };
   }
 
-  // Étape 4 : Dropcontact en dernier recours
-  if (result.status !== 'ok' && domain && !isAggregator(domain) && deps.dropcontactAdapter) {
+  // Étape 4 : Dropcontact en dernier recours.
+  //
+  // Fix 13 mai 2026 — Lever skip_no_domain (mesure 12 mai PM : 3979 leads
+  // marqués cascade.dropcontact.skipped_no_domain sur 4006 unresolvable,
+  // soit 99.3% des échecs Dropcontact JAMAIS appelé). Or DropcontactAdapter
+  // accepte `companyName OR companyDomain` (cf. shared/lead-exhauster/
+  // adapters/dropcontact.js:171-172). On tente Dropcontact dans tous les
+  // cas où internal a échoué, en passant le domain seulement s'il est
+  // utilisable (présent ET non-aggrégateur). Le budget Dropcontact reste
+  // protégé par DROPCONTACT_MONTHLY_BUDGET_CENTS dans l'adapter.
+  if (result.status !== 'ok' && deps.dropcontactAdapter) {
+    const domainIsUsable = domain && !isAggregator(domain);
+    const dropPayload = {
+      siren: candidate.siren,
+      firstName: candidate.firstName,
+      lastName: candidate.lastName,
+      companyName: candidate.companyName,
+      ville: candidate.ville,
+      codePostal: candidate.codePostal,
+    };
+    if (domainIsUsable) dropPayload.companyDomain = domain;
+
     try {
-      const dropResult = await deps.dropcontactAdapter.resolve({
-        siren: candidate.siren,
-        firstName: candidate.firstName,
-        lastName: candidate.lastName,
-        companyName: candidate.companyName,
-        companyDomain: domain,
-      });
+      const dropResult = await deps.dropcontactAdapter.resolve(dropPayload);
       if (dropResult && dropResult.email && dropResult.confidence >= DROPCONTACT_MIN_CONFIDENCE) {
         signals.push('cascade.dropcontact.hit');
         return {
@@ -247,15 +261,13 @@ async function processLead(candidate, deps = {}) {
           elapsedMs: Date.now() - t0,
         };
       } else {
-        signals.push('cascade.dropcontact.miss_post_scrape');
+        signals.push(domainIsUsable ? 'cascade.dropcontact.miss_post_scrape' : 'cascade.dropcontact.miss_no_domain');
       }
     } catch (err) {
       signals.push(`cascade.dropcontact.error:${(err.message || '').slice(0, 30)}`);
     }
   } else if (result.status === 'ok') {
     signals.push('cascade.dropcontact.skipped_internal_ok');
-  } else if (!domain) {
-    signals.push('cascade.dropcontact.skipped_no_domain');
   }
 
   // Pas résolu : retour unresolvable
