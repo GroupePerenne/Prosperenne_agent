@@ -27,6 +27,9 @@ const { TableClient } = require('@azure/data-tables');
 
   // 1. Collecte
   const targets = [];
+  // I-2 OK: script ad hoc one-shot cleanup LeadContacts (cache), pas LeadBase
+  // Couche 1. Filtre OData strict confidence + cutoff Timestamp pour ne toucher
+  // que les entries de l'incident webSearch 8-11 mai.
   for await (const ent of tc.listEntities({ queryOptions: { filter } })) {
     targets.push({ pk: ent.partitionKey, rk: ent.rowKey });
     if (targets.length % 1000 === 0) console.log(`[depollute] collected ${targets.length}…`);
