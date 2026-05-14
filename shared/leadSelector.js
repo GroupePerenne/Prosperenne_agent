@@ -49,6 +49,40 @@ function splitCsv(s) {
     .filter(Boolean);
 }
 
+/**
+ * Dedup amont — exclut les candidates dont l'org a déjà un deal ouvert dans
+ * notre pipeline. Match par SIREN d'abord (immuable), fallback nom normalisé
+ * (legacy orgs sans SIREN renseigné).
+ *
+ * @param {Array<{siren?: string|number, entreprise?: string}>} candidates
+ * @param {{sirens: Set<string>, names: Set<string>}} alreadyInPipe
+ * @returns {{fresh: Array, excludedTotal: number, excludedBySiren: number, excludedByName: number}}
+ */
+function filterCandidatesAlreadyInPipe(candidates, alreadyInPipe) {
+  const sirens = (alreadyInPipe && alreadyInPipe.sirens) || new Set();
+  const names = (alreadyInPipe && alreadyInPipe.names) || new Set();
+  let excludedBySiren = 0;
+  let excludedByName = 0;
+  const fresh = (candidates || []).filter((c) => {
+    if (c && c.siren && sirens.has(String(c.siren))) {
+      excludedBySiren++;
+      return false;
+    }
+    const norm = c && c.entreprise ? String(c.entreprise).toLowerCase().trim() : '';
+    if (norm && names.has(norm)) {
+      excludedByName++;
+      return false;
+    }
+    return true;
+  });
+  return {
+    fresh,
+    excludedTotal: excludedBySiren + excludedByName,
+    excludedBySiren,
+    excludedByName,
+  };
+}
+
 function uniqSorted(arr) {
   return [...new Set(arr)].sort();
 }
@@ -688,28 +722,33 @@ async function selectCandidatesForConsultant(params = {}) {
     // mêmes 10 leads). 1 call HTTP Pipedrive (~300ms), filtre local O(n).
     // Best effort : si Pipedrive est down, on retourne tous les candidates
     // (mieux que tout bloquer).
-    let alreadyInPipe = new Set();
+    // Dedup amont par SIREN (immuable) en priorité, fallback nom normalisé
+    // pour orgs Pipedrive legacy sans SIREN renseigné. Voir cause racine 14
+    // mai 2026 PM : ensureOrg ne posait pas le custom field SIREN à la
+    // création, donc seul le nom était comparable. Or les noms Pipedrive
+    // (saisis) et LeadBase (SIRENE) divergent souvent (casse, espaces,
+    // accents, suffixes statut juridique).
+    let alreadyInPipe = { sirens: new Set(), names: new Set() };
     let excludedAlreadyInPipe = 0;
+    let excludedBySiren = 0;
+    let excludedByName = 0;
     let getOrgNamesDurationMs = 0;
     const getOrgNamesStarted = Date.now();
     try {
       const pipedrive = require('./pipedrive');
-      alreadyInPipe = await pipedrive.getOrgNamesWithOpenDealInOurPipe();
+      alreadyInPipe = await pipedrive.getOrgIdentifiersWithOpenDealInOurPipe();
       getOrgNamesDurationMs = Date.now() - getOrgNamesStarted;
     } catch (err) {
       getOrgNamesDurationMs = Date.now() - getOrgNamesStarted;
-      logInfo(context, `[leadSelector] getOrgNamesWithOpenDealInOurPipe failed (${err.message}), no exclusion applied`, {
+      logInfo(context, `[leadSelector] getOrgIdentifiersWithOpenDealInOurPipe failed (${err.message}), no exclusion applied`, {
         durationMs: getOrgNamesDurationMs,
       });
     }
-    const freshCandidates = sortedCandidates.filter((c) => {
-      const norm = String(c.entreprise || '').toLowerCase().trim();
-      if (norm && alreadyInPipe.has(norm)) {
-        excludedAlreadyInPipe++;
-        return false;
-      }
-      return true;
-    });
+    const dedupResult = filterCandidatesAlreadyInPipe(sortedCandidates, alreadyInPipe);
+    const freshCandidates = dedupResult.fresh;
+    excludedAlreadyInPipe = dedupResult.excludedTotal;
+    excludedBySiren = dedupResult.excludedBySiren;
+    excludedByName = dedupResult.excludedByName;
 
     const selected = freshCandidates.slice(0, maxCandidates);
 
@@ -749,8 +788,11 @@ async function selectCandidatesForConsultant(params = {}) {
       maxCandidates,
       candidatesCount,
       returned: selected.length,
-      alreadyInPipeSize: alreadyInPipe.size,
+      alreadyInPipeSirensSize: alreadyInPipe.sirens.size,
+      alreadyInPipeNamesSize: alreadyInPipe.names.size,
       excludedAlreadyInPipe,
+      excludedBySiren,
+      excludedByName,
       getOrgNamesDurationMs,
       ms: result.meta.elapsedMs,
     });
@@ -921,4 +963,5 @@ module.exports = {
   reviveBriefFromConsultantMemory,
   inferDepartementFromBrief,
   deduceDepartements,
+  filterCandidatesAlreadyInPipe,
 };

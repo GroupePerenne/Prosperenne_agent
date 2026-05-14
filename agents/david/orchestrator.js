@@ -909,12 +909,34 @@ async function resolveOrCreateDeal({ consultant, lead, agentKey, person, org, co
   }
 }
 
-async function ensureOrg(lead) {
-  const found = await pipedrive.searchOrganization(lead.entreprise);
-  if (found.length) return found[0];
-  return pipedrive.createOrganization({
+async function ensureOrg(lead, { pipedriveMod = pipedrive } = {}) {
+  // Search par SIREN d'abord (immuable, fiable). Évite faux matches noms
+  // approchants côté Pipedrive et garantit que le custom field SIREN sera
+  // posé à la création si nécessaire (cf. dedup amont LeadSelector).
+  const sirenKey = pipedriveMod.ORG_SIREN_FIELD_KEY;
+  if (lead.siren) {
+    const foundBySiren = await pipedriveMod.searchOrganization({ siren: lead.siren });
+    if (foundBySiren.length) {
+      const org = foundBySiren[0];
+      if (org && org.id && sirenKey && !org[sirenKey]) {
+        try { await pipedriveMod.updateOrganizationSiren(org.id, lead.siren); } catch (_) {}
+      }
+      return org;
+    }
+  }
+  const found = await pipedriveMod.searchOrganization(lead.entreprise);
+  if (found.length) {
+    const org = found[0];
+    // Backfill SIREN sur match nom si dispo côté lead et absent côté org.
+    if (lead.siren && org && org.id && sirenKey && !org[sirenKey]) {
+      try { await pipedriveMod.updateOrganizationSiren(org.id, lead.siren); } catch (_) {}
+    }
+    return org;
+  }
+  return pipedriveMod.createOrganization({
     name: lead.entreprise,
     address: lead.ville,
+    siren: lead.siren,
   });
 }
 
@@ -1079,4 +1101,5 @@ module.exports = {
   resolveOrCreateDeal,
   reportLeadExhausterFeedback,
   splitPersonName,
+  ensureOrg,
 };
