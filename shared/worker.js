@@ -53,7 +53,7 @@ function buildTrackingPixel({ identity, dealId, personId, day }) {
   return `<img src="${url.toString()}" width="1" height="1" alt="" style="display:none" />`;
 }
 
-// ─── Rendu du corps HTML avec signature + pixel ───────────────────────────
+// ─── Rendu du corps HTML avec signature + pixel + footer RGPD ─────────────
 function renderEmailHtml({ identity, consultant, corps, dealId, personId, day }) {
   const avatarBase = process.env.FUNCTION_APP_URL || 'http://localhost:7071';
   const signatureHtml = identity.signature_html
@@ -66,14 +66,50 @@ function renderEmailHtml({ identity, consultant, corps, dealId, personId, day })
     .join('');
 
   const pixel = buildTrackingPixel({ identity, dealId, personId, day });
+  const footer = renderLegalFooter({ identity });
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:12pt;color:#1a1714">
 ${bodyHtml}
 ${signatureHtml}
+${footer}
 ${pixel}
 </body></html>`;
+}
+
+// ─── Footer RGPD : mentions légales + lien désinscription ─────────────────
+// Plan v3.1 Pilier 5 — conformité B2B prospection :
+//   - Article 13 RGPD : identité responsable traitement + finalité + contact
+//   - List-Unsubscribe (header SMTP) + lien visible dans le corps
+//   - Désinscription via mailto vers l'expéditeur (martin@/mila@) avec
+//     subject "Désinscription" : davidInbox classifie comme négatif et
+//     pose opt_out_until=9999-12-31 (architecture existante).
+//
+// Cohérent doctrine "consultants OSEYS = clients" (positionnement service
+// Prospérenne) : on ne complique pas avec endpoint web dédié pour H1.
+function renderLegalFooter({ identity }) {
+  const unsubscribeSubject = 'Désinscription';
+  const mailto = `mailto:${identity.email}?subject=${encodeURIComponent(unsubscribeSubject)}`;
+  return `<div style="margin-top:24px;padding-top:14px;border-top:1px solid #e6e1da;font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:10pt;color:#7a7066;line-height:1.5">
+<p style="margin:0 0 6px">Vous recevez ce message car votre profil de dirigeant correspond au périmètre d'accompagnement d'OSEYS (réseau de consultants indépendants en pilotage économique TPE/PME). Responsable de traitement : OSEYS / Groupe Pérenne — paul.rudler@oseys.fr.</p>
+<p style="margin:0">Pour ne plus recevoir de messages : <a href="${mailto}" style="color:#7a7066;text-decoration:underline">cliquez ici pour vous désinscrire</a>. Désinscription effective sous 72h.</p>
+</div>`;
+}
+
+// ─── Headers SMTP List-Unsubscribe (RFC 2369) ─────────────────────────────
+// Génère les 2 headers conformes :
+//   - List-Unsubscribe : <mailto:agent@oseys.fr?subject=Désinscription>
+//     Format RFC 2369 — pris en compte par tous les clients mail majeurs
+//     (Gmail "Unsubscribe" automatique, Outlook bouton désabonner).
+//
+// One-Click RFC 8058 NON ajouté en H1 — nécessite endpoint web qui ack le
+// désabonnement par POST sans interaction. À livrer H2 avec endpoint dédié.
+function buildUnsubscribeHeaders(identity) {
+  const mailto = `mailto:${identity.email}?subject=${encodeURIComponent('Désinscription')}`;
+  return [
+    { name: 'List-Unsubscribe', value: `<${mailto}>` },
+  ];
 }
 
 function escapeHtml(s) {
@@ -371,6 +407,7 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
       bcc: consultantBCC ? [consultantBCC] : [],
       subject: j0.objet,
       html,
+      headers: buildUnsubscribeHeaders(identity),
       // Pas de replyTo explicite : les réponses prospects arrivent
       // nativement dans la boîte de l'expéditeur (martin@oseys.fr ou
       // mila@oseys.fr).
@@ -458,6 +495,7 @@ async function sendScheduledStep(job) {
     bcc: consultantBCC ? [consultantBCC] : [],
     subject: objet,
     html,
+    headers: buildUnsubscribeHeaders(identity),
     // Pas de replyTo : cf. bootstrapSequence (positionnement éthique).
   });
 

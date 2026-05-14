@@ -59,7 +59,7 @@ async function getToken() {
  * @param {string} opts.html          — corps HTML
  * @param {string} [opts.replyTo]     — override reply-to (utile pour Martin/Mila → consultant)
  */
-async function sendMail({ from, to, cc = [], bcc = [], subject, html, replyTo }) {
+async function sendMail({ from, to, cc = [], bcc = [], subject, html, replyTo, headers }) {
   const token = await getToken();
 
   const recipients = (Array.isArray(to) ? to : [to]).map((addr) => ({
@@ -68,6 +68,17 @@ async function sendMail({ from, to, cc = [], bcc = [], subject, html, replyTo })
   const ccRecipients = (Array.isArray(cc) ? cc : [cc]).filter(Boolean).map((addr) => ({ emailAddress: { address: addr } }));
   const bccRecipients = (Array.isArray(bcc) ? bcc : [bcc]).filter(Boolean).map((addr) => ({ emailAddress: { address: addr } }));
 
+  // Plan v3.1 Pilier 5 — headers SMTP custom (List-Unsubscribe pour
+  // conformité RFC 2369 + délivrabilité Gmail/Outlook). Graph API
+  // accepte `internetMessageHeaders` au niveau message avec restriction :
+  // chaque header doit commencer par `x-` OU être dans la liste blanche
+  // Microsoft. List-Unsubscribe est dans la whitelist explicite Graph.
+  const internetMessageHeaders = Array.isArray(headers) && headers.length > 0
+    ? headers
+        .filter((h) => h && typeof h.name === 'string' && typeof h.value === 'string')
+        .map((h) => ({ name: h.name, value: h.value }))
+    : null;
+
   const messagePayload = {
     subject,
     body: { contentType: 'HTML', content: html },
@@ -75,6 +86,7 @@ async function sendMail({ from, to, cc = [], bcc = [], subject, html, replyTo })
     ...(ccRecipients.length ? { ccRecipients } : {}),
     ...(bccRecipients.length ? { bccRecipients } : {}),
     ...(replyTo ? { replyTo: [{ emailAddress: { address: replyTo } }] } : {}),
+    ...(internetMessageHeaders ? { internetMessageHeaders } : {}),
   };
 
   // Plan v3.1 Pilier 2 — thread mail : on remplace POST /sendMail (202
