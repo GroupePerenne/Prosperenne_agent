@@ -2,7 +2,7 @@
 
 > Point d'entrée Claude Code sur le projet `Pereneo_agents`. À lire intégralement avant toute action.
 > **Dernière révision** : 1er mai 2026 (refonte complète post-lancement pilote David — résolution BL-43/45/47/48/49/51, refonte VP socle, lancement officiel pilote Morgane/Johnny). Drift 17 avril clos.
-> Cohérence avec : STRATEGY v3.0 / MEMO v3.0 / ARCHITECTURE v6.0 / CHARLI v1.5 / OPERATIONS v4.3 / CLAUDE_JOURNAL v1.11 — sur SharePoint `Direction OSEYS - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`.
+> Cohérence avec : STRATEGY v3.0 / MEMO v3.0 / ARCHITECTURE v6.0 / CHARLI v1.5 / OPERATIONS v4.3 / CLAUDE_JOURNAL v1.11 — sur SharePoint `Direction Pérenne - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`.
 
 ---
 
@@ -347,7 +347,7 @@ Paul préfère :
 - **Pipedrive domain** : `oseys.pipedrive.com`
 - **Anthropic console** : https://console.anthropic.com (compte Pereneo+OSEYS)
 
-**Docs SharePoint** (`Direction OSEYS - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`) :
+**Docs SharePoint** (`Direction Pérenne - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`) :
 - STRATEGY (vision business + pricing + roadmap)
 - MEMO (référentiel opérationnel single source of truth)
 - ARCHITECTURE (architecture technique détaillée)
