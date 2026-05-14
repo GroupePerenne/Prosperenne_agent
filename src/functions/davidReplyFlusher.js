@@ -17,11 +17,39 @@
 
 const { app } = require('@azure/functions');
 const { flushDueReplies } = require('../../shared/storage-tables/davidPendingReplies');
-const { sendMail } = require('../../shared/graph-mail');
+const { sendMail, replyToMessage } = require('../../shared/graph-mail');
 const { makeSafeLogger } = require('../../shared/safe-log');
 
+/**
+ * Envoi effectif d'une entry pending.
+ *
+ * Plan v3.1 Pilier 2 — thread mail : si `originalMessageId` est posé sur
+ * l'entry (donc on a un ancrage thread côté Graph dans la boîte d'envoi),
+ * on utilise l'endpoint natif Graph `/messages/{id}/reply` qui chaîne
+ * automatiquement les headers `In-Reply-To` + `References`. David apparaît
+ * dans le thread du prospect (scénario E2E 4), sans table EmailThreads custom.
+ *
+ * Fallback : pour les entries sans originalMessageId (rares, cas legacy ou
+ * messages où msg.id absent), on retombe sur sendMail brut. Le mail part,
+ * mais hors thread (acceptable transitoirement).
+ *
+ * Note : on n'utilise PAS entity.cc en mode reply natif, parce que la doc
+ * Graph /reply ne supporte que `comment` + `message.toRecipients` au niveau
+ * du payload (le cc se positionne via message.ccRecipients). Pour rester
+ * minimal et préserver le thread, on laisse Graph ne mettre que le sender
+ * original en to + nos cc en ccRecipients si présents.
+ */
 async function sendFnFromEntity(entity) {
   const cc = entity.ccJson ? JSON.parse(entity.ccJson) : [];
+
+  if (entity.originalMessageId && entity.mailbox) {
+    return replyToMessage({
+      from: entity.mailbox,
+      messageId: entity.originalMessageId,
+      html: entity.html,
+    });
+  }
+
   return sendMail({
     from: entity.mailbox,
     to: entity.to,
