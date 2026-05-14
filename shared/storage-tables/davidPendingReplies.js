@@ -76,6 +76,7 @@ async function enqueuePendingReply(entry) {
       html: String(entry.html || ''),
       ccJson: entry.cc && entry.cc.length ? JSON.stringify(entry.cc) : null,
       originalMessageId: String(entry.originalMessageId || ''),
+      originalConversationId: String(entry.originalConversationId || ''),
       originalSubject: String(entry.originalSubject || ''),
       originalSender: String(entry.originalSender || ''),
       senderType: String(entry.senderType || ''),

@@ -19,6 +19,7 @@ const { app } = require('@azure/functions');
 const { flushDueReplies } = require('../../shared/storage-tables/davidPendingReplies');
 const { sendMail, replyToMessage } = require('../../shared/graph-mail');
 const { makeSafeLogger } = require('../../shared/safe-log');
+const { canReplyToThreadToday, incrementThreadReply } = require('../../shared/threadReplyCap');
 
 /**
  * Envoi effectif d'une entry pending.
@@ -42,21 +43,45 @@ const { makeSafeLogger } = require('../../shared/safe-log');
 async function sendFnFromEntity(entity) {
   const cc = entity.ccJson ? JSON.parse(entity.ccJson) : [];
 
+  // Plan v3.1 Pilier 3 — cap "1 réponse/fil/jour" : protection anti-boucle
+  // dure. Si David a déjà répondu aujourd'hui dans cette conversation,
+  // on SKIP même si la réponse était sémantiquement justifiée. Best effort
+  // sur le check : Storage indispo → on autorise (graceful degradation,
+  // un anti-boucle ne doit pas bloquer le business sur panne Storage).
+  const conversationId = entity.originalConversationId || '';
+  if (conversationId) {
+    const cap = await canReplyToThreadToday(conversationId);
+    if (!cap.ok) {
+      const err = new Error(`thread_daily_cap_reached:${cap.count}/${cap.max}`);
+      err.skipped = true;
+      err.reason = 'thread_daily_cap_reached';
+      throw err;
+    }
+  }
+
+  let result;
   if (entity.originalMessageId && entity.mailbox) {
-    return replyToMessage({
+    result = await replyToMessage({
       from: entity.mailbox,
       messageId: entity.originalMessageId,
       html: entity.html,
     });
+  } else {
+    result = await sendMail({
+      from: entity.mailbox,
+      to: entity.to,
+      cc,
+      subject: entity.subject,
+      html: entity.html,
+    });
   }
 
-  return sendMail({
-    from: entity.mailbox,
-    to: entity.to,
-    cc,
-    subject: entity.subject,
-    html: entity.html,
-  });
+  // Increment compteur fil post-envoi (fire-and-forget, swallow erreurs).
+  if (conversationId) {
+    incrementThreadReply(conversationId).catch(() => {});
+  }
+
+  return result;
 }
 
 app.timer('davidReplyFlusher', {
