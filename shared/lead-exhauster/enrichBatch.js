@@ -294,6 +294,8 @@ async function enrichBatchForConsultant(params = {}) {
         lastName: cand.lastName,
         companyName: cand.companyName,
         companyDomain,
+        city: cand.ville,
+        zipcode: cand.codePostal,
         inseeRole: cand.inseeRole,
         trancheEffectif: cand.trancheEffectif,
         naf: cand.codeNaf,

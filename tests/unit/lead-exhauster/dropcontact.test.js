@@ -460,3 +460,52 @@ test('_callBatch — payload data[0] utilise num_siren (doc officielle Dropconta
   assert.equal(postBody.data[0].num_siren, '123456789', 'num_siren doit valoir la valeur input.siren');
   assert.equal(postBody.data[0].siren, undefined, 'le champ legacy `siren` (sans num_) ne doit PAS être présent');
 });
+
+// Régression : plan v3.1 P1 — city + zipcode obligatoires dans le payload
+// Dropcontact pour maximiser le match rate. Sans ancrage géographique,
+// Dropcontact ne peut désambiguïser homonymes nationaux. Le pipeline doit
+// propager city+zipcode depuis l'entité LeadBase v1 (cand.ville +
+// cand.codePostal) jusqu'au payload final, sans perte intermédiaire.
+test('_callBatch — payload data[0] contient city + zipcode quand input les fournit', async () => {
+  let postBody = null;
+  const fetchImpl = async (url, opts) => {
+    if (opts.method === 'POST') {
+      postBody = JSON.parse(opts.body);
+      return { ok: true, status: 200, json: async () => ({ success: true, request_id: 'r' }) };
+    }
+    return {
+      ok: true, status: 200,
+      json: async () => ({ success: true, data: [{ email: [] }] }),
+    };
+  };
+  const adapter = new DropcontactAdapter({
+    enabled: true, apiKey: 'k', fetchImpl,
+    budgetAdapter: mockBudgetOk(),
+    sleepFn: noSleep,
+  });
+  await adapter.resolve({ ...VALID_INPUT, city: 'Lyon', zipcode: '69002' });
+  assert.equal(postBody.data[0].city, 'Lyon', 'city doit être propagé dans data[0]');
+  assert.equal(postBody.data[0].zipcode, '69002', 'zipcode doit être propagé dans data[0]');
+});
+
+test('_callBatch — payload data[0] city + zipcode fallback chaîne vide si input absents', async () => {
+  let postBody = null;
+  const fetchImpl = async (url, opts) => {
+    if (opts.method === 'POST') {
+      postBody = JSON.parse(opts.body);
+      return { ok: true, status: 200, json: async () => ({ success: true, request_id: 'r' }) };
+    }
+    return {
+      ok: true, status: 200,
+      json: async () => ({ success: true, data: [{ email: [] }] }),
+    };
+  };
+  const adapter = new DropcontactAdapter({
+    enabled: true, apiKey: 'k', fetchImpl,
+    budgetAdapter: mockBudgetOk(),
+    sleepFn: noSleep,
+  });
+  await adapter.resolve(VALID_INPUT);
+  assert.equal(postBody.data[0].city, '', 'city absent → chaîne vide (Dropcontact ignore)');
+  assert.equal(postBody.data[0].zipcode, '', 'zipcode absent → chaîne vide (Dropcontact ignore)');
+});

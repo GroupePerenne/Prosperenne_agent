@@ -284,6 +284,8 @@ class DropcontactAdapter {
           company: input.companyName || '',
           website: input.companyDomain || '',
           num_siren: input.siren,
+          city: input.city || '',
+          zipcode: input.zipcode || '',
         }],
         language: 'fr',
         siren: true,

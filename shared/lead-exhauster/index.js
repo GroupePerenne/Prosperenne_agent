@@ -403,6 +403,8 @@ async function runDropcontactCascade({ input, domainResult, adapters, logger }) 
     companyName: input.companyName,
     companyDomain: domainResult.domain,
     siren: input.siren,
+    city: input.city,
+    zipcode: input.zipcode,
   };
 
   const result = await dropcontact.resolve(payload).catch((err) => {
