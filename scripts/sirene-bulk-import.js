@@ -150,7 +150,7 @@ async function processDepartement({ departement, trancheLabels, runId, snapshot,
       stats.mapInvalid++;
       continue;
     }
-    // Filtre NAF exclusions OSEYS (admin publique, enseignement public,
+    // Filtre NAF exclusions Pérenne (admin publique, enseignement public,
     // associations, juridique, comptable). Cf. shared/mappings/naf-exclusions.json.
     if (applyNafFilter && mapped.entity.codeNaf && NAF_EXCLUSION_CODES.has(mapped.entity.codeNaf)) {
       stats.nafExcluded++;

@@ -2,7 +2,7 @@
 
 /**
  * AirWorker Domain Resolver — combo waterfall pour maximiser le taux de
- * domaine officiel trouvé sur sweet spot OSEYS.
+ * domaine officiel trouvé sur sweet spot Pérenne.
  *
  * Stratégies cascadées (premier hit gagne) :
  *
