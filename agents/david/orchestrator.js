@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const { listUnreadMessages, markAsRead, sendMail, forwardMessage } = require('../../shared/graph-mail');
+const { detectAutoReply } = require('../../shared/autoReplyDetector');
 const { callClaude, parseJson } = require('../../shared/anthropic');
 const { davidSignatureHtml } = require('../../shared/templates');
 const { purgeByDealId } = require('../../shared/queue');
@@ -124,6 +125,26 @@ async function handleInboxPoll({ context, mailboxes } = {}) {
         } catch (markErr) {
           warnLog(context, `[handleInboxPoll] markAsRead failed for ${msg.id}: ${markErr.message} — abort sans envoi`);
           results.push({ mailbox, id: msg.id, error: `markAsRead_failed: ${markErr.message}` });
+          continue;
+        }
+
+        // 2 bis) Anti-boucle mail (plan v3.1 Pilier 3) : détection auto-reply
+        // pré-Claude via headers SMTP standards (Auto-Submitted, X-Auto-Response-
+        // Suppress, Precedence) + fallback subject patterns. Si auto-reply →
+        // skip classification + enqueue. Le mail est marqué isRead, processé,
+        // tracé, mais AUCUNE réponse n'est générée — coupe la boucle infinie
+        // OOO/vacation responder à la source. Économie tokens Claude + protection
+        // réputation Pereneo (pas de cascade mails côté prospect).
+        const autoReply = detectAutoReply(msg);
+        if (autoReply.isAutoReply) {
+          warnLog(context, `[handleInboxPoll] auto-reply detected (${autoReply.reason}) for ${msg.id} from ${msg.from?.emailAddress?.address || '?'} subject="${msg.subject}" — skip without reply`);
+          results.push({
+            mailbox,
+            id: msg.id,
+            subject: msg.subject,
+            classe: 'auto_reply_skipped',
+            reason: autoReply.reason,
+          });
           continue;
         }
 

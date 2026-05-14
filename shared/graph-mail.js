@@ -196,7 +196,11 @@ async function getConversationMessages({ mailbox, conversationId, top = 50 }) {
  */
 async function listUnreadMessages({ mailbox, top = 20 }) {
   const token = await getToken();
-  const url = `${GRAPH_BASE}/users/${encodeURIComponent(mailbox)}/mailFolders/Inbox/messages?$filter=isRead eq false&$top=${top}&$select=id,subject,from,receivedDateTime,bodyPreview,body,conversationId`;
+  // Plan v3.1 Pilier 3 anti-boucle : on inclut `internetMessageHeaders`
+  // pour permettre la détection pré-Claude d'auto-reply (Auto-Submitted,
+  // X-Auto-Response-Suppress, Precedence) — protection contre boucle
+  // infinie OOO / vacation responder.
+  const url = `${GRAPH_BASE}/users/${encodeURIComponent(mailbox)}/mailFolders/Inbox/messages?$filter=isRead eq false&$top=${top}&$select=id,subject,from,receivedDateTime,bodyPreview,body,conversationId,internetMessageHeaders,internetMessageId`;
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
