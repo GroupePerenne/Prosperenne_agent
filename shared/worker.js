@@ -18,6 +18,7 @@ const { nextBusinessDayAt, addBusinessDays } = require('./holidays');
 const pipedrive = require('./pipedrive');
 const { getMem0 } = require('./adapters/memory/mem0');
 const { isLeadStillSendable } = require('./optOutGuard');
+const { isPipelineKilled } = require('./pipelineControl');
 
 /**
  * Résout l'adresse Smart BCC Pipedrive d'un consultant à partir de son
@@ -288,6 +289,13 @@ function renderUnattributableEmailHtml({ lead, dealLink }) {
 async function bootstrapSequence({ agent, consultant, lead, dealId, personId, orgId, context, mem0: mem0Override, prospectProfile }) {
   const identity = loadIdentity(agent);
 
+  // Kill-switch FA rapide (plan v3.1 Pilier 1+3) : pause runtime <5s sans deploy.
+  // Lue depuis table Storage `PipelineControl` PK=control RK=kill-pipeline,
+  // cache TTL 5s. Si actif → skip immédiat AVANT toute génération séquence.
+  if (await isPipelineKilled()) {
+    return { skipped: true, reason: 'pipeline_killed' };
+  }
+
   // 0. Filtrage leads existants — INTRA-PIPE 28 SEULEMENT (correction 12 mai PM).
   // Doctrine précédente "cross-pipes" : skip si la person a un deal ouvert dans
   // n'importe quel pipeline OSEYS. Bloquant en pratique : pollution historique
@@ -413,6 +421,12 @@ async function sendScheduledStep(job) {
   const identity = loadIdentity(agent);
 
   const { jour, objet, corps } = preGeneratedStep;
+
+  // Kill-switch FA rapide (plan v3.1 Pilier 1+3) : check AVANT garde-fou
+  // opt-out + AVANT sendMail. Pause runtime <5s sans deploy.
+  if (await isPipelineKilled()) {
+    return { sent: null, skipped: true, reason: 'pipeline_killed', day: jour };
+  }
 
   // BL-52 (11 mai 2026) — Garde-fou opt-out re-checké AVANT chaque sendMail
   // différé (J+14, J+28). Sans ce check, un prospect ayant répondu négatif
