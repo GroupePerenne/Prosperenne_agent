@@ -22,7 +22,7 @@
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-sonnet-4-6';
 
-const vp = require('./oseys-vp');
+const vp = require('./perenne-vp');
 
 /** Calendrier canonique de la séquence (3 touches sur 28 jours ouvrés —
  *  espacement validé Paul 1er mai 2026 PM, moins agressif que la cadence
