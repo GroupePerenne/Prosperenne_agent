@@ -427,3 +427,36 @@ test('resolve — succès après échecs reset le breaker', async () => {
   assert.ok(r2.error);
   assert.notEqual(r2.providerRaw.skipped, 'circuit_open');
 });
+
+// ─── Contrat payload Dropcontact V1 — doc officielle ───────────────────────
+// Doc Dropcontact V1 (developer.dropcontact.com) : le champ SIREN s'écrit
+// `num_siren` dans le body data[0], pas `siren`. Sans `num_siren`, Dropcontact
+// résout seulement via first_name+last_name+company, qui matche faiblement
+// sans ancrage entreprise → hit rate effondré. Verdict mesuré pré-fix :
+// ~1% sur 109 briefs Pereneo (14 mai 2026 mémoire). Bug structurel.
+//
+// Ce test fige le contrat : le body POST data[0] doit contenir `num_siren`,
+// PAS `siren`. Régression interdite.
+
+test('_callBatch — payload data[0] utilise num_siren (doc officielle Dropcontact V1)', async () => {
+  let postBody = null;
+  const fetchImpl = async (url, opts) => {
+    if (opts.method === 'POST') {
+      postBody = JSON.parse(opts.body);
+      return { ok: true, status: 200, json: async () => ({ success: true, request_id: 'r' }) };
+    }
+    return {
+      ok: true, status: 200,
+      json: async () => ({ success: true, data: [{ email: [] }] }),
+    };
+  };
+  const adapter = new DropcontactAdapter({
+    enabled: true, apiKey: 'k', fetchImpl,
+    budgetAdapter: mockBudgetOk(),
+    sleepFn: noSleep,
+  });
+  await adapter.resolve(VALID_INPUT);
+  assert.ok(postBody && postBody.data && postBody.data[0], 'data[0] présent dans body POST');
+  assert.equal(postBody.data[0].num_siren, '123456789', 'num_siren doit valoir la valeur input.siren');
+  assert.equal(postBody.data[0].siren, undefined, 'le champ legacy `siren` (sans num_) ne doit PAS être présent');
+});

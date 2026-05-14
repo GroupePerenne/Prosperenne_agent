@@ -283,7 +283,7 @@ class DropcontactAdapter {
           last_name: input.lastName,
           company: input.companyName || '',
           website: input.companyDomain || '',
-          siren: input.siren,
+          num_siren: input.siren,
         }],
         language: 'fr',
         siren: true,
