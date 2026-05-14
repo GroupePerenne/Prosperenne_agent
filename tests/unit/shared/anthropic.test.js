@@ -123,3 +123,88 @@ test('parseJson — tolère fences ```json', () => {
   assert.deepEqual(parseJson('```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(parseJson('{"b":2}'), { b: 2 });
 });
+
+// ──────────────── Instrumentation budget Anthropic (Task #13) ────────────────
+
+const {
+  _traceAnthropicCall,
+  _budgetMonthKey,
+  _resetBudgetClientForTests,
+  _setBudgetClientForTests,
+} = require('../../../shared/anthropic');
+
+test('_budgetMonthKey — format YYYYMM UTC', () => {
+  const d = new Date(Date.UTC(2026, 4, 14, 23, 0, 0));
+  assert.equal(_budgetMonthKey(d), '202605');
+});
+
+test('_traceAnthropicCall — Storage indispo → no-op silencieux', async () => {
+  _resetBudgetClientForTests();
+  const previous = process.env.AzureWebJobsStorage;
+  delete process.env.AzureWebJobsStorage;
+  try {
+    // Doit ne pas throw
+    await _traceAnthropicCall({ model: 'sonnet', inputTokens: 100, outputTokens: 50 });
+  } finally {
+    if (previous !== undefined) process.env.AzureWebJobsStorage = previous;
+  }
+});
+
+test('_traceAnthropicCall — première entry du mois → createEntity avec valeurs initiales', async () => {
+  let created = null;
+  const mockClient = {
+    getEntity: async () => { const e = new Error('not found'); e.statusCode = 404; throw e; },
+    createEntity: async (e) => { created = e; return true; },
+    updateEntity: async () => { throw new Error('should not update'); },
+  };
+  _setBudgetClientForTests(mockClient);
+  await _traceAnthropicCall({ model: 'sonnet', inputTokens: 100, outputTokens: 50 });
+  assert.ok(created);
+  assert.equal(created.partitionKey, 'anthropic');
+  assert.equal(created.calls, 1);
+  assert.equal(created.input_tokens, 100);
+  assert.equal(created.output_tokens, 50);
+  assert.equal(created.last_model, 'sonnet');
+});
+
+test('_traceAnthropicCall — entry existante → updateEntity avec cumul', async () => {
+  let updated = null;
+  const mockClient = {
+    getEntity: async () => ({
+      partitionKey: 'anthropic', rowKey: '202605',
+      calls: 5, input_tokens: 1000, output_tokens: 500,
+    }),
+    createEntity: async () => { throw new Error('should not create'); },
+    updateEntity: async (e) => { updated = e; return true; },
+  };
+  _setBudgetClientForTests(mockClient);
+  await _traceAnthropicCall({ model: 'haiku', inputTokens: 200, outputTokens: 100 });
+  assert.ok(updated);
+  assert.equal(updated.calls, 6);
+  assert.equal(updated.input_tokens, 1200);
+  assert.equal(updated.output_tokens, 600);
+  assert.equal(updated.last_model, 'haiku');
+});
+
+test('_traceAnthropicCall — getEntity throw non-404 → catch best-effort silencieux', async () => {
+  const mockClient = {
+    getEntity: async () => { throw new Error('storage_500'); },
+    createEntity: async () => { throw new Error('should not'); },
+    updateEntity: async () => { throw new Error('should not'); },
+  };
+  _setBudgetClientForTests(mockClient);
+  // Doit ne pas throw
+  await _traceAnthropicCall({ model: 'x', inputTokens: 0, outputTokens: 0 });
+});
+
+test('_traceAnthropicCall — input/output tokens manquants → 0 par défaut', async () => {
+  let created = null;
+  const mockClient = {
+    getEntity: async () => { const e = new Error('nf'); e.statusCode = 404; throw e; },
+    createEntity: async (e) => { created = e; return true; },
+  };
+  _setBudgetClientForTests(mockClient);
+  await _traceAnthropicCall({ model: 'sonnet' });
+  assert.equal(created.input_tokens, 0);
+  assert.equal(created.output_tokens, 0);
+});
