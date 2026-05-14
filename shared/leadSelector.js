@@ -690,11 +690,17 @@ async function selectCandidatesForConsultant(params = {}) {
     // (mieux que tout bloquer).
     let alreadyInPipe = new Set();
     let excludedAlreadyInPipe = 0;
+    let getOrgNamesDurationMs = 0;
+    const getOrgNamesStarted = Date.now();
     try {
       const pipedrive = require('./pipedrive');
       alreadyInPipe = await pipedrive.getOrgNamesWithOpenDealInOurPipe();
+      getOrgNamesDurationMs = Date.now() - getOrgNamesStarted;
     } catch (err) {
-      logInfo(context, `[leadSelector] getOrgNamesWithOpenDealInOurPipe failed (${err.message}), no exclusion applied`);
+      getOrgNamesDurationMs = Date.now() - getOrgNamesStarted;
+      logInfo(context, `[leadSelector] getOrgNamesWithOpenDealInOurPipe failed (${err.message}), no exclusion applied`, {
+        durationMs: getOrgNamesDurationMs,
+      });
     }
     const freshCandidates = sortedCandidates.filter((c) => {
       const norm = String(c.entreprise || '').toLowerCase().trim();
@@ -743,6 +749,9 @@ async function selectCandidatesForConsultant(params = {}) {
       maxCandidates,
       candidatesCount,
       returned: selected.length,
+      alreadyInPipeSize: alreadyInPipe.size,
+      excludedAlreadyInPipe,
+      getOrgNamesDurationMs,
       ms: result.meta.elapsedMs,
     });
 
