@@ -19,7 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { listUnreadMessages, markAsRead, sendMail, forwardMessage } = require('../../shared/graph-mail');
+const { listUnreadMessages, markAsRead, sendMail, forwardMessage, getConversationMessages } = require('../../shared/graph-mail');
 const { detectAutoReply } = require('../../shared/autoReplyDetector');
 const { callClaude, parseJson } = require('../../shared/anthropic');
 const { davidSignatureHtml } = require('../../shared/templates');
@@ -159,6 +159,51 @@ async function handleInboxPoll({ context, mailboxes } = {}) {
   return results;
 }
 
+// ─── Compactage fil conversationnel (plan v3.1 P2 Sujet 5) ────────────────
+//
+// Récupère la conversation Graph via conversationId puis compacte les
+// N-1 messages antérieurs (= autres que celui à classifier maintenant) en
+// mini-bloc texte. Format compact : "[YYYY-MM-DD HH:MM] DE : sender →
+// resume_bodyPreview". On exclut le message courant pour éviter la
+// redondance (le prompt inclut déjà son CORPS complet juste après).
+//
+// Limites :
+//   - max 5 messages antérieurs (les plus récents avant le courant)
+//   - bodyPreview tronqué à 200 caractères chacun
+//   - si conversationId absent ou 1 seul message → retourne '' (rien à
+//     injecter, classifier sans contexte comme avant)
+//
+// Best effort sur l'appel Graph : tout échec est swallow et retourne ''
+// pour ne JAMAIS bloquer la classification.
+async function buildThreadContext(msg) {
+  const conversationId = msg && msg.conversationId;
+  const mailbox = msg && msg.mailbox;
+  const currentMessageId = msg && msg.id;
+  if (!conversationId || !mailbox) return '';
+
+  let thread;
+  try {
+    thread = await getConversationMessages({ mailbox, conversationId, top: 20 });
+  } catch {
+    return '';
+  }
+  if (!Array.isArray(thread) || thread.length <= 1) return '';
+
+  // Exclure le message courant + garder seulement les 5 plus récents avant lui
+  const others = thread.filter((m) => m.id !== currentMessageId);
+  const last5 = others.slice(-5);
+  if (last5.length === 0) return '';
+
+  return last5
+    .map((m) => {
+      const date = (m.sentDateTime || m.receivedDateTime || '').slice(0, 16).replace('T', ' ');
+      const sender = m.from?.emailAddress?.address || 'inconnu';
+      const preview = (m.bodyPreview || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      return `[${date}] ${sender} → ${preview}`;
+    })
+    .join('\n');
+}
+
 // ─── Routage d'un message ──────────────────────────────────────────────────
 async function routeMessage(msg, { context } = {}) {
   // 1. Détection bounce (pré-Claude, patterns fiables)
@@ -170,11 +215,24 @@ async function routeMessage(msg, { context } = {}) {
   const fromAddress = msg.from?.emailAddress?.address || 'inconnu';
   const bodyText = (msg.body?.content || msg.bodyPreview || '').replace(/<[^>]+>/g, '').slice(0, 3000);
 
+  // Plan v3.1 Pilier 2 — Sujet 5 (David lit le fil compacté avant de
+  // générer). On récupère la conversation Graph via conversationId pour
+  // donner du contexte à Claude. Best effort : si Graph fail ou pas de
+  // conversationId, on continue sans contexte (classification dégradée
+  // mais pas bloquée). Compactage : on garde les N-1 messages précédents
+  // sous forme {date, sender, bodyPreview} pour économiser les tokens
+  // (un fil long ne doit pas exploser le contexte Claude).
+  const threadCompacted = await buildThreadContext(msg).catch(() => '');
+
   const prompt = `Message reçu dans la boîte david@oseys.fr :
 
 DE : ${fromAddress}
-OBJET : ${msg.subject}
-CORPS :
+OBJET : ${msg.subject}${threadCompacted ? `
+
+CONTEXTE DU FIL (échanges antérieurs, du plus ancien au plus récent) :
+${threadCompacted}` : ''}
+
+CORPS DU MESSAGE COURANT :
 """
 ${bodyText}
 """
