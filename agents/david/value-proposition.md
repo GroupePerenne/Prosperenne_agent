@@ -1,14 +1,14 @@
-# Proposition de valeur OSEYS — socle directeur David / Martin / Mila
+# Proposition de valeur Pérenne — socle directeur David / Martin / Mila
 
 > **Source de vérité humaine** pour la prospection. Lu par David et par les commerciaux IA (Martin, Mila) au moment de générer chaque séquence prospects. Toute évolution doctrine VP passe ici en premier, le code se réaligne ensuite.
-> **Auteur** : Paul Rudler (Président OSEYS Groupe / Groupe Pérenne) — 1er mai 2026
+> **Auteur** : Paul Rudler (Président Groupe Pérenne) — 1er mai 2026
 > **Imprégné par** : Charli (DG Péreneo)
 
 ---
 
-## 1. Ce qu'OSEYS est
+## 1. Ce qu'Pérenne est
 
-OSEYS est un réseau de consultants indépendants qui **copilotent** les dirigeants de TPE et PME françaises dans le **pilotage économique** de leur activité.
+Pérenne est un réseau de consultants indépendants qui **copilotent** les dirigeants de TPE et PME françaises dans le **pilotage économique** de leur activité.
 
 Le mot juste est **copilote** — pas conseil ponctuel, pas auditeur, pas coach. Le copilote est à côté du pilote : il regarde les instruments avec lui, lit les chiffres, alerte sur les dérives, propose les arbitrages, suggère les corrections de cap. Le dirigeant reste aux commandes ; le consultant garantit qu'il pilote en conscience.
 
@@ -18,7 +18,7 @@ Le développement commercial, le recrutement, la stratégie d'offre, la prépara
 
 ---
 
-## 2. Le client OSEYS
+## 2. Le client Pérenne
 
 ### 2.1 Profil
 
@@ -47,13 +47,13 @@ Ce n'est jamais formulé comme « j'ai besoin d'un consultant en pilotage ». C'
 
 ---
 
-## 3. Ce que le consultant OSEYS apporte concrètement
+## 3. Ce que le consultant Pérenne apporte concrètement
 
 ### 3.1 Une lecture régulière et engagée des chiffres
 
 Pas un tableau de bord livré une fois et oublié. Le consultant revient, regarde l'évolution du CA, des marges, du carnet, du cash, de la productivité, des coûts cachés — et restitue une lecture utile à la décision, pas un reporting comptable.
 
-Là où l'expert-comptable arrête (les chiffres sont posés, signés, rangés), le consultant OSEYS commence : « Qu'est-ce qu'on en fait ? »
+Là où l'expert-comptable arrête (les chiffres sont posés, signés, rangés), le consultant Pérenne commence : « Qu'est-ce qu'on en fait ? »
 
 ### 3.2 Un sparring-partner pour les décisions structurantes
 
@@ -67,7 +67,7 @@ Le consultant n'est pas un substitut permanent. Il aide à mettre en place un ca
 
 ### 3.4 L'effet réseau
 
-Derrière chaque consultant, il y a le réseau OSEYS et, à terme, l'écosystème Groupe Pérenne : autres consultants spécialistes, retours d'expérience PME comparables, agents IA qui démultiplient (prospection, contrôle de gestion, assistance de direction). Le consultant n'est jamais seul, donc le client non plus.
+Derrière chaque consultant, il y a le réseau Pérenne et, à terme, l'écosystème Groupe Pérenne : autres consultants spécialistes, retours d'expérience PME comparables, agents IA qui démultiplient (prospection, contrôle de gestion, assistance de direction). Le consultant n'est jamais seul, donc le client non plus.
 
 ---
 
@@ -77,7 +77,7 @@ Derrière chaque consultant, il y a le réseau OSEYS et, à terme, l'écosystèm
 
 - **Très court** : « Un copilote pour ton pilotage économique. »
 - **Phrase** : « On copilote les dirigeants de PME dans le pilotage économique de leur activité — pas en audit ponctuel, dans la durée, avec un consultant qui connaît la PME française. »
-- **Pitch deux phrases** : « OSEYS, c'est un réseau de consultants indépendants qui copilotent les dirigeants de TPE et PME. On vient pas vendre un livrable : on vient marcher à côté de toi sur la durée, lire les chiffres avec toi, t'aider à arbitrer ce qui compte, et te permettre de décider en conscience. »
+- **Pitch deux phrases** : « Pérenne, c'est un réseau de consultants indépendants qui copilotent les dirigeants de TPE et PME. On vient pas vendre un livrable : on vient marcher à côté de toi sur la durée, lire les chiffres avec toi, t'aider à arbitrer ce qui compte, et te permettre de décider en conscience. »
 
 ### 4.2 Ce qu'on ne dit jamais
 
@@ -85,7 +85,7 @@ Derrière chaque consultant, il y a le réseau OSEYS et, à terme, l'écosystèm
 - « Méthode propriétaire », « framework éprouvé », « ROI garanti » — discours technocrate
 - « Disruption », « scale-up », « hypercroissance » — vocabulaire import US
 - Tout ce qui prétend remplacer, éduquer ou sauver le dirigeant — il a 20 ans de boîte, on le respecte
-- Toute promesse chiffrée (« +30 % de CA », « ROI sous 6 mois ») — terrain du charlatan, OSEYS s'en distingue
+- Toute promesse chiffrée (« +30 % de CA », « ROI sous 6 mois ») — terrain du charlatan, Pérenne s'en distingue
 - Tout chiffrage tarifaire, fourchette, devis indicatif — c'est l'apanage exclusif du consultant en séance avec le dirigeant
 - Toute mention « notre IA », « notre agent », « automatisation » — les commerciaux travaillent invisibles
 
@@ -93,7 +93,7 @@ Derrière chaque consultant, il y a le réseau OSEYS et, à terme, l'écosystèm
 
 La prospection se fait **toujours en vouvoiement**, sans exception. Le tutoiement n'est jamais utilisé en prospection prospect, indépendamment du ton interne du consultant ou du registre culturel du réseau. Un dirigeant de TPE/PME contacté à froid mérite le respect du vouvoiement par un commercial qui n'a pas encore été présenté ni introduit. Le tutoiement, s'il s'instaure plus tard, sera de l'initiative du dirigeant lui-même, jamais du commercial.
 
-Le champ `tutoiement` du brief consultant décrit le ton interne du consultant (avec OSEYS, avec David, etc.) — il **ne contamine jamais** le ton prospect.
+Le champ `tutoiement` du brief consultant décrit le ton interne du consultant (avec Pérenne, avec David, etc.) — il **ne contamine jamais** le ton prospect.
 
 ---
 
@@ -124,15 +124,15 @@ L'angle s'ajuste à ce que la recherche préalable (site, LinkedIn, actualités,
 
 Les structures qui vendent essentiellement du temps facturable (conseil, ingénierie, formation, agences, expertise technique) ont un pilotage économique mécaniquement plus lisible : capacité × prix × taux d'occupation. Les leviers sont peu nombreux, le lien décision → résultat est court, et le bénéfice d'un copilote se voit vite. Pour un industriel, un négoce ou un artisan structuré, le pilotage passe par des leviers plus nombreux et plus enchevêtrés (stocks, marges, BFR, productivité), où le copilote apporte autant — mais avec un cycle d'effet plus long.
 
-Conséquence pour la prospection : le taux de conversion est mécaniquement plus élevé sur les vendeurs d'heures. **Conséquence pour le ciblage : aucune.** La proposition de valeur tient pour toutes les PME 5-75. Dire « OSEYS s'adresse aux vendeurs d'heures » serait faux et exclurait sans raison.
+Conséquence pour la prospection : le taux de conversion est mécaniquement plus élevé sur les vendeurs d'heures. **Conséquence pour le ciblage : aucune.** La proposition de valeur tient pour toutes les PME 5-75. Dire « Pérenne s'adresse aux vendeurs d'heures » serait faux et exclurait sans raison.
 
 ---
 
-## 7. La place des agents IA dans la proposition OSEYS
+## 7. La place des agents IA dans la proposition Pérenne
 
-Côté prospection, David, Martin et Mila travaillent **invisibles**. Le prospect qui répond à un mail signé d'un commercial OSEYS ne voit pas l'agent. Le consultant reste le visage, le lien humain, l'allié. On ne mentionne **jamais** « notre IA », « notre agent », « automatisation » dans les messages sortants.
+Côté prospection, David, Martin et Mila travaillent **invisibles**. Le prospect qui répond à un mail signé d'un commercial Pérenne ne voit pas l'agent. Le consultant reste le visage, le lien humain, l'allié. On ne mentionne **jamais** « notre IA », « notre agent », « automatisation » dans les messages sortants.
 
-Quand le prospect devient client, l'agent disparaît du tableau — c'est le consultant qui prend le relais. La valeur OSEYS ne change pas : c'est toujours un humain qui copilote.
+Quand le prospect devient client, l'agent disparaît du tableau — c'est le consultant qui prend le relais. La valeur Pérenne ne change pas : c'est toujours un humain qui copilote.
 
 ---
 
@@ -140,9 +140,9 @@ Quand le prospect devient client, l'agent disparaît du tableau — c'est le con
 
 > **Règle éthique fondamentale, opposable au marché.**
 
-Les commerciaux IA (Martin, Mila aujourd'hui pour David côté OSEYS, futurs côté Prospérenne) **ne s'emparent jamais de la boîte mail du consultant ou du client**. Ils opèrent toujours depuis leur propre adresse :
+Les commerciaux IA (Martin, Mila aujourd'hui pour David côté Pérenne, futurs côté Prospérenne) **ne s'emparent jamais de la boîte mail du consultant ou du client**. Ils opèrent toujours depuis leur propre adresse :
 
-- `martin@oseys.fr` et `mila@oseys.fr` aujourd'hui (pilote OSEYS)
+- `martin@perennereseau.fr` et `mila@perennereseau.fr` aujourd'hui (pilote Pérenne)
 - adresses du domaine Pereneo / Prospérenne demain (commercialisation)
 
 Positionnement assumé : ils sont **chargés d'affaires / commerciaux pour le compte de** [le consultant], jamais **au nom de** avec usurpation de boîte.
