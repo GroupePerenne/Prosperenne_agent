@@ -290,12 +290,37 @@ async function forwardMessage({ from, messageId, to, cc = [], comment = '' }) {
   return { ok: true, from, messageId, to: recipients.map((r) => r.emailAddress.address) };
 }
 
+// Plan v3.1 P3 Task #14 — circuit breaker Graph : wrap les calls Graph
+// critiques (sendMail + replyToMessage) pour éviter le hammering quand
+// l'upstream est dégradé. N timeouts/5xx consécutifs → pause W min.
+// Les 4xx (auth, validation) ne comptent pas (caller error).
+const { withBreaker } = require('./circuitBreaker');
+
+function _isUpstreamFailure(err) {
+  const msg = String(err && err.message || '');
+  // 5xx ou timeout ou réseau ; pas 4xx (caller error)
+  if (/Graph \w+ 5\d{2}/i.test(msg)) return true;
+  if (/timeout/i.test(msg)) return true;
+  if (/ENETUNREACH|ECONNRESET|ECONNREFUSED|ETIMEDOUT/i.test(msg)) return true;
+  if (/Token OAuth échoué.*5\d{2}/i.test(msg)) return true;
+  return false;
+}
+
+const _sendMailRaw = sendMail;
+const _replyToMessageRaw = replyToMessage;
+
+const sendMailBreakered = (args) => withBreaker('graph-sendmail', () => _sendMailRaw(args), { shouldCount: _isUpstreamFailure });
+const replyToMessageBreakered = (args) => withBreaker('graph-reply', () => _replyToMessageRaw(args), { shouldCount: _isUpstreamFailure });
+
 module.exports = {
-  sendMail,
+  sendMail: sendMailBreakered,
   listUnreadMessages,
   markAsRead,
   forwardMessage,
-  replyToMessage,
+  replyToMessage: replyToMessageBreakered,
   getConversationMessages,
   getToken,
+  // Accès direct sans circuit breaker pour cas spécifiques (tests, smoke) :
+  _sendMailRaw,
+  _replyToMessageRaw,
 };
