@@ -61,7 +61,6 @@ async function getToken() {
  */
 async function sendMail({ from, to, cc = [], bcc = [], subject, html, replyTo }) {
   const token = await getToken();
-  const url = `${GRAPH_BASE}/users/${encodeURIComponent(from)}/sendMail`;
 
   const recipients = (Array.isArray(to) ? to : [to]).map((addr) => ({
     emailAddress: { address: addr },
@@ -69,7 +68,7 @@ async function sendMail({ from, to, cc = [], bcc = [], subject, html, replyTo })
   const ccRecipients = (Array.isArray(cc) ? cc : [cc]).filter(Boolean).map((addr) => ({ emailAddress: { address: addr } }));
   const bccRecipients = (Array.isArray(bcc) ? bcc : [bcc]).filter(Boolean).map((addr) => ({ emailAddress: { address: addr } }));
 
-  const message = {
+  const messagePayload = {
     subject,
     body: { contentType: 'HTML', content: html },
     toRecipients: recipients,
@@ -78,20 +77,117 @@ async function sendMail({ from, to, cc = [], bcc = [], subject, html, replyTo })
     ...(replyTo ? { replyTo: [{ emailAddress: { address: replyTo } }] } : {}),
   };
 
+  // Plan v3.1 Pilier 2 — thread mail : on remplace POST /sendMail (202
+  // Accepted sans retour metadata) par POST /messages (création draft,
+  // retourne internetMessageId + conversationId + id Graph) puis POST
+  // /messages/{id}/send. Surcoût : +1 round-trip Graph. Gain : les
+  // sortants exposent leur internetMessageId pour audit Pipedrive +
+  // threading conversationnel. Indispensable pour Sujet 2 (David
+  // répond dans le thread via /reply) et Sujet 5 (lit fil compacté).
+  const createDraftUrl = `${GRAPH_BASE}/users/${encodeURIComponent(from)}/messages`;
+  const draftRes = await fetch(createDraftUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(messagePayload),
+  });
+  if (!draftRes.ok) {
+    const err = await draftRes.text();
+    throw new Error(`Graph createDraft ${draftRes.status} : ${err}`);
+  }
+  const draft = await draftRes.json();
+  const graphMessageId = draft.id;
+  const internetMessageId = draft.internetMessageId || null;
+  const conversationId = draft.conversationId || null;
+
+  const sendUrl = `${GRAPH_BASE}/users/${encodeURIComponent(from)}/messages/${encodeURIComponent(graphMessageId)}/send`;
+  const sendRes = await fetch(sendUrl, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!sendRes.ok) {
+    const err = await sendRes.text();
+    throw new Error(`Graph sendDraft ${sendRes.status} : ${err}`);
+  }
+
+  return {
+    ok: true,
+    from,
+    to: recipients.map((r) => r.emailAddress.address),
+    internetMessageId,
+    conversationId,
+    graphMessageId,
+  };
+}
+
+/**
+ * Répond à un message reçu en s'appuyant sur le natif Graph `/reply`, qui
+ * chaîne automatiquement les headers `In-Reply-To` + `References` côté
+ * client mail destinataire — David apparaît dans le thread du prospect,
+ * pas dans un nouveau mail unrelated.
+ *
+ * Cf. doc Graph : POST /users/{userId}/messages/{id}/reply
+ * https://learn.microsoft.com/en-us/graph/api/message-reply
+ *
+ * @param {Object} opts
+ * @param {string} opts.from         UPN auteur de la réponse (boîte qui a reçu le mail prospect)
+ * @param {string} opts.messageId    ID Graph du mail prospect auquel répondre
+ * @param {string} opts.html         Corps HTML de la réponse (positionné en haut, citation auto par Graph)
+ * @returns {Promise<{ok:true, from:string, messageId:string}>}
+ */
+async function replyToMessage({ from, messageId, html }) {
+  if (!from) throw new Error('replyToMessage: from requis');
+  if (!messageId) throw new Error('replyToMessage: messageId requis');
+  if (!html) throw new Error('replyToMessage: html requis');
+  const token = await getToken();
+  const url = `${GRAPH_BASE}/users/${encodeURIComponent(from)}/messages/${encodeURIComponent(messageId)}/reply`;
+
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ message, saveToSentItems: true }),
+    body: JSON.stringify({
+      message: { body: { contentType: 'HTML', content: html } },
+    }),
   });
-
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Graph sendMail ${res.status} : ${err}`);
+    throw new Error(`Graph reply ${res.status} : ${err}`);
   }
-  return { ok: true, from, to: recipients.map((r) => r.emailAddress.address) };
+  return { ok: true, from, messageId };
+}
+
+/**
+ * Récupère tous les messages d'une conversation Graph (in + out), triés par
+ * date croissante. Utilisé par davidInbox pour reconstituer le fil
+ * complet avant classification + génération réponse (Sujet 5 plan v3.1).
+ *
+ * On filtre côté `conversationId` (champ stable Graph qui groupe les
+ * messages du même thread, transverse aux dossiers Inbox/SentItems).
+ *
+ * @param {Object} opts
+ * @param {string} opts.mailbox        UPN propriétaire de la conversation
+ * @param {string} opts.conversationId Valeur de conversationId du mail entrant
+ * @param {number} [opts.top=50]       Limite messages (default 50, large pour fils long)
+ * @returns {Promise<Array<{id:string,subject:string,from:Object,toRecipients:Array,receivedDateTime:string,sentDateTime?:string,bodyPreview:string,body:Object,internetMessageId:string,conversationId:string}>>}
+ */
+async function getConversationMessages({ mailbox, conversationId, top = 50 }) {
+  if (!mailbox) throw new Error('getConversationMessages: mailbox requis');
+  if (!conversationId) throw new Error('getConversationMessages: conversationId requis');
+  const token = await getToken();
+  const filter = encodeURIComponent(`conversationId eq '${conversationId}'`);
+  const select = encodeURIComponent('id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,body,internetMessageId,conversationId');
+  const orderby = encodeURIComponent('receivedDateTime asc');
+  const url = `${GRAPH_BASE}/users/${encodeURIComponent(mailbox)}/messages?$filter=${filter}&$select=${select}&$orderby=${orderby}&$top=${top}`;
+
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Graph getConversation ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.value || [];
 }
 
 /**
@@ -178,4 +274,12 @@ async function forwardMessage({ from, messageId, to, cc = [], comment = '' }) {
   return { ok: true, from, messageId, to: recipients.map((r) => r.emailAddress.address) };
 }
 
-module.exports = { sendMail, listUnreadMessages, markAsRead, forwardMessage, getToken };
+module.exports = {
+  sendMail,
+  listUnreadMessages,
+  markAsRead,
+  forwardMessage,
+  replyToMessage,
+  getConversationMessages,
+  getToken,
+};
