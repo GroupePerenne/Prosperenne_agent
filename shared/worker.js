@@ -365,7 +365,7 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
     const html = renderEmailHtml({
       identity, consultant: adjustedConsultant, corps: j0.corps, dealId, personId, day: 'J0',
     });
-    await sendMail({
+    const sendResult = await sendMail({
       from: identity.email,
       to: lead.email,
       bcc: consultantBCC ? [consultantBCC] : [],
@@ -379,6 +379,8 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
       await pipedrive.logEmailSent({
         dealId, personId, sender: identity.prenom, day: 'J0',
         subject: j0.objet, bodyPreview: j0.corps.slice(0, 200),
+        internetMessageId: sendResult.internetMessageId,
+        conversationId: sendResult.conversationId,
       });
     }
     // Fire-and-forget feedback exhauster : le mail vient de sortir, on
@@ -450,7 +452,7 @@ async function sendScheduledStep(job) {
   });
 
   const consultantBCC = getConsultantBCC(consultant?.email);
-  await sendMail({
+  const sendResult = await sendMail({
     from: identity.email,
     to: lead.email,
     bcc: consultantBCC ? [consultantBCC] : [],
@@ -466,6 +468,8 @@ async function sendScheduledStep(job) {
       day: jour,
       subject: objet,
       bodyPreview: corps.slice(0, 200),
+      internetMessageId: sendResult.internetMessageId,
+      conversationId: sendResult.conversationId,
     });
   }
 

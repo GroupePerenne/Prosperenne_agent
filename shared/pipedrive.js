@@ -316,7 +316,16 @@ async function markLeadPermanentOptOut(dealId) {
  * Crée une activité de type "email" avec subject = objet du mail
  * et note = corps résumé + identité de l'expéditeur (martin/mila).
  */
-async function logEmailSent({ dealId, personId, sender, day, subject, bodyPreview }) {
+async function logEmailSent({ dealId, personId, sender, day, subject, bodyPreview, internetMessageId, conversationId }) {
+  // Plan v3.1 Pilier 2 — thread mail : si l'adapter Graph a retourné
+  // internetMessageId + conversationId, on les inscrit dans la note
+  // pour audit + threading downstream (davidInbox peut récupérer le
+  // conversationId via grep note Pipedrive si besoin, mais l'usage
+  // principal est de reconstituer le fil côté Graph via conversationId
+  // du mail entrant).
+  const threadingNote = (internetMessageId || conversationId)
+    ? `\n\n---\ninternetMessageId: ${internetMessageId || 'n/a'}\nconversationId: ${conversationId || 'n/a'}`
+    : '';
   return call('/activities', {
     method: 'POST',
     body: {
@@ -325,7 +334,7 @@ async function logEmailSent({ dealId, personId, sender, day, subject, bodyPrevie
       done: 1,
       deal_id: dealId,
       person_id: personId,
-      note: `Envoyé par ${sender} (${sender}@oseys.fr)\nÉtape : ${day}\n\n${bodyPreview}`,
+      note: `Envoyé par ${sender} (${sender}@oseys.fr)\nÉtape : ${day}\n\n${bodyPreview}${threadingNote}`,
     },
   });
 }
