@@ -19,6 +19,7 @@ const pipedrive = require('./pipedrive');
 const { getMem0 } = require('./adapters/memory/mem0');
 const { isLeadStillSendable } = require('./optOutGuard');
 const { isPipelineKilled } = require('./pipelineControl');
+const { canSendToday, incrementSentToday } = require('./dailyEmailCap');
 
 /**
  * Résout l'adresse Smart BCC Pipedrive d'un consultant à partir de son
@@ -398,6 +399,23 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
         // Best effort : si check fail, on tente l'envoi
       }
     }
+    // Cap envoi/boîte/jour (plan v3.1 Pilier 5 — délivrabilité warmup).
+    // Si la boîte d'envoi a atteint son cap quotidien, on requeue le J0
+    // au lendemain matin plutôt que d'envoyer en surcapacité (risque
+    // anti-spam FAI destinataire). Best effort : Storage indispo = on
+    // envoie (graceful degradation).
+    const capCheck = await canSendToday(identity.email);
+    if (!capCheck.ok) {
+      const nextDay = nextBusinessDayAt(new Date(Date.now() + 24 * 60 * 60 * 1000));
+      await scheduleRelance({
+        agent, day: 'J0',
+        targetDate: nextDay.toISOString(),
+        consultant: adjustedConsultant, lead, dealId, personId,
+        preGeneratedStep: { jour: 'J0', objet: j0.objet, corps: j0.corps },
+      });
+      results.scheduled.push('J0_capped');
+      return results;
+    }
     const html = renderEmailHtml({
       identity, consultant: adjustedConsultant, corps: j0.corps, dealId, personId, day: 'J0',
     });
@@ -412,6 +430,8 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
       // nativement dans la boîte de l'expéditeur (martin@oseys.fr ou
       // mila@oseys.fr).
     });
+    // Increment compteur post-succès envoi (best effort, swallow toute erreur).
+    incrementSentToday(identity.email).catch(() => {});
     if (dealId || personId) {
       await pipedrive.logEmailSent({
         dealId, personId, sender: identity.prenom, day: 'J0',
@@ -488,6 +508,14 @@ async function sendScheduledStep(job) {
     identity, consultant, corps, dealId, personId, day: jour,
   });
 
+  // Cap envoi/boîte/jour (plan v3.1 Pilier 5 — délivrabilité warmup).
+  // Pour les relances J+14 / J+28 différées : si cap atteint, on
+  // re-queue à demain matin pour ne pas griller la réputation boîte.
+  const capCheck = await canSendToday(identity.email);
+  if (!capCheck.ok) {
+    return { sent: null, skipped: true, reason: 'daily_cap_reached', day: jour, count: capCheck.count, cap: capCheck.cap };
+  }
+
   const consultantBCC = getConsultantBCC(consultant?.email);
   const sendResult = await sendMail({
     from: identity.email,
@@ -498,6 +526,7 @@ async function sendScheduledStep(job) {
     headers: buildUnsubscribeHeaders(identity),
     // Pas de replyTo : cf. bootstrapSequence (positionnement éthique).
   });
+  incrementSentToday(identity.email).catch(() => {});
 
   if (dealId || personId) {
     await pipedrive.logEmailSent({
