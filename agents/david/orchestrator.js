@@ -21,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const { listUnreadMessages, markAsRead, sendMail, forwardMessage, getConversationMessages } = require('../../shared/graph-mail');
 const { detectAutoReply } = require('../../shared/autoReplyDetector');
+const { decideAgent, extractActiveAgents } = require('../../shared/assignAgent');
 const { callClaude, parseJson } = require('../../shared/anthropic');
 const { davidSignatureHtml } = require('../../shared/templates');
 const { purgeByDealId } = require('../../shared/queue');
@@ -745,7 +746,9 @@ function escapeHtml(s) {
  * @param {Array} leads — [{ prenom, nom, entreprise, email, secteur, ville, contexte }, ...]
  */
 async function launchSequenceForConsultant({ consultant, brief, leads, context }) {
-  const assign = (i) => {
+  // Candidate initial selon brief consultant (martin/mila/both alternance).
+  // La décision finale passe ensuite par decideAgent (doctrine cross-sell).
+  const pickCandidate = (i) => {
     if (brief.prospecteur === 'martin') return 'martin';
     if (brief.prospecteur === 'mila') return 'mila';
     return i % 2 === 0 ? 'martin' : 'mila';
@@ -754,8 +757,7 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
   const results = [];
   for (let i = 0; i < leads.length; i++) {
     const lead = leads[i];
-    const agentKey = assign(i);
-    const agent = agentKey === 'martin' ? martin : mila;
+    const candidateAgent = pickCandidate(i);
 
     try {
       const org = await ensureOrg(lead);
@@ -767,13 +769,36 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
       if (cooldown.skip) {
         results.push({
           lead: lead.email,
-          agent: agentKey,
+          agent: candidateAgent,
           skipped: true,
           reason: cooldown.reason,
           until: cooldown.until,
         });
         continue;
       }
+
+      // Plan v3.1 Pilier 6 — doctrine cross-sell prospecteur unique :
+      //   - Martin actif (Pérenne legacy ou Prospérenne) → on assigne Mila
+      //   - Mila actif → on assigne Martin
+      //   - Les 2 actifs → SKIP (prospect saturé)
+      //   - Aucun actif → candidateAgent
+      // Lecture cross-pipes pour voir TOUS les deals ouverts du prospect
+      // (legacy Pérenne inclus), pas que Prospérenne.
+      const openDealsAllPipes = await pipedrive.findExistingDealsAcrossAllPipes({ personId: person.id, orgId: org.id }).catch(() => []);
+      const activeAgents = extractActiveAgents(openDealsAllPipes);
+      const decision = decideAgent({ candidateAgent, activeAgents });
+      if (decision.skip) {
+        results.push({
+          lead: lead.email,
+          agent: candidateAgent,
+          skipped: true,
+          reason: decision.reason,
+          activeAgents,
+        });
+        continue;
+      }
+      const agentKey = decision.agent;
+      const agent = agentKey === 'martin' ? martin : mila;
 
       // Item 1 — Dédup intra-pipe : si un deal ouvert existe déjà pour cette
       // personne dans le pipeline Prospérenne, on le réutilise plutôt que
@@ -783,7 +808,7 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
         consultant, lead, agentKey, person, org, context,
       });
       if (reused) {
-        results.push({ lead: lead.email, agent: agentKey, dealId: deal.id, reused: true });
+        results.push({ lead: lead.email, agent: agentKey, dealId: deal.id, reused: true, crossSellDecision: decision.reason });
         continue;
       }
 
@@ -795,9 +820,9 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
         orgId: org.id,
         context,
       });
-      results.push({ lead: lead.email, agent: agentKey, dealId: deal.id, ...result });
+      results.push({ lead: lead.email, agent: agentKey, dealId: deal.id, ...result, crossSellDecision: decision.reason });
     } catch (err) {
-      results.push({ lead: lead.email, agent: agentKey, error: err.message });
+      results.push({ lead: lead.email, agent: candidateAgent, error: err.message });
     }
   }
   return results;
