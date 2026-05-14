@@ -93,7 +93,7 @@ function renderLegalFooter({ identity }) {
   const unsubscribeSubject = 'Désinscription';
   const mailto = `mailto:${identity.email}?subject=${encodeURIComponent(unsubscribeSubject)}`;
   return `<div style="margin-top:24px;padding-top:14px;border-top:1px solid #e6e1da;font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:10pt;color:#7a7066;line-height:1.5">
-<p style="margin:0 0 6px">Vous recevez ce message car votre profil de dirigeant correspond au périmètre d'accompagnement d'OSEYS (réseau de consultants indépendants en pilotage économique TPE/PME). Responsable de traitement : OSEYS / Groupe Pérenne — paul.rudler@oseys.fr.</p>
+<p style="margin:0 0 6px">Vous recevez ce message car votre profil de dirigeant correspond au périmètre d'accompagnement de Pérenne Réseau (réseau de consultants indépendants en pilotage économique TPE/PME). Responsable de traitement : Pérenne Réseau / Groupe Pérenne — direction@perennereseau.fr.</p>
 <p style="margin:0">Pour ne plus recevoir de messages : <a href="${mailto}" style="color:#7a7066;text-decoration:underline">cliquez ici pour vous désinscrire</a>. Désinscription effective sous 72h.</p>
 </div>`;
 }
