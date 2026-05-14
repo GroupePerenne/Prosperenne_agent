@@ -8,13 +8,13 @@
  *      validation d'un brief consultant, pour déclencher Martin et/ou Mila.
  *
  * David est le seul agent qui parle aux consultants. Martin et Mila ont
- * leur `replyTo` configuré sur david@oseys.fr : toute réponse d'un prospect
+ * leur `replyTo` configuré sur david@perennereseau.fr : toute réponse d'un prospect
  * atterrit donc dans la boîte de David, qui décide quoi en faire.
  *
  * Classification fine des réponses prospects (6 classes — cf. CLAUDE.md §1.7
  * et prompt.md) :
  *   positive / question / neutre / negative / out_of_office / bounce
- * Si confidence < 0.7 → escalation à direction@oseys.fr (avec consultant en CC).
+ * Si confidence < 0.7 → escalation à direction@perennereseau.fr (avec consultant en CC).
  */
 
 const fs = require('fs');
@@ -225,7 +225,7 @@ async function routeMessage(msg, { context } = {}) {
   // (un fil long ne doit pas exploser le contexte Claude).
   const threadCompacted = await buildThreadContext(msg).catch(() => '');
 
-  const prompt = `Message reçu dans la boîte david@oseys.fr :
+  const prompt = `Message reçu dans la boîte david@perennereseau.fr :
 
 DE : ${fromAddress}
 OBJET : ${msg.subject}${threadCompacted ? `
@@ -279,9 +279,9 @@ Règles :
   // IDENTITÉ EXPÉDITEUR (fix 12 mai 2026 PM, recadrage Paul) : pour les classes
   // consultant et internal, le `from` doit TOUJOURS être David, JAMAIS la
   // boîte d'où vient le message d'origine. Incident vécu : un mail Pipedrive
-  // arrivé dans mila@oseys.fr (boîte multi-pollée par davidInbox), classifié
+  // arrivé dans mila@perennereseau.fr (boîte multi-pollée par davidInbox), classifié
   // internal, a généré un reply rédigé "Bonjour Paul, je viens de voir... David"
-  // mais envoyé DEPUIS mila@oseys.fr → schizophrénie d'identité.
+  // mais envoyé DEPUIS mila@perennereseau.fr → schizophrénie d'identité.
   //
   // Cette règle ne s'applique PAS aux replies prospect (handleProspectReply
   // ci-dessous) — celles-là doivent partir DEPUIS la boîte du commercial
@@ -635,7 +635,7 @@ async function reportLeadExhausterFeedback({ ctx, status, context }) {
  * Trace une réponse prospect classifiée pour le digest quotidien du consultant.
  *
  * BL-52 (11 mai 2026) — Posture "service Prospérenne" (recadrage Paul) :
- *   Les consultants OSEYS (Morgane, Johnny, futurs autres) sont des CLIENTS
+ *   Les consultants Pérenne (Morgane, Johnny, futurs autres) sont des CLIENTS
  *   du service David/Martin/Mila, pas des opérateurs techniques. On ne les
  *   inquiète pas avec chaque coquille ou classification du pipeline.
  *
@@ -682,10 +682,10 @@ async function alertConsultant(consultantEmail, msg, decision, classe, _opts = {
 }
 
 async function escalateToDirection({ subject, contexte, extraitMessage, propositions, recommendation, consultantEmail }) {
-  const escalationTo = process.env.ESCALATION_EMAIL || 'direction@oseys.fr';
+  const escalationTo = process.env.ESCALATION_EMAIL || 'direction@perennereseau.fr';
   // BL-52 (11 mai 2026) — Posture "service Prospérenne" : on n'inquiète pas
   // le consultant avec une escalation interne (cas confidence <0.7 nécessitant
-  // avis humain). L'escalation part uniquement à direction@oseys.fr (Paul/
+  // avis humain). L'escalation part uniquement à direction@perennereseau.fr (Paul/
   // Constantin) qui décident s'il faut prévenir le consultant manuellement.
   // L'info reste tracée en davidActions pour le digest quotidien si pertinent.
   const body =

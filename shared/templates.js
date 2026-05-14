@@ -1,10 +1,10 @@
 /**
  * Templates HTML pour les mails et pages de confirmation.
  *
- * Tous les templates utilisent la charte OSEYS :
- *   --oseys-orange : #F39561
- *   --oseys-cream  : #F7F5F2
- *   --oseys-ink    : #1a1714
+ * Tous les templates utilisent la charte Pérenne :
+ *   --perenne-orange : #F39561
+ *   --perenne-cream  : #F7F5F2
+ *   --perenne-ink    : #1a1714
  */
 
 const fs = require('fs');
@@ -50,13 +50,13 @@ function onboardingEmailHtml({ consultantPrenom, formUrl, choixNiveauBase }) {
   <tr><td style="padding-bottom:24px">
     <table cellpadding="0" cellspacing="0" border="0"><tr>
       <td style="padding-right:20px"><img src="${avatarUrl('david')}&variant=waving" width="112" height="112" alt="David" style="border-radius:50%;display:block"/></td>
-      <td style="vertical-align:middle"><div style="font-size:20px;font-weight:600">David</div><div style="font-size:12px;color:${MUTED}">Responsable commercial — OSEYS</div></td>
+      <td style="vertical-align:middle"><div style="font-size:20px;font-weight:600">David</div><div style="font-size:12px;color:${MUTED}">Responsable commercial — Pérenne</div></td>
     </tr></table>
   </td></tr>
 
   <tr><td style="font-size:15px;line-height:1.6">
     <p>Salut ${consultantPrenom},</p>
-    <p>Je suis David, responsable commercial OSEYS. Je bosse au quotidien avec <strong>Martin</strong> et <strong>Mila</strong>, mes deux chargés d'affaires : ce sont eux qui iront chercher des RDV qualifiés pour toi auprès des entreprises qui correspondent à ce que tu cibles. Ils s'appuient sur le brief que tu vas nous remplir pour écrire juste, sans agressivité et sans jamais improviser. Et comme ils apprennent à chaque échange et à chaque feedback que tu nous donnes, leur radar s'affine au fil du temps.</p>
+    <p>Je suis David, responsable commercial Pérenne. Je bosse au quotidien avec <strong>Martin</strong> et <strong>Mila</strong>, mes deux chargés d'affaires : ce sont eux qui iront chercher des RDV qualifiés pour toi auprès des entreprises qui correspondent à ce que tu cibles. Ils s'appuient sur le brief que tu vas nous remplir pour écrire juste, sans agressivité et sans jamais improviser. Et comme ils apprennent à chaque échange et à chaque feedback que tu nous donnes, leur radar s'affine au fil du temps.</p>
     <p style="margin:18px 0 8px">Trois choses sur lesquelles tu peux compter :</p>
     <ul style="padding-left:18px;margin:0 0 18px;line-height:1.6">
       <li style="margin-bottom:8px"><strong>Le ciblage vient de toi.</strong> La base de prospects qu'on va contacter est construite à partir de ton formulaire — pas de liste générique balancée sans filtre.</li>

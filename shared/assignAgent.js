@@ -4,7 +4,7 @@
  * Doctrine cross-sell Prospérenne / Pérenne (plan v3.1 Pilier 6, tranchée
  * Paul 13 mai 2026 PM).
  *
- * Contexte : Prospérenne peut prospecter des clients OSEYS / Pérenne legacy,
+ * Contexte : Prospérenne peut prospecter des clients Pérenne / Pérenne legacy,
  * MAIS la contrainte "prospecteur unique par prospect" tient :
  *   - Si une personne a un deal ouvert avec Martin → on assigne Mila
  *   - Si une personne a un deal ouvert avec Mila → on assigne Martin

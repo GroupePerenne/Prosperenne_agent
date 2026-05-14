@@ -3,7 +3,7 @@
  *
  * Body :
  * {
- *   "from": "david@oseys.fr" | "martin@oseys.fr" | "mila@oseys.fr",
+ *   "from": "david@perennereseau.fr" | "martin@perennereseau.fr" | "mila@perennereseau.fr",
  *   "to":   "constantin@example.fr" | ["a@x", "b@y"],
  *   "cc":   ["c@z"]  (optionnel),
  *   "subject": "...",

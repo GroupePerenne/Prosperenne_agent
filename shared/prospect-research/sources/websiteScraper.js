@@ -41,7 +41,7 @@ const DEFAULT_MAX_PAGES = 6;
 const DEFAULT_PAGE_TIMEOUT_MS = 5000;
 const DEFAULT_GLOBAL_BUDGET_MS = 25000;
 const DEFAULT_MAX_CHARS_PER_PAGE = 8000;
-const DEFAULT_USER_AGENT = 'PerenneoProfiler/1.0 (+https://oseys.fr)';
+const DEFAULT_USER_AGENT = 'PerenneoProfiler/1.0 (+https://perennereseau.fr)';
 
 /**
  * @param {string} domain                 ex. "acme.fr" ou "https://acme.fr"

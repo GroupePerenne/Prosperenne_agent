@@ -4,9 +4,9 @@
  * Récap COMEX hebdo + journée précédente — module pur.
  *
  * Contexte (chantier "sortir de l'aveuglement par la mesure", 12 mai 2026) :
- *   Le COMEX (Paul, Constantin, Olivier) opère un pilote OSEYS avec 3
+ *   Le COMEX (Paul, Constantin, Olivier) opère un pilote Pérenne avec 3
  *   consultants actifs sans tableau de bord observable. Ce module construit
- *   un récap quotidien à direction@oseys.fr qui permet de répondre en
+ *   un récap quotidien à direction@perennereseau.fr qui permet de répondre en
  *   2 minutes "combien de mails / réponses / qualifications par consultant".
  *
  *   Source : Azure Storage Table dailyMetrics alimentée par dailyDigest
@@ -131,7 +131,7 @@ function formatComexDigestHtml({ singleDay, weekly, dateLabel, alerts = [] } = {
   return `
     <div style="font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:11pt;color:#1a1714;max-width:700px">
       <h1 style="color:#D47646;margin:0 0 8px;font-size:18pt">Récap COMEX — ${escape(dateLabel)}</h1>
-      <p style="margin:0 0 20px;color:#666;font-size:11pt">État du pilote OSEYS : journée précédente + cumul 7 jours. Lecture cible 2 min.</p>
+      <p style="margin:0 0 20px;color:#666;font-size:11pt">État du pilote Pérenne : journée précédente + cumul 7 jours. Lecture cible 2 min.</p>
 
       ${formatDayBlock(singleDay)}
       ${formatWeekBlock(weekly)}

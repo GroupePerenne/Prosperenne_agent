@@ -52,7 +52,7 @@ async function getToken() {
  * Envoie un mail depuis l'adresse `from` (doit être une UPN du tenant).
  *
  * @param {Object} opts
- * @param {string} opts.from          — UPN (ex: "martin@oseys.fr")
+ * @param {string} opts.from          — UPN (ex: "martin@perennereseau.fr")
  * @param {string|string[]} opts.to   — destinataires
  * @param {string[]} [opts.cc]
  * @param {string} opts.subject
@@ -248,7 +248,7 @@ async function markAsRead({ mailbox, messageId }) {
  *
  * @param {Object} opts
  * @param {string} opts.from         UPN propriétaire du mail à forwarder
- *                                   (ex: "martin@oseys.fr" si le mail prospect
+ *                                   (ex: "martin@perennereseau.fr" si le mail prospect
  *                                   est arrivé dans la boîte de Martin)
  * @param {string} opts.messageId    ID Graph du mail à forwarder
  * @param {string|string[]} opts.to  Destinataire(s) du forward

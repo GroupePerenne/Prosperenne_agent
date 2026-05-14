@@ -12,7 +12,7 @@
  * Air (`scripts/enrich-leadbase-continuous.js`).
  *
  * Liste des consultants actifs : env vars `MORGANE_EMAIL` + `JOHNNY_EMAIL`
- * au pilote OSEYS. Future Tranche 8 : multi-tenant via Mem0 ou Storage Table.
+ * au pilote Pérenne. Future Tranche 8 : multi-tenant via Mem0 ou Storage Table.
  *
  * Inhibé via env `LEAD_SELECTOR_DISABLED=1`.
  */

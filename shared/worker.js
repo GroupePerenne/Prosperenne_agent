@@ -87,7 +87,7 @@ ${pixel}
 //     subject "Désinscription" : davidInbox classifie comme négatif et
 //     pose opt_out_until=9999-12-31 (architecture existante).
 //
-// Cohérent doctrine "consultants OSEYS = clients" (positionnement service
+// Cohérent doctrine "consultants Pérenne = clients" (positionnement service
 // Prospérenne) : on ne complique pas avec endpoint web dédié pour H1.
 function renderLegalFooter({ identity }) {
   const unsubscribeSubject = 'Désinscription';
@@ -100,7 +100,7 @@ function renderLegalFooter({ identity }) {
 
 // ─── Headers SMTP List-Unsubscribe (RFC 2369) ─────────────────────────────
 // Génère les 2 headers conformes :
-//   - List-Unsubscribe : <mailto:agent@oseys.fr?subject=Désinscription>
+//   - List-Unsubscribe : <mailto:agent@perennereseau.fr?subject=Désinscription>
 //     Format RFC 2369 — pris en compte par tous les clients mail majeurs
 //     (Gmail "Unsubscribe" automatique, Outlook bouton désabonner).
 //
@@ -120,13 +120,13 @@ function escapeHtml(s) {
 }
 
 // Auto-linkify pour rendre les URLs cliquables dans le corps des messages
-// LLM. Cible prioritaire : oseys.fr et ses sous-pages — URL conservée
-// dans le href, mais texte affiché toujours "oseys.fr" court (cohérent
+// LLM. Cible prioritaire : perennereseau.fr et ses sous-pages — URL conservée
+// dans le href, mais texte affiché toujours "perennereseau.fr" court (cohérent
 // avec la signature, cf. décision Paul 1er mai 2026 PM).
 function linkify(s) {
   return String(s || '')
-    // oseys.fr/dirigeant ou autre sous-page → texte court "oseys.fr", URL complète dans href
-    .replace(/\b(oseys\.fr(?:\/[\w\-/]+)?)\b/g, '<a href="https://$1" style="color:#F39561;text-decoration:underline;font-weight:500">oseys.fr</a>')
+    // perennereseau.fr/dirigeant ou autre sous-page → texte court "perennereseau.fr", URL complète dans href
+    .replace(/\b(perennereseau\.fr(?:\/[\w\-/]+)?)\b/g, '<a href="https://$1" style="color:#F39561;text-decoration:underline;font-weight:500">perennereseau.fr</a>')
     // autres URLs https:// (fallback générique)
     .replace(/(?<!href=")(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#F39561;text-decoration:underline">$1</a>');
 }
@@ -233,7 +233,7 @@ function warnLog(context, message) {
  * Résolution de l'owner (ordre de préférence) :
  *   1. deal.user_id.email (si embedded dans la réponse Pipedrive)
  *   2. pipedrive.getUserEmail(deal.user_id.id)
- *   3. Fallback direction@oseys.fr (env ESCALATION_EMAIL) si non résolvable
+ *   3. Fallback direction@perennereseau.fr (env ESCALATION_EMAIL) si non résolvable
  *
  * Best effort : toute erreur de sendMail est swallow + warn log.
  * deps injectable pour tests (sendMail, pipedriveMod).
@@ -244,7 +244,7 @@ async function sendFuzzyMatchEscalation({ fuzzyDeal, lead, context, deps = {} })
 
   try {
     const davidEmail = process.env.DAVID_EMAIL;
-    const direction = process.env.ESCALATION_EMAIL || 'direction@oseys.fr';
+    const direction = process.env.ESCALATION_EMAIL || 'direction@perennereseau.fr';
     const domain = process.env.PIPEDRIVE_COMPANY_DOMAIN || 'oseys';
     const dealLink = `https://${domain}.pipedrive.com/deal/${fuzzyDeal.id}`;
 
@@ -322,7 +322,7 @@ function renderUnattributableEmailHtml({ lead, dealLink }) {
 // `prospectProfile` (optionnel) — résultat enrichissement prospect-research
 // (companyProfile + decisionMakerProfile) qui permet à generateSequence de
 // calculer l'angle d'entrée et la modulation DISC. Si absent, fallback
-// 'pas_de_signal' + ton standard (cohérent VP OSEYS socle, cas le plus fréquent).
+// 'pas_de_signal' + ton standard (cohérent VP Pérenne socle, cas le plus fréquent).
 async function bootstrapSequence({ agent, consultant, lead, dealId, personId, orgId, context, mem0: mem0Override, prospectProfile }) {
   const identity = loadIdentity(agent);
 
@@ -335,7 +335,7 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
 
   // 0. Filtrage leads existants — INTRA-PIPE 28 SEULEMENT (correction 12 mai PM).
   // Doctrine précédente "cross-pipes" : skip si la person a un deal ouvert dans
-  // n'importe quel pipeline OSEYS. Bloquant en pratique : pollution historique
+  // n'importe quel pipeline Pérenne. Bloquant en pratique : pollution historique
   // searchPerson fuzzy a agrégé des deals legacy sur des persons mal-matchées
   // (ex: person 53801 = 134 deals dont 120 dans pipes 10/12/22/24 qui n'ont
   // rien à voir). Le step 0 cross-pipes faux-positivait à grande échelle et
@@ -427,8 +427,8 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
       html,
       headers: buildUnsubscribeHeaders(identity),
       // Pas de replyTo explicite : les réponses prospects arrivent
-      // nativement dans la boîte de l'expéditeur (martin@oseys.fr ou
-      // mila@oseys.fr).
+      // nativement dans la boîte de l'expéditeur (martin@perennereseau.fr ou
+      // mila@perennereseau.fr).
     });
     // Increment compteur post-succès envoi (best effort, swallow toute erreur).
     incrementSentToday(identity.email).catch(() => {});

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Récap quotidien envoyé à chaque consultant pilote OSEYS — module pur.
+ * Récap quotidien envoyé à chaque consultant pilote Pérenne — module pur.
  *
  * Contexte (recadrage Paul 12 mai 2026 PM) :
  *   La version précédente du dailyReport faisait générer du texte par

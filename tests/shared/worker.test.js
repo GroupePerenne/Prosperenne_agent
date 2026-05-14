@@ -270,7 +270,7 @@ test('sendFuzzyMatchEscalation — owner non résolvable : fallback direction@os
       fuzzyDeal, lead: FUZZY_LEAD, deps: { sendMail, pipedriveMod },
     });
     assert.equal(res.sent, true);
-    assert.equal(res.to, 'direction@oseys.fr');
+    assert.equal(res.to, 'direction@perennereseau.fr');
     assert.equal(res.unattributable, true);
     assert.match(calls[0].subject, /\[David\] Escalation non attribuable : ACME SAS/);
     assert.match(calls[0].html, /Intervention humaine requise/);

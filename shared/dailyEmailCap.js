@@ -70,7 +70,7 @@ function normalizeMailbox(mailbox) {
 /**
  * Vérifie si la boîte peut encore envoyer aujourd'hui.
  *
- * @param {string} mailbox UPN (ex. 'martin@oseys.fr')
+ * @param {string} mailbox UPN (ex. 'martin@perennereseau.fr')
  * @param {Object} [opts]
  * @param {Date} [opts.now]
  * @param {number} [opts.cap] Override cap pour test

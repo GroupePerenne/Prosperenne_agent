@@ -37,8 +37,8 @@ const TRANCHE_VALID_CODES = Object.freeze([
   '41', '42', '51', '52', '53',
 ]);
 
-// Tranches sweet spot OSEYS par défaut (6-49 salariés).
-const TRANCHE_SWEET_SPOT_OSEYS = Object.freeze(['03', '11', '12']);
+// Tranches sweet spot Pérenne par défaut (6-49 salariés).
+const TRANCHE_SWEET_SPOT_PERENNE = Object.freeze(['03', '11', '12']);
 
 // Couche 1 — colonnes obligatoires (NULL non toléré) sur entrée v1.0 valide.
 const LEADBASE_COUCHE1_REQUIRED = Object.freeze([
@@ -239,7 +239,7 @@ module.exports = {
   RK_LEADCONTACTS_REGEX,
   NAF_REGEX,
   TRANCHE_VALID_CODES,
-  TRANCHE_SWEET_SPOT_OSEYS,
+  TRANCHE_SWEET_SPOT_PERENNE,
   LEADBASE_COUCHE1_REQUIRED,
   LEADCONTACTS_REQUIRED,
   LEADCONTACTS_VALID_SOURCES,

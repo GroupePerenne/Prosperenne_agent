@@ -4,7 +4,7 @@
  * Monitoring anti-doublons des envois depuis les 3 boîtes david@/martin@/mila@.
  *
  * Contexte (incident 11 mai 2026, 12 doublons à Johnny détectés 11 jours après) :
- *   Le pilote OSEYS opère 3 boîtes mail qui envoient automatiquement à des
+ *   Le pilote Pérenne opère 3 boîtes mail qui envoient automatiquement à des
  *   consultants et prospects. Aucun garde-fou ne détecte un envoi anormal en
  *   doublon avant qu'un humain le constate par hasard. C'est ce qui s'est
  *   passé pour Johnny (12 mails identiques en une matinée, vus 11 jours après).

@@ -20,12 +20,12 @@ const CENTRE_FRANCE_METROPOLITAINE = { lat: 46.603354, lon: 1.888334 };
 
 const NOMINATIM_BASE = process.env.NOMINATIM_BASE_URL || 'https://nominatim.openstreetmap.org';
 const DEFAULT_USER_AGENT =
-  process.env.NOMINATIM_USER_AGENT || 'Pereneo-agents/1.0 (direction@oseys.fr)';
+  process.env.NOMINATIM_USER_AGENT || 'Pereneo-agents/1.0 (direction@perennereseau.fr)';
 const DEFAULT_TIMEOUT_MS = 3000;
 
 // Cache in-memory volontaire en V1 : vit le temps d'un warm container Azure
 // Functions, reset à chaque cold start. Suffisant pour le pilote interne
-// OSEYS (Morgane/Johnny, 1 brief ≠ /consultant/jour).
+// Pérenne (Morgane/Johnny, 1 brief ≠ /consultant/jour).
 //
 // TODO post-pilote (avant ouverture commerciale Prospérenne) : persister en
 // Azure Table `GeocodingCache` (PartitionKey=hash(address), RowKey=fixed).

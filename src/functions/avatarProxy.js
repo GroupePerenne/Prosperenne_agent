@@ -2,14 +2,14 @@
  * GET /api/avatarProxy?user=david|martin|mila
  *
  * Proxy vers Microsoft Graph : récupère la photo de profil M365 de
- * david@/martin@/mila@oseys.fr et la sert avec un cache de 1h.
+ * david@/martin@/mila@perennereseau.fr et la sert avec un cache de 1h.
  *
  * Permissions Graph requises sur l'app registration OSEYS-ProspectionAgent :
  *   - User.Read.All (Application)  — consentement admin déjà accordé
  *
  * Si la photo n'a pas encore été uploadée (Graph retourne 404), ou si un
  * appel Graph échoue pour toute autre raison, on retourne un SVG placeholder
- * (initiale dans un cercle orange OSEYS) avec le même cache — pas d'icône
+ * (initiale dans un cercle orange Pérenne) avec le même cache — pas d'icône
  * cassée dans les mails/UI. Les erreurs sont loggées en warn pour ne pas
  * polluer Application Insights.
  */

@@ -14,7 +14,7 @@
  *     observe : status, candidatesCount, excludedNoDirigeant ratio,
  *     returned, elapsedMs.
  *   - Résultats archivés en Storage Table monteCarloRuns (1 row par brief).
- *   - Alerte mail direction@oseys.fr si une métrique de santé sort des
+ *   - Alerte mail direction@perennereseau.fr si une métrique de santé sort des
  *     seuils définis (status != ok|insufficient, ou returned == 0 sur un
  *     brief qui devrait en produire, ou elapsedMs > 180s).
  */
@@ -29,8 +29,8 @@ const { makeSafeLogger } = require('../../shared/safe-log');
 const { enrichBatchInPlace } = require('../../shared/enrichers/dirigeants-rne');
 
 const TABLE_NAME = process.env.MONTECARLO_RUNS_TABLE || 'monteCarloRuns';
-const ALERT_EMAIL = process.env.ALERT_EMAIL || 'direction@oseys.fr';
-const FROM_EMAIL = process.env.DAVID_EMAIL || 'david@oseys.fr';
+const ALERT_EMAIL = process.env.ALERT_EMAIL || 'direction@perennereseau.fr';
+const FROM_EMAIL = process.env.DAVID_EMAIL || 'david@perennereseau.fr';
 
 // Suite de briefs synthétiques couvrant des configurations variées.
 // Chaque template a un nom + un brief + une attente minimale (returned ≥ N).
@@ -40,7 +40,7 @@ const BRIEF_TEMPLATES = [
     description: 'Brief consultant Morgane (Boulogne 10km, 10 secteurs PME)',
     brief: {
       nom: 'MC Morgane',
-      email: 'mc-morgane@oseys.fr',
+      email: 'mc-morgane@perennereseau.fr',
       secteurs:
         'plomberie,electricite,domotique,menuiserie,architecture,formation,maintenance,securite,nettoyage,services_particuliers',
       effectif: '10-20',
@@ -57,7 +57,7 @@ const BRIEF_TEMPLATES = [
     description: 'Conseil/ESN/agence Paris IDF effectif 20-49',
     brief: {
       nom: 'MC Paris Conseil',
-      email: 'mc-paris-conseil@oseys.fr',
+      email: 'mc-paris-conseil@perennereseau.fr',
       secteurs: 'agence_communication,conseil,esn,bureau_etudes',
       effectif: '20-49',
       zone: 'region',
@@ -72,7 +72,7 @@ const BRIEF_TEMPLATES = [
     description: 'Brief minimal 1 secteur, effectif 10-20, zone region IDF',
     brief: {
       nom: 'MC Minimal',
-      email: 'mc-minimal@oseys.fr',
+      email: 'mc-minimal@perennereseau.fr',
       secteurs: 'maintenance',
       effectif: '10-20',
       zone: 'region',
@@ -87,7 +87,7 @@ const BRIEF_TEMPLATES = [
     description: 'Brief large : agences communication + esn, France entière',
     brief: {
       nom: 'MC Large France',
-      email: 'mc-large@oseys.fr',
+      email: 'mc-large@perennereseau.fr',
       secteurs: 'agence_communication,esn,bureau_etudes,conseil',
       effectif: '20-49,40-75',
       zone: 'france',
@@ -102,7 +102,7 @@ const BRIEF_TEMPLATES = [
     description: 'Brief avec secteur inconnu (devrait fallback sur empty/no_sector_mapped)',
     brief: {
       nom: 'MC Edge Unknown',
-      email: 'mc-edge@oseys.fr',
+      email: 'mc-edge@perennereseau.fr',
       secteurs: 'totalement_inconnu_xyz',
       effectif: '10-20',
       zone: 'region',

@@ -17,7 +17,7 @@
  * Audit : la valeur label brute est conservée dans `trancheEffectifLabel`
  * pour permettre vérification a posteriori en cas de drift INSEE.
  *
- * Compatibilité multi-tenant V-2 : pas de hardcoding OSEYS. Les filtres
+ * Compatibilité multi-tenant V-2 : pas de hardcoding Pérenne. Les filtres
  * tranche / NAF sont appliqués en amont (orchestrateur), pas dans ce mapper.
  */
 
@@ -44,7 +44,7 @@ const TRANCHE_LABEL_TO_CODE = Object.freeze({
 });
 
 /**
- * Tranches sweet spot OSEYS par défaut (6-49 salariés).
+ * Tranches sweet spot Pérenne par défaut (6-49 salariés).
  * Override par env SIRENE_TRANCHES_INCLUDE='03,11,12,21' pour mode LARGE.
  */
 const DEFAULT_TRANCHES = ['03', '11', '12'];

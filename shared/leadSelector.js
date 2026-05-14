@@ -141,7 +141,7 @@ function mapBriefToFilters(brief, { context } = {}) {
 // ─── Régions métropolitaines → départements INSEE ──────────────────────────
 // Source : référentiel INSEE post-réforme 2016 (13 régions métropolitaines).
 // Les DOM (Guadeloupe, Martinique, Guyane, Réunion, Mayotte) sont volontairement
-// hors scope V1 : les consultants OSEYS ciblent la France métropolitaine, et
+// hors scope V1 : les consultants Pérenne ciblent la France métropolitaine, et
 // la LeadBase n'a pas de couverture DOM équilibrée. Fallback pour un dep DOM :
 // retourner [dep] (on reste limité au département unique).
 const REGION_TO_DEPARTEMENTS = {

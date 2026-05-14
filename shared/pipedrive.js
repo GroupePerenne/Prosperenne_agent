@@ -119,7 +119,7 @@ async function updatePersonField(personId, fieldKey, value) {
  *
  * Incident 12 mai 2026 PM : la version précédente utilisait limit=100 puis
  * filter client-side pipeline_id. Si la personne a >100 deals dans d'autres
- * pipelines OSEYS, les deals pipeline 28 (IDs élevés) sortent du top-100,
+ * pipelines Pérenne, les deals pipeline 28 (IDs élevés) sortent du top-100,
  * filter retourne [], resolveOrCreateDeal crée un nouveau deal alors qu'il
  * existait → orphelins stage NEW. Fix : pagination complete via boucle start.
  */
@@ -334,7 +334,7 @@ async function logEmailSent({ dealId, personId, sender, day, subject, bodyPrevie
       done: 1,
       deal_id: dealId,
       person_id: personId,
-      note: `Envoyé par ${sender} (${sender}@oseys.fr)\nÉtape : ${day}\n\n${bodyPreview}${threadingNote}`,
+      note: `Envoyé par ${sender} (${sender}@perennereseau.fr)\nÉtape : ${day}\n\n${bodyPreview}${threadingNote}`,
     },
   });
 }

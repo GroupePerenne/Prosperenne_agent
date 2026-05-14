@@ -59,7 +59,7 @@ app.timer('sentItemsMonitor', {
         return;
       }
 
-      const adminEmail = process.env.ADMIN_EMAIL || 'direction@oseys.fr';
+      const adminEmail = process.env.ADMIN_EMAIL || 'direction@perennereseau.fr';
       const now = new Date();
       const since = new Date(now.getTime() - 7 * 24 * 3600_000); // 7 jours
       const sinceIso = since.toISOString();

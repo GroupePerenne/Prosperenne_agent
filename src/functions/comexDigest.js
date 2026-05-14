@@ -3,9 +3,9 @@
 /**
  * Timer trigger — 7h45 Paris, du lundi au vendredi.
  *
- * Envoie un récap COMEX (journée précédente + cumul 7 jours) à direction@oseys.fr
+ * Envoie un récap COMEX (journée précédente + cumul 7 jours) à direction@perennereseau.fr
  * (Paul + Constantin). Objectif : permettre au COMEX de répondre en 2 minutes
- * sur l'état du pilote OSEYS sans ouvrir Pipedrive / AI / autre outil.
+ * sur l'état du pilote Pérenne sans ouvrir Pipedrive / AI / autre outil.
  *
  * Source : Azure Storage Table `dailyMetrics` alimentée par dailyDigest 00h.
  * Pré-requis : DAILY_REPORT_ENABLED=1 (le cron dailyDigest écrit cette table
@@ -94,7 +94,7 @@ async function readDailyMetricsWindow(dateRefIso, tableClient) {
 async function handleComexDigest(myTimer, context, deps = defaultDeps()) {
   const log = makeSafeLogger(context);
 
-  const adminEmail = process.env.COMEX_EMAIL || process.env.ADMIN_EMAIL || 'direction@oseys.fr';
+  const adminEmail = process.env.COMEX_EMAIL || process.env.ADMIN_EMAIL || 'direction@perennereseau.fr';
   const fromEmail = process.env.DAVID_EMAIL;
   if (!fromEmail) {
     log.warn('[comexDigest] DAVID_EMAIL non défini, abort');
@@ -122,7 +122,7 @@ async function handleComexDigest(myTimer, context, deps = defaultDeps()) {
     await deps.sendMail({
       from: fromEmail,
       to: adminEmail,
-      subject: `Récap COMEX OSEYS — ${formatDateFR(yesterday)}`,
+      subject: `Récap COMEX Pérenne — ${formatDateFR(yesterday)}`,
       html,
     });
     log(`[comexDigest] récap envoyé à ${adminEmail}`);

@@ -32,7 +32,7 @@ const { normalizeNamePart, normalizeDomain } = require('./patterns');
 
 const DEFAULT_PAGE_TIMEOUT_MS = 8000;
 const DEFAULT_GLOBAL_TIMEOUT_MS = 20000;
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; PereneoBot/1.0; +https://oseys.fr)';
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; PereneoBot/1.0; +https://perennereseau.fr)';
 
 // Pages visées par ordre de probabilité d'y trouver des décideurs/emails.
 // La page d'accueil en dernier recours (signal plus dilué).
