@@ -20,6 +20,7 @@ const { flushDueReplies } = require('../../shared/storage-tables/davidPendingRep
 const { sendMail, replyToMessage } = require('../../shared/graph-mail');
 const { makeSafeLogger } = require('../../shared/safe-log');
 const { canReplyToThreadToday, incrementThreadReply } = require('../../shared/threadReplyCap');
+const { detectBurst, recordOutboundSend } = require('../../shared/threadBurstDetector');
 
 /**
  * Envoi effectif d'une entry pending.
@@ -43,11 +44,12 @@ const { canReplyToThreadToday, incrementThreadReply } = require('../../shared/th
 async function sendFnFromEntity(entity) {
   const cc = entity.ccJson ? JSON.parse(entity.ccJson) : [];
 
-  // Plan v3.1 Pilier 3 — cap "1 réponse/fil/jour" : protection anti-boucle
-  // dure. Si David a déjà répondu aujourd'hui dans cette conversation,
-  // on SKIP même si la réponse était sémantiquement justifiée. Best effort
-  // sur le check : Storage indispo → on autorise (graceful degradation,
-  // un anti-boucle ne doit pas bloquer le business sur panne Storage).
+  // Plan v3.1 Pilier 3 — cap "1 réponse/fil/jour" (niveau 2) : protection
+  // anti-boucle dure. Si David a déjà répondu aujourd'hui dans cette
+  // conversation, on SKIP même si la réponse était sémantiquement justifiée.
+  // Best effort sur le check : Storage indispo → on autorise (graceful
+  // degradation, un anti-boucle ne doit pas bloquer le business sur panne
+  // Storage).
   const conversationId = entity.originalConversationId || '';
   if (conversationId) {
     const cap = await canReplyToThreadToday(conversationId);
@@ -55,6 +57,16 @@ async function sendFnFromEntity(entity) {
       const err = new Error(`thread_daily_cap_reached:${cap.count}/${cap.max}`);
       err.skipped = true;
       err.reason = 'thread_daily_cap_reached';
+      throw err;
+    }
+    // Niveau 3 — filet de sécurité burst (N sortants <W min). Activé même
+    // si le cap quotidien est lâche (override env var) ou foiré runtime.
+    const burst = await detectBurst(conversationId);
+    if (burst.burst) {
+      const err = new Error(`thread_burst_detected:${burst.count}/${burst.threshold}_in_${burst.windowMinutes}min`);
+      err.skipped = true;
+      err.reason = 'thread_burst_detected';
+      err.burstMeta = burst;
       throw err;
     }
   }
@@ -76,9 +88,11 @@ async function sendFnFromEntity(entity) {
     });
   }
 
-  // Increment compteur fil post-envoi (fire-and-forget, swallow erreurs).
+  // Increment compteur fil post-envoi (niveau 2 + niveau 3).
+  // Fire-and-forget : la trace ne doit jamais bloquer l'envoi déjà réussi.
   if (conversationId) {
     incrementThreadReply(conversationId).catch(() => {});
+    recordOutboundSend(conversationId, { subject: entity.subject }).catch(() => {});
   }
 
   return result;
