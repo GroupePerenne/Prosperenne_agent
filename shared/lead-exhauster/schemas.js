@@ -25,7 +25,7 @@ const TABLE_EXPERIMENTS = process.env.EXPERIMENTS_TABLE || 'Experiments';
 // ─── Seuils et constantes produit ──────────────────────────────────────────
 
 const DEFAULT_CONFIDENCE_THRESHOLD = Number(
-  process.env.LEAD_EXHAUSTER_CONFIDENCE_THRESHOLD || 0.8,
+  process.env.LEAD_EXHAUSTER_CONFIDENCE_THRESHOLD || 0.7,
 );
 
 const SOURCES = Object.freeze({
@@ -69,7 +69,7 @@ const DOMAIN_SOURCES = Object.freeze({
  * @property {string}  [companyName]          Raison sociale.
  * @property {string}  [companyDomain]        Domaine connu (skip resolveDomain).
  * @property {string}  [companyLinkedInUrl]   URL LinkedIn entreprise connue.
- * @property {number}  [confidenceThreshold]  Seuil custom (défaut 0.80).
+ * @property {number}  [confidenceThreshold]  Seuil custom (défaut 0.70).
  * @property {Object}  [experimentsContext]   Voir SPEC_AB_TESTING §4.
  * @property {boolean} [simulated]            Mode dryRun : skip Dropcontact.
  */

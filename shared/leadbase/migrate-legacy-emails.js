@@ -24,7 +24,7 @@
  *
  * Auto-critique sur confidence=0.4 :
  *   - On ne sait pas si l'email legacy a été validé SMTP ou pas.
- *   - 0.4 < seuil 0.8 par défaut DEFAULT_CONFIDENCE_THRESHOLD.
+ *   - 0.4 < seuil 0.7 par défaut DEFAULT_CONFIDENCE_THRESHOLD.
  *   - Conséquence : ces emails ne seront pas envoyés en J0 par David
  *     tant qu'ils n'ont pas été re-vérifiés via SMTP probe ou Dropcontact.
  *   - C'est volontaire : prudence > volume, cohérent avec mandat Paul

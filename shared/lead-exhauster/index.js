@@ -5,7 +5,7 @@
  *
  * Responsabilité : à partir d'un SIREN (+ éventuelles infos optionnelles),
  * produire un `LeadContacts` exploitable par le pipeline aval (Graph Mail
- * via runSequence), avec une confidence ≥ seuil tenant (défaut 0.80).
+ * via runSequence), avec une confidence ≥ seuil tenant (défaut 0.70).
  *
  * Pipeline (SPEC §3.3) :
  *   étape 0 : lookup cache LeadContacts                           [Jalon 1]
@@ -211,7 +211,7 @@ async function leadExhauster(input = {}, opts = {}) {
 
   // S2 — l'arbitrage final accepte aussi le seuil dédié Dropcontact quand
   // le best candidate vient de cette source. Sans ce relâchement, un
-  // catch_all 0.50 serait re-rejeté par le seuil interne 0.80.
+  // catch_all 0.50 serait re-rejeté par le seuil interne 0.70.
   const effectiveThreshold = finalSource === SOURCES.DROPCONTACT
     ? dropcontactThreshold
     : threshold;
