@@ -23,17 +23,30 @@ const { containsTargetSiren, extractSirens } = require('./sirenExtractor');
 const { fetchPagesForValidation } = require('../utils/pageFetcher');
 
 const BASE_WEAK_CONFIDENCE = 0.40;
-const MAX_WEAK_CONFIDENCE = 0.80;
+const MAX_WEAK_CONFIDENCE = 0.95; // étendu pour accommoder combinaisons multi-signaux RNE
 // Confidence accordée quand domain_resembles_name + ville_in_text (ou name_in_title).
 // Au-dessus du seuil par défaut (0.85) → validé sans SIREN (Option C).
 const NAME_CITY_MATCH_CONFIDENCE = 0.87;
+// Confidence accordée quand au moins 2 signaux RNE forts matchent (phone, dirigeant).
+// Validation expert sans SIREN — preuves nominales croisées plus discriminantes que
+// nom+ville seuls (un homonyme + même ville peut tromper, un téléphone RNE+dirigeant
+// RNE croisés sur un site presque jamais).
+const MULTI_SIGNAL_MATCH_CONFIDENCE = 0.90;
 const SIGNAL_WEIGHT_NAME_IN_TITLE = 0.15;
 const SIGNAL_WEIGHT_VILLE = 0.10;
 const SIGNAL_WEIGHT_CODE_POSTAL = 0.05;
 const SIGNAL_WEIGHT_DOMAIN_LIKE_NAME = 0.10;
+// Signaux RNE croisés (15 mai 2026 — refonte multi-preuves)
+const SIGNAL_WEIGHT_PHONE_MATCH = 0.20;     // téléphone RNE retrouvé sur page = preuve très forte (identifiant immuable)
+const SIGNAL_WEIGHT_DIRIGEANT_MATCH = 0.20; // prénom + nom dirigeant RNE croisés sur page
+const SIGNAL_WEIGHT_ADDRESS_FRAGMENT = 0.10; // rue ou rue+ville sur page
 
 const SIREN_MATCH_CONFIDENCE = 0.99;
 const SIREN_MISMATCH_CONFIDENCE = 0.0;
+// Seuil pour relaxer le rejet ferme siren_mismatch : si score multi-signaux RNE atteint
+// 0.75+, on accepte malgré la présence d'un autre SIREN (cas holdings, agences,
+// blogs tiers qui citent des SIRENs externes).
+const MISMATCH_RELAXATION_THRESHOLD = 0.75;
 
 /**
  * Valide un candidat URL.
@@ -109,9 +122,34 @@ async function validateCandidate(input = {}, opts = {}) {
     };
   }
 
-  // Cherche d'autres SIREN — si on en trouve, rejet ferme
+  // Cherche d'autres SIREN — par défaut rejet ferme, sauf si signaux multi-preuves
+  // RNE croisés (phone/dirigeant/adresse) atteignent le seuil de relaxation.
+  // Cas couverts : holdings/agences/blogs tiers qui citent des SIRENs externes
+  // sans que le site soit pour autant celui d'une autre entreprise.
   const otherSirens = extractSirens(concatenated).filter((s) => s.siren !== targetSiren);
   if (otherSirens.length > 0) {
+    const weakMismatch = computeWeakSignals({
+      concatenated,
+      homePage: reachable[0],
+      companyName: input.companyName,
+      ville: input.ville,
+      codePostal: input.codePostal,
+      siteUrl: url,
+      rne: input.rne,
+    });
+    if (weakMismatch.confidence >= MISMATCH_RELAXATION_THRESHOLD) {
+      return {
+        confidence: weakMismatch.confidence,
+        proofType: weakMismatch.proofType || 'name_city_match',
+        proofDetails: {
+          weakSignals: weakMismatch.signals,
+          mismatchedSirens: otherSirens.slice(0, 3).map((s) => s.siren),
+          note: 'siren_mismatch_relaxed_by_multi_signal',
+        },
+        signals: [...weakMismatch.signals, `mismatched_siren=${otherSirens[0].siren}`, 'siren_mismatch_relaxed'],
+        pagesFetched: reachable.map((p) => ({ url: p.url, status: p.status })),
+      };
+    }
     return {
       confidence: SIREN_MISMATCH_CONFIDENCE,
       proofType: 'siren_mismatch',
@@ -132,6 +170,7 @@ async function validateCandidate(input = {}, opts = {}) {
     ville: input.ville,
     codePostal: input.codePostal,
     siteUrl: url,
+    rne: input.rne,
   });
 
   return {
@@ -155,7 +194,7 @@ function locateSirenOnPage(pages, targetSiren) {
   return null;
 }
 
-function computeWeakSignals({ concatenated, homePage, companyName, ville, codePostal, siteUrl }) {
+function computeWeakSignals({ concatenated, homePage, companyName, ville, codePostal, siteUrl, rne }) {
   let confidence = BASE_WEAK_CONFIDENCE;
   const signals = [];
 
@@ -185,15 +224,58 @@ function computeWeakSignals({ concatenated, homePage, companyName, ville, codePo
     signals.push('domain_resembles_name');
   }
 
+  // ─── Signaux RNE croisés (15 mai 2026 — refonte multi-preuves) ────────────
+  // Téléphone, dirigeant, adresse RNE retrouvés sur le site = preuves nominales
+  // discriminantes pour valider sans SIREN (cas TPE sans mentions légales SIREN).
+  let phoneMatch = false;
+  let dirigeantMatch = false;
+  let addressMatch = false;
+  if (rne && concatenated) {
+    if (rne.telephone && matchPhoneOnPage(concatenated, rne.telephone)) {
+      confidence += SIGNAL_WEIGHT_PHONE_MATCH;
+      signals.push('rne_phone_match');
+      phoneMatch = true;
+    }
+    if (rne.dirigeantFirstName && rne.dirigeantLastName
+        && matchPersonNameOnPage(concatenated, rne.dirigeantFirstName, rne.dirigeantLastName)) {
+      confidence += SIGNAL_WEIGHT_DIRIGEANT_MATCH;
+      signals.push('rne_dirigeant_match');
+      dirigeantMatch = true;
+    }
+    if (rne.adresse && matchAddressFragment(concatenated, rne.adresse)) {
+      confidence += SIGNAL_WEIGHT_ADDRESS_FRAGMENT;
+      signals.push('rne_address_fragment');
+      addressMatch = true;
+    }
+  }
+
   // Bonus combinatoire Option C : domaine ressemble au nom + ancrage géo ou
   // nom dans le titre → preuve suffisante sans SIREN pour alimenter Dropcontact.
   const nameCityMatch = domainMatches && (villeInText || nameInTitle);
+
+  // Bonus multi-signal : ≥2 signaux RNE forts (phone + dirigeant ou phone + adresse
+  // ou dirigeant + adresse) → validation expert confidence 0.90.
+  const rneSignalsCount = [phoneMatch, dirigeantMatch, addressMatch].filter(Boolean).length;
+  const multiSignalMatch = rneSignalsCount >= 2;
+
+  if (multiSignalMatch) {
+    signals.push('multi_signal_rne_bonus');
+    return {
+      confidence: MULTI_SIGNAL_MATCH_CONFIDENCE,
+      signals,
+      nameCityMatch: false,
+      multiSignalMatch: true,
+      proofType: 'multi_signal_match',
+    };
+  }
+
   if (nameCityMatch) {
     signals.push('name_city_match_bonus');
     return {
       confidence: NAME_CITY_MATCH_CONFIDENCE,
       signals,
       nameCityMatch: true,
+      proofType: 'name_city_match',
     };
   }
 
@@ -201,7 +283,81 @@ function computeWeakSignals({ concatenated, homePage, companyName, ville, codePo
     confidence: Math.min(confidence, MAX_WEAK_CONFIDENCE),
     signals,
     nameCityMatch: false,
+    multiSignalMatch: false,
+    proofType: 'weak_signals',
   };
+}
+
+// ─── Helpers RNE multi-signaux (15 mai 2026) ───────────────────────────────
+
+/**
+ * Match téléphone RNE/PJ ↔ texte page. Normalise les 2 (drop espaces/points/tirets,
+ * +33↔0, parenthèses) puis exact match sur séquence digits 9-10 chiffres.
+ */
+function matchPhoneOnPage(text, rnePhone) {
+  if (typeof text !== 'string' || !rnePhone) return false;
+  const normalizedRne = normalizePhone(rnePhone);
+  if (!normalizedRne || normalizedRne.length < 9) return false;
+  // Extrait toutes les séquences digit ≥9 du texte
+  const candidates = String(text).match(/[\d\s.\-\(\)+]{9,20}/g) || [];
+  for (const c of candidates) {
+    const normalized = normalizePhone(c);
+    if (normalized && normalized.length >= 9 && normalized.endsWith(normalizedRne.slice(-9))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizePhone(raw) {
+  if (!raw) return '';
+  let digits = String(raw).replace(/[^\d]/g, '');
+  // +33 6 12 34 56 78 → 33612345678 → 0612345678 (last 10 if starts 33 et lenght >= 11)
+  if (digits.startsWith('33') && digits.length >= 11) {
+    digits = '0' + digits.slice(2);
+  }
+  // 0033 → enlever 2 digits préfixe
+  if (digits.startsWith('0033') && digits.length >= 12) {
+    digits = '0' + digits.slice(4);
+  }
+  return digits;
+}
+
+/**
+ * Match prénom + nom dirigeant sur la page. Cherche les 2 dans une fenêtre de 100 chars
+ * (page À-propos / Équipe / Contact). Normalisation accents + casse + ponctuation.
+ */
+function matchPersonNameOnPage(text, firstName, lastName) {
+  if (typeof text !== 'string' || !firstName || !lastName) return false;
+  const normText = normalizeForCompare(text);
+  const f = normalizeForCompare(firstName);
+  const l = normalizeForCompare(lastName);
+  if (!f || !l) return false;
+  // Présence des 2 + proximité (window 80 chars autour du prénom)
+  const idxF = normText.indexOf(f);
+  if (idxF < 0) return false;
+  const window = normText.slice(Math.max(0, idxF - 80), Math.min(normText.length, idxF + 80 + f.length));
+  return window.includes(l);
+}
+
+/**
+ * Match fragment adresse RNE sur page. Adresse RNE typique :
+ *   "12 RUE DE LA PAIX 75002 PARIS"
+ *   "BP 42 LA DEFENSE 92800 PUTEAUX"
+ * On extrait le numéro+rue (pattern \d+\s+\w+) ou rue+ville si numéro absent.
+ */
+function matchAddressFragment(text, adresse) {
+  if (typeof text !== 'string' || !adresse) return false;
+  const normText = normalizeForCompare(text);
+  const normAdresse = normalizeForCompare(adresse);
+  if (!normAdresse) return false;
+  // Pattern numéro + rue : "12 rue..."
+  const numStreet = normAdresse.match(/^(\d+\s+[a-z]+(?:\s+[a-z]+){1,4})/);
+  if (numStreet && normText.includes(numStreet[1])) return true;
+  // Fallback : tente d'extraire la rue après "rue/avenue/boulevard/..."
+  const street = normAdresse.match(/\b(rue|avenue|av|boulevard|bd|impasse|allee|chemin|route)\s+([a-z]+(?:\s+[a-z]+){0,3})/);
+  if (street && normText.includes(`${street[1]} ${street[2]}`)) return true;
+  return false;
 }
 
 function companyNameInTitleOrH1(html, companyName) {
@@ -288,10 +444,16 @@ module.exports = {
     domainResemblesName,
     normalizeForCompare,
     levenshtein,
+    matchPhoneOnPage,
+    matchPersonNameOnPage,
+    matchAddressFragment,
+    normalizePhone,
     BASE_WEAK_CONFIDENCE,
     MAX_WEAK_CONFIDENCE,
     NAME_CITY_MATCH_CONFIDENCE,
+    MULTI_SIGNAL_MATCH_CONFIDENCE,
     SIREN_MATCH_CONFIDENCE,
     SIREN_MISMATCH_CONFIDENCE,
+    MISMATCH_RELAXATION_THRESHOLD,
   },
 };

@@ -185,7 +185,15 @@ async function enrichBatchForConsultant(params = {}) {
           siren: cand.siren,
           companyName: cand.companyName,
           ville: cand.ville,
+          codePostal: cand.codePostal,
           dirigeantName: buildDirigeantName(cand.firstName, cand.lastName),
+          // Signaux RNE croisés pour siteValidator (15 mai 2026 — refonte multi-preuves)
+          rne: {
+            telephone: cand.telephone || null,
+            dirigeantFirstName: cand.firstName || null,
+            dirigeantLastName: cand.lastName || null,
+            adresse: cand.adresse || cand.ville || null,
+          },
         },
         { mode: 'on_demand', context },
       );

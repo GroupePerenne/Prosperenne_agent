@@ -191,6 +191,7 @@ async function findWebsite(input = {}, opts = {}) {
           companyName: input.companyName,
           ville: input.ville,
           codePostal: input.codePostal,
+          rne: input.rne,
         },
         validatorOpts,
       ).catch((err) => {

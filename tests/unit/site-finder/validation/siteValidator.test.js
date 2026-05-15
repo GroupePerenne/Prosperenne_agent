@@ -185,3 +185,89 @@ test('_internals.normalizeForCompare — accents et ponctuation', () => {
   assert.equal(normalizeForCompare('Éloïse Dupré'), 'eloise dupre');
   assert.equal(normalizeForCompare('ACME, SAS!'), 'acme sas');
 });
+
+// ──────────────── Multi-signaux RNE (15 mai 2026 — refonte multi-preuves) ────────────────
+
+test('_internals.normalizePhone — formats variés normalisés', () => {
+  const { normalizePhone } = _internals;
+  assert.equal(normalizePhone('0612345678'), '0612345678');
+  assert.equal(normalizePhone('06 12 34 56 78'), '0612345678');
+  assert.equal(normalizePhone('+33 6 12 34 56 78'), '0612345678');
+  assert.equal(normalizePhone('06.12.34.56.78'), '0612345678');
+  assert.equal(normalizePhone('06-12-34-56-78'), '0612345678');
+  assert.equal(normalizePhone('0033612345678'), '0612345678');
+});
+
+test('_internals.matchPhoneOnPage — téléphone RNE retrouvé sur page (formats variés)', () => {
+  const { matchPhoneOnPage } = _internals;
+  const pageText = 'Contact: 06 12 34 56 78 - DAHAN & FILS plomberie Issy';
+  assert.equal(matchPhoneOnPage(pageText, '0612345678'), true);
+  assert.equal(matchPhoneOnPage(pageText, '+33612345678'), true);
+  assert.equal(matchPhoneOnPage('autre tel: 0987654321', '0612345678'), false);
+});
+
+test('_internals.matchPersonNameOnPage — prénom + nom dans window 80 chars', () => {
+  const { matchPersonNameOnPage } = _internals;
+  const pageText = 'Notre équipe est dirigée par Jean Dupont, fondateur en 1998.';
+  assert.equal(matchPersonNameOnPage(pageText, 'Jean', 'Dupont'), true);
+  assert.equal(matchPersonNameOnPage(pageText, 'Jean', 'Martin'), false);
+});
+
+test('_internals.matchAddressFragment — numéro + rue', () => {
+  const { matchAddressFragment } = _internals;
+  const pageText = 'Adresse: 12 rue de la paix 75002 paris';
+  assert.equal(matchAddressFragment(pageText, '12 RUE DE LA PAIX 75002 PARIS'), true);
+  assert.equal(matchAddressFragment(pageText, '5 AVENUE DES CHAMPS 75008 PARIS'), false);
+});
+
+test('_internals.matchAddressFragment — fallback rue sans numéro', () => {
+  const { matchAddressFragment } = _internals;
+  const pageText = 'avenue de la république';
+  assert.equal(matchAddressFragment(pageText, 'AVENUE DE LA REPUBLIQUE'), true);
+});
+
+test('computeWeakSignals — phone match RNE +0.20', () => {
+  const { computeWeakSignals, BASE_WEAK_CONFIDENCE } = _internals;
+  const r = computeWeakSignals({
+    concatenated: 'Tel 06 12 34 56 78 ACME',
+    homePage: { text: '<title>autre</title>' },
+    companyName: 'ACME',
+    ville: 'autre',
+    siteUrl: 'https://random.fr',
+    rne: { telephone: '0612345678' },
+  });
+  assert.ok(r.signals.includes('rne_phone_match'));
+  assert.ok(r.confidence >= BASE_WEAK_CONFIDENCE + 0.20 - 0.001);
+});
+
+test('computeWeakSignals — phone + dirigeant RNE → multi_signal_match 0.90', () => {
+  const { computeWeakSignals, MULTI_SIGNAL_MATCH_CONFIDENCE } = _internals;
+  const r = computeWeakSignals({
+    concatenated: 'Tel 06 12 34 56 78 - équipe : Jean Dupont fondateur',
+    homePage: { text: '<title>random</title>' },
+    companyName: 'ACME',
+    ville: 'autre',
+    siteUrl: 'https://random.fr',
+    rne: {
+      telephone: '0612345678',
+      dirigeantFirstName: 'Jean',
+      dirigeantLastName: 'Dupont',
+    },
+  });
+  assert.equal(r.confidence, MULTI_SIGNAL_MATCH_CONFIDENCE);
+  assert.equal(r.multiSignalMatch, true);
+  assert.ok(r.signals.includes('multi_signal_rne_bonus'));
+});
+
+test('computeWeakSignals — sans rne reste comportement legacy', () => {
+  const { computeWeakSignals, NAME_CITY_MATCH_CONFIDENCE } = _internals;
+  const r = computeWeakSignals({
+    concatenated: 'ACME SAS Lyon 69003',
+    homePage: { text: '<title>ACME SAS</title>' },
+    companyName: 'ACME SAS',
+    ville: 'Lyon',
+    siteUrl: 'https://acme.fr',
+  });
+  assert.equal(r.confidence, NAME_CITY_MATCH_CONFIDENCE);
+  assert.equal(r.nameCityMatch, true);
+});
