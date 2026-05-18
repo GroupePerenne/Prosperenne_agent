@@ -432,6 +432,20 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
     });
     // Increment compteur post-succès envoi (best effort, swallow toute erreur).
     incrementSentToday(identity.email).catch(() => {});
+    // Sprint 2 mémoire prospect (18 mai 2026) — record outbound J0 dans
+    // DavidMemory pour permettre à David de relire l'historique quand le
+    // prospect répond (couvert par Sprint 1 hook inbound + injection prompt
+    // dans routeMessage). Best effort fire-and-forget.
+    require('./storage-tables/davidMemory').recordMessage({
+      interlocutorEmail: lead.email,
+      direction: 'outbound',
+      mailbox: identity.email,
+      subject: j0.objet,
+      body: j0.corps,
+      messageId: sendResult.internetMessageId || sendResult.graphMessageId,
+      conversationId: sendResult.conversationId,
+      sentAt: new Date().toISOString(),
+    }).catch(() => {});
     if (dealId || personId) {
       await pipedrive.logEmailSent({
         dealId, personId, sender: identity.prenom, day: 'J0',
@@ -527,6 +541,19 @@ async function sendScheduledStep(job) {
     // Pas de replyTo : cf. bootstrapSequence (positionnement éthique).
   });
   incrementSentToday(identity.email).catch(() => {});
+
+  // Sprint 2 mémoire prospect (18 mai 2026) — record outbound relance
+  // J+14/J+28 dans DavidMemory. Best effort fire-and-forget.
+  require('./storage-tables/davidMemory').recordMessage({
+    interlocutorEmail: lead.email,
+    direction: 'outbound',
+    mailbox: identity.email,
+    subject: objet,
+    body: corps,
+    messageId: sendResult.internetMessageId || sendResult.graphMessageId,
+    conversationId: sendResult.conversationId,
+    sentAt: new Date().toISOString(),
+  }).catch(() => {});
 
   if (dealId || personId) {
     await pipedrive.logEmailSent({

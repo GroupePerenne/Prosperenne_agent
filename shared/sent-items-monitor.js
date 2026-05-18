@@ -71,9 +71,17 @@ function hashStable(str) {
  * @param {Array<{mailbox, recipient, subject, sentDateTime, messageId?}>} messages
  * @returns {Map<string, {key, messages, count}>}
  */
+function isInternalMonitoringMessage(message) {
+  const subject = String(message && message.subject || '').toLowerCase();
+  return subject.includes('sentitemsmonitor')
+    || subject.includes('interne prospérenne')
+    || subject.includes('interne prosperenne');
+}
+
 function groupBySimilarity(messages) {
   const groups = new Map();
   for (const m of messages) {
+    if (isInternalMonitoringMessage(m)) continue;
     const key = makeGroupKey({ mailbox: m.mailbox, recipient: m.recipient, subject: m.subject });
     const existing = groups.get(key.hash);
     if (existing) {
@@ -157,6 +165,7 @@ function escape(s) {
 }
 
 module.exports = {
+  isInternalMonitoringMessage,
   normalizeSubject,
   makeGroupKey,
   hashStable,

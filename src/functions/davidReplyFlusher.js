@@ -95,6 +95,24 @@ async function sendFnFromEntity(entity) {
     recordOutboundSend(conversationId, { subject: entity.subject }).catch(() => {});
   }
 
+  // Sprint 1 mémoire David (18 mai 2026) — record outbound dans DavidMemory.
+  // Best effort, fire-and-forget : ne JAMAIS bloquer un envoi déjà parti.
+  const recipientForMemory = Array.isArray(entity.to) ? entity.to[0] : entity.to;
+  if (recipientForMemory) {
+    require('../../shared/storage-tables/davidMemory')
+      .recordMessage({
+        interlocutorEmail: recipientForMemory,
+        direction: 'outbound',
+        mailbox: entity.mailbox,
+        subject: entity.subject,
+        body: entity.html,
+        messageId: result && (result.internetMessageId || result.graphMessageId || entity.originalMessageId),
+        conversationId: entity.originalConversationId || (result && result.conversationId),
+        sentAt: new Date().toISOString(),
+      })
+      .catch(() => {});
+  }
+
   return result;
 }
 

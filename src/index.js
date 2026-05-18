@@ -17,3 +17,4 @@ require('./functions/runLeadSelectorForConsultant');
 require('./functions/nightlyMonteCarloSmoke');
 require('./functions/leadSelectorJobQueue');
 require('./functions/dailyLeadSelectorRefresh');
+require('./functions/diagExternalApis');

@@ -135,8 +135,48 @@ function _serialize(entity) {
   };
 }
 
+/**
+ * Sprint 3 mémoire COMEX (18 mai 2026) — recherche une escalation envoyée par
+ * son conversationId Graph. Permet à routeMessage de matcher une réponse COMEX
+ * entrante à l'escalation originelle pour écrire l'apprentissage en Mem0
+ * user_id=charli.
+ *
+ * Pas de filtre PK : on scanne au mieux les 500 dernières actions. Best effort.
+ *
+ * @param {string} conversationId
+ * @returns {Promise<{consultantEmail, type, summary, metadata, at}|null>}
+ */
+async function findEscalationByConversationId(conversationId) {
+  if (!conversationId) return null;
+  const client = getTableClient(TABLE_NAME);
+  if (!client) return null;
+
+  try {
+    await ensureTable(client, TABLE_NAME);
+    const iterator = client.listEntities({
+      queryOptions: { filter: `type eq 'escalation_sent'` },
+    });
+    let scanned = 0;
+    for await (const e of iterator) {
+      scanned++;
+      if (scanned > 500) break;
+      let meta = null;
+      if (e.metadata) {
+        try { meta = JSON.parse(e.metadata); } catch { /* ignore */ }
+      }
+      if (meta && meta.conversationId === conversationId) {
+        return _serialize(e);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   recordAction,
   listActionsByConsultant,
+  findEscalationByConversationId,
   KNOWN_TYPES,
 };

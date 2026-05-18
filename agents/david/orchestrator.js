@@ -29,11 +29,12 @@ const martin = require('../martin/worker');
 const mila = require('../mila/worker');
 const pipedrive = require('../../shared/pipedrive');
 const { getMem0 } = require('../../shared/adapters/memory/mem0');
-const { recordAction: recordDavidAction } = require('../../shared/storage-tables/davidActions');
+const { recordAction: recordDavidAction, findEscalationByConversationId } = require('../../shared/storage-tables/davidActions');
 const { tryAcquireLock, releaseLock } = require('../../shared/storage-tables/locks');
 const { markProcessed } = require('../../shared/storage-tables/davidProcessedMessages');
 const { enqueuePendingReply } = require('../../shared/storage-tables/davidPendingReplies');
 const { computeScheduledAt, getJitterWindowForSenderType } = require('../../shared/jitter');
+const davidMemory = require('../../shared/storage-tables/davidMemory');
 
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -216,6 +217,22 @@ async function routeMessage(msg, { context } = {}) {
   const fromAddress = msg.from?.emailAddress?.address || 'inconnu';
   const bodyText = (msg.body?.content || msg.bodyPreview || '').replace(/<[^>]+>/g, '').slice(0, 3000);
 
+  // Sprint 1 mémoire David (18 mai 2026) — record inbound dans DavidMemory
+  // AVANT classification : si Claude fail, on conserve quand même la trace
+  // du message reçu pour la mémoire future. Best effort, fire-and-forget.
+  if (fromAddress && fromAddress !== 'inconnu') {
+    davidMemory.recordMessage({
+      interlocutorEmail: fromAddress,
+      direction: 'inbound',
+      mailbox: msg.mailbox,
+      subject: msg.subject,
+      body: msg.body?.content || msg.bodyPreview,
+      messageId: msg.id,
+      conversationId: msg.conversationId,
+      sentAt: msg.sentDateTime || msg.receivedDateTime,
+    }).catch(() => {});
+  }
+
   // Plan v3.1 Pilier 2 — Sujet 5 (David lit le fil compacté avant de
   // générer). On récupère la conversation Graph via conversationId pour
   // donner du contexte à Claude. Best effort : si Graph fail ou pas de
@@ -225,18 +242,31 @@ async function routeMessage(msg, { context } = {}) {
   // (un fil long ne doit pas exploser le contexte Claude).
   const threadCompacted = await buildThreadContext(msg).catch(() => '');
 
+  // Sprint 1 mémoire David (18 mai 2026) — mémoire perpétuelle backée
+  // Azure Storage, brute intégrale, inter-thread. Complémente le fil
+  // Graph (Sujet 5) qui ne couvre QUE le thread courant. Ici on récupère
+  // TOUS les échanges historiques avec ce correspondant, peu importe le
+  // thread. Permet à David de ne pas re-poser des questions déjà
+  // répondues dans un thread précédent (cas incident Johnny 18/05).
+  const memoryMessages = await davidMemory.listMemoryFor(fromAddress, { limit: 100 }).catch(() => []);
+  const memoryBlock = davidMemory.formatMemoryForPrompt(memoryMessages);
+
   const prompt = `Message reçu dans la boîte david@perennereseau.fr :
 
 DE : ${fromAddress}
-OBJET : ${msg.subject}${threadCompacted ? `
+OBJET : ${msg.subject}${memoryBlock ? `
 
-CONTEXTE DU FIL (échanges antérieurs, du plus ancien au plus récent) :
+${memoryBlock}` : ''}${threadCompacted ? `
+
+CONTEXTE DU FIL COURANT (échanges du même thread, plus précis que la mémoire ci-dessus) :
 ${threadCompacted}` : ''}
 
 CORPS DU MESSAGE COURANT :
 """
 ${bodyText}
 """
+
+IMPORTANT : avant de générer reply_draft, relis la MÉMOIRE et le CONTEXTE DU FIL. Ne re-pose JAMAIS une question dont la réponse est déjà donnée dans l'historique, et ne redemande pas une information déjà fournie. Si tu hésites, baisse la confidence plutôt que de produire un reply_draft qui ignore l'historique.
 
 Classe ce message. Réponds UNIQUEMENT en JSON strict, sans texte autour :
 {
@@ -272,6 +302,12 @@ Règles :
   if (decision.sender_type === 'prospect') {
     return handleProspectReply(msg, decision, { context });
   }
+
+  // Sprint 3 mémoire COMEX (18 mai 2026) — détection d'une réponse COMEX à une
+  // escalation David. Si le sender est Paul/Constantin/Olivier/direction@ ET le
+  // conversationId match une escalation_sent existante → on capture
+  // l'apprentissage en Mem0 user_id=charli. Best effort fire-and-forget.
+  captureComexLearningIfApplicable(msg, decision, { context }).catch(() => {});
 
   // Consultant / internal : enqueue la réponse avec jitter humain (15-45 min
   // en heures ouvrées). Pas d'envoi instantané — voir shared/jitter.js doctrine.
@@ -681,6 +717,53 @@ async function alertConsultant(consultantEmail, msg, decision, classe, _opts = {
   }).catch(() => null);
 }
 
+// Sprint 3 mémoire COMEX (18 mai 2026) — liste des emails autorisés à
+// trancher une escalation et dont la réponse doit être capturée comme
+// apprentissage transverse Charli.
+const COMEX_EMAILS = new Set([
+  'paul.rudler@oseys.fr',
+  'constantin.picoron@oseys.fr',
+  'olivier@oseys.fr',
+  'direction@oseys.fr',
+  'direction@perennereseau.fr',
+]);
+
+async function captureComexLearningIfApplicable(msg, decision, { context } = {}) {
+  if (!msg || !decision) return null;
+  const fromAddress = (msg.from?.emailAddress?.address || '').toLowerCase();
+  if (!COMEX_EMAILS.has(fromAddress)) return null;
+  if (decision.sender_type !== 'internal' && decision.sender_type !== 'consultant') return null;
+  if (!msg.conversationId) return null;
+
+  const escalation = await findEscalationByConversationId(msg.conversationId);
+  if (!escalation) return null; // Pas une réponse à escalation tracée
+
+  const mem0 = getMem0(context);
+  if (!mem0 || typeof mem0.storeCharliLearning !== 'function') return null;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const contexte = (escalation.metadata && escalation.metadata.contexte) || '(contexte non capturé)';
+  const propositions = (escalation.metadata && escalation.metadata.propositions) || [];
+  const recommendation = (escalation.metadata && escalation.metadata.recommendation) || '(pas de reco)';
+  const replyBody = (msg.body?.content || msg.bodyPreview || '').replace(/<[^>]+>/g, '').trim().slice(0, 2000);
+  const replySummary = decision.resume_humain || '(résumé non extrait)';
+
+  const content =
+    `[${today} source: david-escalation-comex-decision] ` +
+    `CONTEXTE ESCALATION DAVID : ${contexte} ` +
+    `(propositions: ${propositions.join(' | ')}; reco David: ${recommendation}). ` +
+    `DÉCISION COMEX par ${fromAddress} : ${replySummary}. ` +
+    `Verbatim réponse : """${replyBody}"""`;
+
+  return mem0.storeCharliLearning(content, {
+    source: 'david-escalation-comex-decision',
+    comex_member: fromAddress,
+    conversationId: msg.conversationId,
+    escalation_subject: escalation.metadata && escalation.metadata.subject,
+    decided_at: today,
+  }).catch(() => null);
+}
+
 async function escalateToDirection({ subject, contexte, extraitMessage, propositions, recommendation, consultantEmail }) {
   const escalationTo = process.env.ESCALATION_EMAIL || 'direction@perennereseau.fr';
   // BL-52 (11 mai 2026) — Posture "service Prospérenne" : on n'inquiète pas
@@ -696,12 +779,17 @@ async function escalateToDirection({ subject, contexte, extraitMessage, proposit
     `\n\nRecommandation David : ${recommendation}\n\n` +
     `Consultant concerné : ${consultantEmail || 'non identifié'} (pas notifié — escalation interne).\n` +
     `Attente : validation humaine avant toute action.`;
-  await sendMail({
+  const sendResult = await sendMail({
     from: process.env.DAVID_EMAIL,
     to: escalationTo,
     subject: `[ESCALATION] ${subject}`,
     html: wrapHtml(body),
   });
+
+  // Sprint 3 mémoire COMEX (18 mai 2026) — capture conversationId d'envoi
+  // pour pouvoir matcher la réponse COMEX (Paul/Constantin/Olivier) ultérieure
+  // dans routeMessage et écrire l'apprentissage en Mem0 user_id=charli.
+  const escalationConversationId = sendResult && sendResult.conversationId;
 
   // Best-effort tracking PWA-M Cycle 1 — couvre BL-41 (escalations jamais
   // trackées en table dédiée jusqu'au 4 mai 2026).
@@ -715,10 +803,14 @@ async function escalateToDirection({ subject, contexte, extraitMessage, proposit
         contexte,
         propositions,
         recommendation,
+        conversationId: escalationConversationId,
+        extraitMessage: extraitMessage ? extraitMessage.slice(0, 600) : null,
       },
       at: new Date().toISOString(),
     }).catch(() => null);
   }
+
+  return { sent: true, conversationId: escalationConversationId };
 }
 
 function wrapHtml(text) {
