@@ -64,6 +64,18 @@ const PROGRESS_INTERVAL = Number(process.env.ENRICH_PROGRESS_LOG_INTERVAL || 50)
 const RNE_CHECK_TTL_DAYS = Number(process.env.RNE_CHECK_TTL_DAYS || 30);
 const FETCH_TIMEOUT_MS = 6000;
 
+// Priorité dépts pilote (ADR-0006 19/05) — par défaut 75/92/38 (Morgane + Johnny).
+// Sans cette priorité, le scan lexicographique Azure Storage Table arrive aux
+// dépts cibles après 10-30 jours (cas (c) Phase 1.4 plan V3 confirmé : 4 104
+// SIRENs enrichis dépt 13 Marseille, 0 sur 75/92/38). Pour scan global complet
+// (Prospérenne future), mettre AIRWORKER_DEPT_PRIORITY=''.
+const DEPT_PRIORITY = (process.env.AIRWORKER_DEPT_PRIORITY === undefined
+  ? '75,92,38'
+  : process.env.AIRWORKER_DEPT_PRIORITY)
+  .split(',')
+  .map((d) => d.trim())
+  .filter(Boolean);
+
 const tableClient = TableClient.fromConnectionString(CONNECTION, TABLE_NAME);
 
 // Stats globales (rolling)
@@ -198,9 +210,17 @@ async function* iterateLeadBase() {
   // listEntities streaming avec discriminant I-2 : ne lit que les entrées v1
   // conformes (schema_version='1.0'). Le legacy 12,8M sans schema_version est
   // ignoré — il sera promu via le cron SIRENE bulk France entière mensuel.
+  // Filter de base I-2 (discriminant origine SIRENE v1) + filter PartitionKey
+  // prioritaire si configuré (ADR-0006). Sans ce filter, scan lexicographique
+  // global → met 10-30 jours à atteindre dépts cibles pilote (cas (c) Phase 1.4).
+  let filter = "schema_version eq '1.0'";
+  if (DEPT_PRIORITY.length > 0) {
+    const ored = DEPT_PRIORITY.map((d) => `PartitionKey eq '${d}'`).join(' or ');
+    filter = `(${filter}) and (${ored})`;
+  }
   const iter = tableClient.listEntities({
     queryOptions: {
-      filter: "schema_version eq '1.0'",
+      filter,
       // Fetch entités avec dirigeants null OU rneCheckedAt expiré.
       // Note v1 : rneCheckedAt camelCase (post migration Bloc 3). Pendant
       // les 30j de rétrocompat, on lit aussi rne_checked_at legacy.
