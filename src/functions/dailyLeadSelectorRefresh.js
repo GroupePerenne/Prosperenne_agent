@@ -38,6 +38,13 @@ async function postLeadSelectorJob(queueClient, consultantId, batchSize) {
   const jobId = `daily-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const payload = JSON.stringify({
     jobId,
+    // Fix 18 mai 2026 — briefId distinct du consultantId pour idempotence BL-52.
+    // Sans ce champ, leadSelectorJobQueue retombe sur briefId=consultantId
+    // (fallback ligne 59) → RowKey LeadSelectorRuns stable → skipped_duplicate
+    // à chaque déclenchement quotidien. Le cron a perdu 4 jours ouvrés (14-18/05).
+    // jobId est unique par construction (timestamp + random) donc parfait pour
+    // identifier UN run unique du cron.
+    briefId: jobId,
     consultantId,
     batchSize,
     dryRun: false,
