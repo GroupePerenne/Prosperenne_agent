@@ -701,11 +701,16 @@ async function selectCandidatesForConsultant(params = {}) {
 
     // Extraction candidate (sans filtre email) sur le pool enrichi triés
     let excludedNoDirigeant = 0;
+    const excludedNoDirigeantSirens = [];
+    const EXCLUDED_SIRENS_SAMPLE_CAP = 100;
     const enriched = [];
     for (const e of toEnrich) {
       const cand = extractCandidateFromEntity(e);
       if (!cand) {
         excludedNoDirigeant++;
+        if (excludedNoDirigeantSirens.length < EXCLUDED_SIRENS_SAMPLE_CAP && e && e.siren) {
+          excludedNoDirigeantSirens.push(String(e.siren));
+        }
         continue;
       }
       enriched.push({ entity: e, candidate: cand });
@@ -767,6 +772,7 @@ async function selectCandidatesForConsultant(params = {}) {
         candidatesCount,
         excludedByRules: excluded.length,
         excludedNoDirigeant,
+        excludedNoDirigeantSirens,
         excludedNoGps,
         excludedAlreadyInPipe,
         returned: selected.length,
