@@ -261,6 +261,60 @@ async function getOrgNamesWithOpenDealInOurPipe() {
   return names;
 }
 
+/**
+ * Liste les deals open du pipeline 28 dont le stage est `stageId` (default
+ * 251 NEW) ET dont le `add_time` est plus ancien que `daysThreshold` (default
+ * 14 jours). Sert au monitor `dealsStuckStageMonitor` (Étape 5.3 plan
+ * branchement CTO 19/05) qui alerte si des deals restent figés sans progression.
+ *
+ * Filtre côté client : l'API Pipedrive /deals retourne parfois des deals
+ * d'autres pipelines même avec pipeline_id en query (cf. note 12/05 PM dans
+ * getOrgIdentifiersWithOpenDealInOurPipe).
+ *
+ * @param {Object} [opts]
+ * @param {number} [opts.daysThreshold=14]  seuil en jours
+ * @param {number} [opts.stageId=251]       stage NEW Prospérenne
+ * @returns {Promise<Array<{id, title, org, person, owner, addTime, daysStuck}>>}
+ */
+async function listStuckDealsInOurPipe({ daysThreshold = 14, stageId = 251 } = {}) {
+  const ourPipe = Number(process.env.PIPEDRIVE_PIPELINE_ID);
+  if (!Number.isFinite(ourPipe)) return [];
+
+  const stuck = [];
+  let start = 0;
+  const PAGE = 500;
+  const thresholdMs = Date.now() - daysThreshold * 24 * 3600 * 1000;
+
+  for (let i = 0; i < 20; i++) {
+    const data = await call('/deals', {
+      query: { pipeline_id: ourPipe, status: 'open', limit: PAGE, start },
+    });
+    if (!Array.isArray(data) || data.length === 0) break;
+    for (const d of data) {
+      if (d.pipeline_id !== ourPipe) continue;
+      if (d.stage_id !== stageId) continue;
+      // Pipedrive add_time format : "2026-05-14 16:18:12" (UTC implicite)
+      if (!d.add_time) continue;
+      const addedMs = Date.parse(`${d.add_time.replace(' ', 'T')}Z`);
+      if (!Number.isFinite(addedMs)) continue;
+      if (addedMs > thresholdMs) continue; // pas encore stuck
+      const daysStuck = Math.floor((Date.now() - addedMs) / (24 * 3600 * 1000));
+      stuck.push({
+        id: d.id,
+        title: d.title || '',
+        org: (d.org_id && d.org_id.name) || '',
+        person: (d.person_id && d.person_id.name) || '',
+        owner: (d.user_id && d.user_id.email) || (d.user_id && d.user_id.name) || '',
+        addTime: d.add_time,
+        daysStuck,
+      });
+    }
+    if (data.length < PAGE) break;
+    start += PAGE;
+  }
+  return stuck;
+}
+
 /** Récupère l'email d'un utilisateur Pipedrive par son user_id (= owner d'un deal) */
 async function getUserEmail(userId) {
   if (!userId) return null;
@@ -447,6 +501,7 @@ module.exports = {
   findExistingDealsAcrossAllPipes,
   findOpenDealsForPersonInOurPipe,
   getOrgNamesWithOpenDealInOurPipe,
+  listStuckDealsInOurPipe,
   getUserEmail,
   markLeadForRetry,
   markLeadPermanentOptOut,

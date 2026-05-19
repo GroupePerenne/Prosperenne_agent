@@ -19,3 +19,4 @@ require('./functions/nightlySmokeE2E');
 require('./functions/leadSelectorJobQueue');
 require('./functions/dailyLeadSelectorRefresh');
 require('./functions/diagExternalApis');
+require('./functions/dealsStuckStageMonitor');
