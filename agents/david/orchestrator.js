@@ -35,6 +35,7 @@ const { markProcessed } = require('../../shared/storage-tables/davidProcessedMes
 const { enqueuePendingReply } = require('../../shared/storage-tables/davidPendingReplies');
 const { computeScheduledAt, getJitterWindowForSenderType } = require('../../shared/jitter');
 const davidMemory = require('../../shared/storage-tables/davidMemory');
+const { isInternalSender, detectColdOutreachSignals } = require('../../shared/coldOutreachDetector');
 
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -231,6 +232,55 @@ async function routeMessage(msg, { context } = {}) {
       conversationId: msg.conversationId,
       sentAt: msg.sentDateTime || msg.receivedDateTime,
     }).catch(() => {});
+  }
+
+  // ─── Filtre cold outreach pré-classify (ADR-0005, 19 mai 2026) ──────────
+  // Mesure factuelle mai 2026 : 8 cold outreach anglais (domaines .top/.info,
+  // codes tracking "RYEH2BT NBH29P6") classés "prospect positive/question" par
+  // Sonnet 4.6 → 8 auto-replies sorties depuis martin@/mila@/david@perennereseau.fr.
+  // Niveau A déterministe : pas de deal Pipedrive ouvert ET sender non interne
+  //                         → spam, skip Claude.
+  // Niveau B heuristiques : tracking codes / TLD suspect / List-Unsubscribe
+  //                         → spam même si A laisserait passer (défense profondeur).
+  // Cf. docs/adr/ADR-0005-filtre-cold-outreach-pre-classify-david.md
+  if (fromAddress && fromAddress !== 'inconnu') {
+    const lowerFrom = fromAddress.toLowerCase();
+    const internal = isInternalSender(lowerFrom);
+    if (!internal) {
+      const dealCtx = await findDealContext(lowerFrom).catch(() => ({ dealId: null }));
+      const noDeal = !dealCtx || dealCtx.dealId === null;
+      const coldSignals = detectColdOutreachSignals(
+        msg.subject,
+        lowerFrom,
+        { internetMessageHeaders: msg.internetMessageHeaders },
+      );
+      if (noDeal || coldSignals.isCold) {
+        const reasons = [];
+        if (noDeal) reasons.push('no_pipedrive_deal');
+        if (coldSignals.isCold) reasons.push(...coldSignals.signals);
+        warnLog(context, `[routeMessage] cold_outreach_filtered from=${fromAddress} subject="${(msg.subject || '').slice(0, 80)}" reasons=${reasons.join(',')}`);
+        await recordDavidAction({
+          consultantEmail: msg.mailbox || process.env.DAVID_EMAIL,
+          type: 'spam_filtered',
+          summary: `cold_outreach_filtered from=${fromAddress}`,
+          metadata: {
+            fromAddress,
+            subject: msg.subject,
+            reasons,
+            conversationId: msg.conversationId,
+            adr: 'ADR-0005',
+          },
+        }).catch(() => {});
+        return {
+          classe: 'spam',
+          sender_type: 'spam',
+          prospect_class: null,
+          confidence: 1.0,
+          filtered: true,
+          filterReasons: reasons,
+        };
+      }
+    }
   }
 
   // Plan v3.1 Pilier 2 — Sujet 5 (David lit le fil compacté avant de

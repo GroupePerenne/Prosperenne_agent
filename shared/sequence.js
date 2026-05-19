@@ -195,6 +195,31 @@ N'écris JAMAIS quoi que ce soit qui dénigre, minimise ou oppose la démarche P
 ## Calendrier de séquence à générer
 ${SCHEDULE.map(s => `- ${s.jour} (${s.offsetBusinessDays} jours ouvrés) — ${s.role.toUpperCase()} : ${s.brief}`).join('\n')}
 
+## Objet du mail — règle absolue (cardinal délivrabilité)
+**Chaque objet (J0, J+14, J+28) DOIT contenir le nom de l'entreprise du prospect**, lisible et reconnaissable au premier coup d'œil. C'est la condition d'ouverture : un dirigeant qui voit le nom de sa propre entreprise dans l'objet ouvre. Un objet générique est ignoré.
+
+Règles concrètes :
+- Le nom complet de l'entreprise (ou son nom commercial usuel s'il est plus court et plus reconnaissable) figure dans l'objet, écrit naturellement (pas TOUT EN MAJUSCULES sauf si c'est ainsi qu'il s'écrit, pas tronqué, pas mis dans un sigle obscur).
+- Variations naturelles autorisées au choix selon ce qui sonne le plus humain pour ce prospect :
+  - "{NomEntreprise}, {accroche courte}"
+  - "{NomEntreprise} : {accroche courte}"
+  - "{accroche concrète qui mentionne NomEntreprise}"
+  - "Une question sur {NomEntreprise}" (uniquement si question authentique posée dans le corps)
+- Longueur cible : 40-65 caractères. Maximum 80. Lisibilité smartphone notification = priorité.
+- Les 3 objets J0/J+14/J+28 contiennent **chacun** le nom de l'entreprise, mais avec des accroches **différentes** (cohérence stylistique sans répétition mot pour mot).
+
+INTERDIT pour l'objet :
+- Tiret cadratin "—" et demi-cadratin "–" (rappel règle d'honneur §12, signature stylistique LLM). Si vous séparez nom et accroche, utilisez **virgule**, **deux-points** ou **parenthèses**, jamais "—" ni "–".
+- Objets génériques type "Un mot rapide", "Une question", "Bonjour", "Prospérenne", "Pérenne se présente", "Quelques minutes ?" — tout ce qui pourrait être envoyé à n'importe qui.
+- Préfixes type "[Pérenne]", "[Pilotage]", "Important :" — déjà filtrés par les inbox.
+- Émojis dans l'objet.
+- Tout indice IA / automatisation / "généré par".
+
+Exemples positifs (à incarner, pas à copier) :
+- "Bâtiments Durand, vos marges en sortie d'été"
+- "Saison BTP qui démarre chez Plomberie Lacroix : un regard extérieur ?"
+- "Électricité Vidal : un copilote pour les arbitrages d'automne"
+
 ## Format de sortie OBLIGATOIRE
 Réponds UNIQUEMENT en JSON valide, aucun texte autour. Format exact :
 {
@@ -205,6 +230,7 @@ Réponds UNIQUEMENT en JSON valide, aucun texte autour. Format exact :
   ]
 }
 - Les 3 steps dans l'ordre J0, J+14, J+28
+- **Chaque "objet" contient le nom de l'entreprise du prospect** (cf. règle Objet du mail ci-dessus). Validation interne avant de répondre : relire chaque objet et vérifier que le nom d'entreprise y figure, sans tiret cadratin "—" ni "–".
 - Chaque "corps" utilise \\n pour les sauts de ligne
 - NE METS PAS de signature dans le corps, elle est ajoutée automatiquement
 - Utilise vraiment le prénom du lead, pas un "Bonjour [Prénom]" générique
@@ -270,9 +296,18 @@ function buildUserPrompt({ lead, enrichments, prospectProfile, angle }) {
     ? `\n\nPATTERNS SECTORIELS OBSERVÉS (indicatif, statistiques passées — ne pas les mentionner au prospect) :\n${formatMemories(enrichments.patternMemories, 'pattern')}`
     : '';
 
-  return `${base}${companyBlock}${dmBlock}${angleRappel}${prospect}${patterns}
+  // Rappel cardinal délivrabilité — nom entreprise dans l'objet
+  // (cf. system prompt "Objet du mail — règle absolue"). Si lead.entreprise
+  // n'est pas exploitable (vide), on bascule sur prénom + ville pour ne
+  // pas forcer un objet bancal.
+  const nomEntreprise = (lead.entreprise || '').trim();
+  const rappelObjet = nomEntreprise
+    ? `\n\nRAPPEL OBJET : les 3 objets J0/J+14/J+28 DOIVENT contenir le nom "${nomEntreprise}" lisible et reconnaissable (cf. règle "Objet du mail" du system prompt). Sans tiret cadratin "—" ni "–".`
+    : `\n\nRAPPEL OBJET : nom entreprise absent — privilégier un objet ancré sur ${lead.prenom}${lead.ville ? ` à ${lead.ville}` : ''} et le signal observé. Sans tiret cadratin "—" ni "–".`;
 
-Génère les 3 messages de la séquence (J0/J+14/J+28). Sois naturel, pertinent, ancré sur la réalité du métier et du contexte du lead. Respecte la modulation DISC + l'angle d'entrée + les anti-patterns du system prompt.`;
+  return `${base}${companyBlock}${dmBlock}${angleRappel}${prospect}${patterns}${rappelObjet}
+
+Génère les 3 messages de la séquence (J0/J+14/J+28). Sois naturel, pertinent, ancré sur la réalité du métier et du contexte du lead. Respecte la modulation DISC + l'angle d'entrée + les anti-patterns du system prompt + la règle Objet du mail.`;
 }
 
 // ─── formatMemories — anti-injection + wrapping Mem0 (inchangé) ────────────
