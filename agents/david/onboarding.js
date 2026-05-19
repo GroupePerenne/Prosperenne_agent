@@ -21,6 +21,10 @@ const { recordAction } = require('../../shared/storage-tables/davidActions');
  */
 async function sendOnboardingEmail({ consultant }) {
   const formBase = process.env.PUBLIC_FORMS_BASE_URL || 'https://groupeperenne.github.io/Pereneo_agents/forms';
+  // Path GitHub Pages : on garde formulaire-oseys.html tant que le rename
+  // côté repo GitHub Pages n'est pas fait (chantier séparé côté Paul / autre
+  // instance). Le nom du fichier HTML public est invisible côté consultant
+  // (lien cliquable, pas affiché en clair).
   const formUrl = `${formBase}/formulaire-oseys.html?` + new URLSearchParams({
     nom: `${consultant.prenom} ${consultant.nom || ''}`.trim(),
     email: consultant.email,
@@ -46,7 +50,7 @@ async function sendOnboardingEmail({ consultant }) {
   const result = await sendMail({
     from: process.env.DAVID_EMAIL,
     to: consultant.email,
-    subject: `Bienvenue dans le réseau OSEYS, ${consultant.prenom}`,
+    subject: `Bienvenue dans le réseau Pérenne, ${consultant.prenom}`,
     html,
   });
 
@@ -63,7 +67,7 @@ async function sendOnboardingEmail({ consultant }) {
       consultantEmail: consultant.email,
       type: 'onboarding_sent',
       summary: `Mail d'onboarding David envoyé à ${consultantName}`,
-      metadata: { from: process.env.DAVID_EMAIL || 'david@oseys.fr' },
+      metadata: { from: process.env.DAVID_EMAIL || 'david@perennereseau.fr' },
       at: sentAt,
     }).catch(() => null),
   ]);

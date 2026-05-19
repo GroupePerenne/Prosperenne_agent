@@ -34,8 +34,8 @@ const CORS_HEADERS = {
  * effectif, zone, zone_rayon, adresse, prospecteur, ville, email).
  *
  * Enrichi v2 chantier VP socle (1er mai 2026, cf. agents/david/value-proposition.md
- * + shared/oseys-vp/) : 5 nouveaux champs pour permettre à Sonnet 4.6 de
- * projeter la VP OSEYS de manière personnalisée par consultant :
+ * + shared/perenne-vp/) : 5 nouveaux champs pour permettre à Sonnet 4.6 de
+ * projeter la VP Pérenne de manière personnalisée par consultant :
  *   - offre_choisie : 'lead' | 'rdv-cale' (offre commerciale distribuée par David)
  *   - mise_en_copie_consultant : boolean (consultant en CC sur les échanges)
  *   - cible_specifique : nuance optionnelle de cible (secteur précis, taille,
@@ -110,7 +110,7 @@ async function handleQualification(request, context, deps = {}) {
 
     const briefId = `brief_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    // TODO(Tranche 8): remplacer par slug interne stable (ex: oseys-morgane-dupont).
+    // TODO(Tranche 8): remplacer par slug interne stable (ex: perenne-morgane-dupont).
     // Voir ARCHITECTURE §3.1 type 2.
     const consultantId = brief.email.toLowerCase();
     const consultantMemory = buildConsultantMemory(brief);

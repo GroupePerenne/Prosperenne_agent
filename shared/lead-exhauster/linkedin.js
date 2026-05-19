@@ -31,7 +31,7 @@
 const { normalizeNamePart } = require('./patterns');
 
 const DEFAULT_TIMEOUT_MS = 6000;
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; PereneoBot/1.0; +https://oseys.fr)';
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; PereneoBot/1.0; +https://perennereseau.fr)';
 
 /**
  * Tente de récupérer un signal LinkedIn pour un décideur.

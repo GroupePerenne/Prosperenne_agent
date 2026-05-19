@@ -3,8 +3,8 @@
  *
  * Appelé quand un consultant clique sur un bouton dans le mail d'onboarding
  * envoyé par David. On :
- *   1. Envoie un accusé au consultant (depuis david@oseys.fr)
- *   2. Envoie une alerte à l'admin (paul.rudler@oseys.fr)
+ *   1. Envoie un accusé au consultant (depuis david@perennereseau.fr)
+ *   2. Envoie une alerte à l'admin (paul.rudler@perennereseau.fr)
  *   3. Retourne une page HTML de confirmation dans le navigateur
  */
 
@@ -64,7 +64,7 @@ app.http('choixNiveau', {
         await sendMail({
           from: process.env.DAVID_EMAIL,
           to: admin,
-          subject: `[OSEYS] Choix niveau/prospecteur — ${consultantName}`,
+          subject: `[Pérenne] Choix niveau/prospecteur — ${consultantName}`,
           html: `<p>Nouveau choix reçu :</p>
 <ul>
   <li>Consultant : ${consultantName} (${consultantEmail || 'email non fourni'})</li>

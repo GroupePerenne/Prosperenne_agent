@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Sonde ad-hoc 8 mai 2026 PM — Dropcontact standalone sur sweet spot OSEYS.
+ * Sonde ad-hoc 8 mai 2026 PM — Dropcontact standalone sur sweet spot Pérenne.
  *
  * Mandat Paul : "je ne peux pas croire que Dropcontact ne résolve rien".
  *

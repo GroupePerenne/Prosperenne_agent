@@ -10,7 +10,7 @@
  * Philosophie "pas d'invention" :
  *   - Un pattern seul, sans aucune vérification (pas d'email scrapé, pas
  *     de signal LinkedIn, pas de match nom dans site), **ne peut pas**
- *     atteindre le seuil de confidence par défaut (0.80). Il sera donc
+ *     atteindre le seuil de confidence par défaut (0.70). Il sera donc
  *     classé unresolvable et relayé à la cascade Dropcontact.
  *   - Un email scrapé avec nom qui matche (local-part ou contexte proche)
  *     peut passer le seuil à lui seul (scoreEmailAgainstName jusqu'à 0.90).
@@ -46,7 +46,7 @@ const { DEFAULT_CONFIDENCE_THRESHOLD, SOURCES } = require('./schemas');
  * @property {string} [profileLinkedInUrl]
  * @property {string} [naf]                    Pour rankPatternsForContext
  * @property {string} [trancheEffectif]
- * @property {number} [confidenceThreshold]    Défaut SPEC §1 = 0.80
+ * @property {number} [confidenceThreshold]    Défaut SPEC §1 = 0.70
  */
 
 /**
@@ -218,12 +218,12 @@ async function resolveEmail(input = {}, opts = {}) {
 
   // ─── Pas assez de signaux — unresolvable ────────────────────────────────
   // Principe V1 "pas d'invention" : un pattern non vérifié (aucun match
-  // scraping, aucun email trouvé sur le site) n'atteint pas le seuil 0.80.
+  // scraping, aucun email trouvé sur le site) n'atteint pas le seuil 0.70.
   // L'orchestrateur tentera Dropcontact en étape 4 avec `candidateHint`
   // si les patterns maison ont produit un candidat plausible.
   //
   // Exception catch-all : contact@{domain} est systématiquement applicable
-  // mais reste à confidence 0.40 → jamais accepté seul (seuil 0.80).
+  // mais reste à confidence 0.40 → jamais accepté seul (seuil 0.70).
   const catchAll = applyPattern('contact@{domain}', { domain: input.domain });
   const hasCandidateHint = Boolean(patternHint);
 

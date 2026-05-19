@@ -151,8 +151,8 @@ Les MCP donnent à Claude Code (et à Claude Desktop) accès à des ressources e
 **État actuel** : Filesystem MCP installé côté Claude Desktop, dossiers autorisés :
 
 - `~/Downloads`
-- `~/Library/CloudStorage/OneDrive-OSEYSGROUPE/Direction OSEYS - Documents/`
-- `~/Library/CloudStorage/OneDrive-OSEYSGROUPE/Réseau OSEYS - Documents/`
+- `~/Library/CloudStorage/OneDrive-OSEYSGROUPE/Direction Pérenne - Documents/`
+- `~/Library/CloudStorage/OneDrive-OSEYSGROUPE/Réseau Pérenne - Documents/`
 - `~/Documents/Professionnel/`
 
 **Comment faire** (côté Claude Desktop) :

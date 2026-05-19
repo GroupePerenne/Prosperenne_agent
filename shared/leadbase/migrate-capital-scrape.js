@@ -10,7 +10,7 @@
  * Constantin + AirWorker pré-v1) contient du capital scrapé Couches 2-5
  * (siteWeb, dirigeants RNE, parfois emailDirigeant) sur des SIRENs qui
  * peuvent ou non se retrouver dans LeadBase v1 (SIRENE bulk filtré sweet
- * spot OSEYS).
+ * spot Pérenne).
  *
  * Migration : pour chaque SIREN présent à la fois en legacy et en v1
  * (jointure naturelle par RowKey=siren), on extrait le capital Couches 2-5

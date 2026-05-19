@@ -186,6 +186,38 @@ class Mem0Adapter {
     });
   }
 
+  /**
+   * Sprint 3 (18 mai 2026) — apprentissage transverse Charli sur décisions
+   * COMEX. Doctrine Paul : Mem0 = mémoire Charli STRICT user_id=charli (pas de
+   * namespacing préfixe). Utilisé pour capter une décision COMEX en réponse à
+   * une escalation David, pour que les futures escalations s'enrichissent du
+   * précédent. Le content est libre (string ou JSON stringifié).
+   *
+   * @param {string} content   Texte ou JSON stringifié à mémoriser (format
+   *                           recommandé : `[YYYY-MM-DD source: X] {fact}`)
+   * @param {object} [metadata]
+   * @returns {Promise<object|null>}
+   */
+  async storeCharliLearning(content, metadata = {}) {
+    if (!content) throw new Error('storeCharliLearning: content requis');
+    const userId = 'charli';
+    const started = Date.now();
+    const messages = [{ role: 'user', content: String(content) }];
+    try {
+      const res = await withTimeout(
+        this.client.add(messages, { userId, metadata: stripUndefined(metadata), infer: false }),
+        this.timeoutMs
+      );
+      this._log('store', 'charli', 'global', true, null, { ms: Date.now() - started });
+      return res;
+    } catch (err) {
+      const degraded = isDegradableError(err);
+      this._log('store', 'charli', 'global', false, err, { degraded, ms: Date.now() - started });
+      if (degraded) return null;
+      throw err;
+    }
+  }
+
   // ───────────────────────── internals ────────────────────────
 
   async _retrieve({ namespace, id, query, topK, metadata }) {

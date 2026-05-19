@@ -109,6 +109,11 @@ async function recordLeadSelectorEvent(event = {}) {
       reason: meta.reason || meta.errorCode || '',
       briefId: event.briefId || '',
       consultantId: event.consultantId || '',
+      excludedNoDirigeant: meta.excludedNoDirigeant || 0,
+      excludedNoDirigeantSirensJson: Array.isArray(meta.excludedNoDirigeantSirens)
+        ? JSON.stringify(meta.excludedNoDirigeantSirens.slice(0, 100)).slice(0, 32000)
+        : '[]',
+      excludedAlreadyInPipe: meta.excludedAlreadyInPipe || 0,
     };
     await client.createEntity(entity);
     return entity;

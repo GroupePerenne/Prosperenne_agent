@@ -31,7 +31,7 @@ test('handleComexDigest envoie le mail avec récap formaté', async () => {
   assert.equal(sent.length, 1);
   assert.equal(sent[0].from, 'david@oseys.fr');
   assert.equal(sent[0].to, 'direction@oseys.fr');
-  assert.match(sent[0].subject, /Récap COMEX OSEYS/);
+  assert.match(sent[0].subject, /Récap COMEX Pérenne/);
   assert.ok(sent[0].html.includes('Morgane'));
   assert.ok(sent[0].html.includes('Johnny'));
 });

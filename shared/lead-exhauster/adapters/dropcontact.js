@@ -3,7 +3,7 @@
 /**
  * Adapter Dropcontact — cascade externe de résolution email.
  *
- * Décision Paul : Dropcontact > Hunter pour le pilote OSEYS (match rate
+ * Décision Paul : Dropcontact > Hunter pour le pilote Pérenne (match rate
  * 55% vs 33%, bounce 0.9% vs 11.2%, souveraineté FR/RGPD). Budget V1 =
  * 24€/mois sur le plan Starter 1000 crédits. Pay-on-success : pas de
  * coût facturé si email non trouvé (cost_cents=0 dans ce cas).
@@ -283,7 +283,9 @@ class DropcontactAdapter {
           last_name: input.lastName,
           company: input.companyName || '',
           website: input.companyDomain || '',
-          siren: input.siren,
+          num_siren: input.siren,
+          city: input.city || '',
+          zipcode: input.zipcode || '',
         }],
         language: 'fr',
         siren: true,

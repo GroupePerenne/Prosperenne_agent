@@ -158,7 +158,7 @@ function normalizeDomain(raw) {
  * pattern est appliqué et qu'on n'a pas encore de vérification aval :
  *   - patterns nominatifs haute fréquence → 0.82-0.88
  *   - patterns structurants moins fréquents → 0.70-0.78
- *   - catch-all contact@ → 0.40 (sous seuil par défaut 0.80)
+ *   - catch-all contact@ → 0.40 (sous seuil par défaut 0.70)
  *
  * La dérive de ces valeurs est assurée par patterns-learner (Jalon 4)
  * qui surcharge la table EmailPatterns.

@@ -2,7 +2,7 @@
 
 > Point d'entrée Claude Code sur le projet `Pereneo_agents`. À lire intégralement avant toute action.
 > **Dernière révision** : 1er mai 2026 (refonte complète post-lancement pilote David — résolution BL-43/45/47/48/49/51, refonte VP socle, lancement officiel pilote Morgane/Johnny). Drift 17 avril clos.
-> Cohérence avec : STRATEGY v3.0 / MEMO v3.0 / ARCHITECTURE v6.0 / CHARLI v1.5 / OPERATIONS v4.3 / CLAUDE_JOURNAL v1.11 — sur SharePoint `Direction OSEYS - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`.
+> Cohérence avec : STRATEGY v3.0 / MEMO v3.0 / ARCHITECTURE v6.0 / CHARLI v1.5 / OPERATIONS v4.3 / CLAUDE_JOURNAL v1.11 — sur SharePoint `Direction Pérenne - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`.
 
 ---
 
@@ -98,7 +98,9 @@ La doctrine humaine de la VP OSEYS est dans **`agents/david/value-proposition.md
 - **J+14** : relance avec angle complémentaire (proof point Coface, observation métier)
 - **J+28** : rupture polie (fermeture respectueuse, porte ouverte)
 
-**Jours ouvrés français uniquement** (samedi, dimanche, jours fériés exclus). **Créneau d'envoi** : 9h-11h Paris (`WEBSITE_TIME_ZONE=Romance Standard Time`).
+**Jours ouvrés français uniquement** (samedi, dimanche, jours fériés exclus). **Créneau d'envoi** : 9h-11h Paris.
+
+**⚠️ Timezone cron Azure Linux Consumption** (constat 18 mai 2026) : `WEBSITE_TIME_ZONE=Romance Standard Time` est un setting Windows et **N'A AUCUN EFFET sur Linux Consumption**. Les `schedule` ncrontab des `app.timer(...)` sont interprétés en UTC. Conséquence : `'0 0 8 * * 1-5'` déclenche à 8h UTC = **10h Paris CEST** (été) ou 9h Paris CET (hiver), pas 8h Paris comme on pourrait le croire. Pour corriger : ajuster le cron à `'0 0 6 * * 1-5'` pour 8h Paris CEST (à re-ajuster aux changements DST), ou utiliser env `TZ` Linux. Cron `dailyLeadSelectorRefresh` actuel = 10h Paris CEST par défaut (acceptable, dans le créneau 9-11h).
 
 **Bascule d'agent sur silence** : si lead silencieux après 28j ouvrés → `retry_available_after = today + 180j` + `last_agent_attempted` posé. Future campagne → l'autre agent prend le relais.
 
@@ -140,6 +142,69 @@ Depuis 1er mai 2026, `agents/david/orchestrator.js handleInboxPoll` itère sur `
 ### 4.6 Auto-linkify URLs dans messages
 
 `shared/worker.js linkify(s)` transforme `oseys.fr` (et sous-pages) en `<a href="https://oseys.fr/dirigeant" style="color:#F39561;...">oseys.fr</a>` — texte court affiché, URL pleine en href.
+
+### 4.7 Pipeline d'enrichissement leads — doctrine 2 pipelines isolés (capitalisé 15 mai 2026)
+
+**Source de la doctrine** : handover `~/.charli/handovers/2026-05-08-PM-fin-seance-airworker-prod-mac-air.md` + mémoires Mem0 `user_id=charli` 15/05.
+
+**Architecture cible** :
+
+```
+PIPELINE A — pré-peuplement continu (runtime AirWorker Mac dédié)
+  scripts/airworker-waterfall-continuous.js
+  LaunchAgent com.pereneo.airworker-waterfall.plist (Mac Air 192.168.1.128)
+  KeepAlive=true, caffeinate anti-veille
+  Cascade V8 :
+   1. Playwright Google rendu JS → résolution domaine
+   2. Extraction emails Playwright (10 pages parallèles, mailto/cfemail/JSON-LD/regex)
+      sur TARGET_PATHS_EXHAUSTIVE (mentions-légales, contact, équipe, cgv...)
+   3. Cascade interne (scraping statique + patterns)
+   4. SMTP probe local (EHLO + MAIL FROM + RCPT TO + QUIT, 4 patterns standards)
+   5. Dropcontact pay-on-success EN DERNIER RECOURS (~5% des leads)
+  Sortie : write LeadContacts (pereneomailsenderst), log CharliBackgroundJobs
+  Hit rate cible mesuré 8 mai PM : 70% sweet spot OSEYS BTP TPE FR
+
+PIPELINE B — runtime à la demande (FA Azure pereneo-mail-sender)
+  dailyLeadSelectorRefresh cron 8h L-V Paris
+  → selectCandidatesForConsultant (LeadBase)
+  → enrichAndProfileBatchForConsultant
+  → leadExhauster (lit LeadContacts cache, fallback runtime cascade)
+  → launchSequenceForConsultant (génération séquence Sonnet 4.6 + sendMail Graph)
+  Sortie : envoi mails Martin/Mila vers prospects, traçage Pipedrive
+```
+
+**Invariants** :
+- AirWorker = single writer LeadContacts (pré-peuplement continu)
+- FA Azure = single reader LeadContacts (consomme cache, ne calcule pas)
+- Si lead absent du cache → cascade runtime fallback FA Azure (mais hit rate dégradé)
+- AirWorker tourne en background-fill (sweet spot national élargi quand briefs cached fresh)
+- Kill-switch distant `shared/storage-tables/workersControl.js` (table `WorkersControl`)
+  pour pause AirWorker depuis n'importe où sans accès SSH
+
+**Contraintes courantes (mai 2026)** :
+- **Ban Google AirWorker** : depuis ~11-12 mai, IP bureau OSEYS bannie par Google (CAPTCHA)
+  sur Playwright Google scraping. AirWorker en kill-switch pause depuis 13 mai.
+- **Ban autres providers webSearch AirWorker** : Brave HTTP 402 quota_exceeded, DDG/Mojeek/Ecosia bannis IP partagée. Env var `SITE_FINDER_WEBSEARCH_BACKENDS=playwright_google` seul possible.
+- **IP Mac Paul bannie data.gouv** : tests RNE locaux échouent ECONNREFUSED. Diag toujours depuis FA Azure.
+- **FA Azure IP non bannie à ce jour** : api.gouv RNE + DDG fonctionnent en runtime FA.
+
+**Dépendances critiques actuelles (single points of failure)** :
+- `api.gouv.fr/recherche-entreprises` = seule source dirigeants pour FA Azure runtime
+- Playwright Google = seul backend webSearch pour AirWorker
+- Cascade V8 entière dépend d'au moins un backend webSearch fonctionnel
+
+**Plan Dropcontact** : 1500 crédits/mois (pay-on-success, ~0.95€/crédit en pratique).
+Cap interne `DROPCONTACT_MONTHLY_BUDGET_CENTS=150000` aligné au plan (avant 15/05 PM
+le cap était 2400 ce qui coupait artificiellement à 25 résolutions/mois — bug fixé).
+
+**Mécanisme cache LeadContacts** :
+- TTL 90 jours
+- `isFreshCacheHit` (shared/lead-exhauster/index.js:440) skip négatif si `email=null && source='none'` → ces caches sont re-tentés runtime (défense Dropcontact)
+- Caches avec source cascadée (playwright_*, dropcontact, smtp_probe) + email=null restent figés — perte ~1% acceptable
+
+**Chantier de fond ouvert (sprint ≤ 2 semaines)** :
+- Substitut moteur de recherche AirWorker : Bing API payant, Brave réabonné, Searx self-hosted, ou proxy résidentiel. Objectif retour 70% hit rate.
+- Diversification source dirigeants : RNE + Pappers API + scraping LinkedIn. Casser le single point of failure api.gouv.
 
 ---
 
@@ -347,7 +412,7 @@ Paul préfère :
 - **Pipedrive domain** : `oseys.pipedrive.com`
 - **Anthropic console** : https://console.anthropic.com (compte Pereneo+OSEYS)
 
-**Docs SharePoint** (`Direction OSEYS - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`) :
+**Docs SharePoint** (`Direction Pérenne - Documents/TECHNIQUE/CLAUDE/1. PERENEO/`) :
 - STRATEGY (vision business + pricing + roadmap)
 - MEMO (référentiel opérationnel single source of truth)
 - ARCHITECTURE (architecture technique détaillée)

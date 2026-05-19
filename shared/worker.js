@@ -18,6 +18,8 @@ const { nextBusinessDayAt, addBusinessDays } = require('./holidays');
 const pipedrive = require('./pipedrive');
 const { getMem0 } = require('./adapters/memory/mem0');
 const { isLeadStillSendable } = require('./optOutGuard');
+const { isPipelineKilled } = require('./pipelineControl');
+const { canSendToday, incrementSentToday } = require('./dailyEmailCap');
 
 /**
  * Résout l'adresse Smart BCC Pipedrive d'un consultant à partir de son
@@ -52,7 +54,7 @@ function buildTrackingPixel({ identity, dealId, personId, day }) {
   return `<img src="${url.toString()}" width="1" height="1" alt="" style="display:none" />`;
 }
 
-// ─── Rendu du corps HTML avec signature + pixel ───────────────────────────
+// ─── Rendu du corps HTML avec signature + pixel + footer RGPD ─────────────
 function renderEmailHtml({ identity, consultant, corps, dealId, personId, day }) {
   const avatarBase = process.env.FUNCTION_APP_URL || 'http://localhost:7071';
   const signatureHtml = identity.signature_html
@@ -65,14 +67,50 @@ function renderEmailHtml({ identity, consultant, corps, dealId, personId, day })
     .join('');
 
   const pixel = buildTrackingPixel({ identity, dealId, personId, day });
+  const footer = renderLegalFooter({ identity });
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:12pt;color:#1a1714">
 ${bodyHtml}
 ${signatureHtml}
+${footer}
 ${pixel}
 </body></html>`;
+}
+
+// ─── Footer RGPD : mentions légales + lien désinscription ─────────────────
+// Plan v3.1 Pilier 5 — conformité B2B prospection :
+//   - Article 13 RGPD : identité responsable traitement + finalité + contact
+//   - List-Unsubscribe (header SMTP) + lien visible dans le corps
+//   - Désinscription via mailto vers l'expéditeur (martin@/mila@) avec
+//     subject "Désinscription" : davidInbox classifie comme négatif et
+//     pose opt_out_until=9999-12-31 (architecture existante).
+//
+// Cohérent doctrine "consultants Pérenne = clients" (positionnement service
+// Prospérenne) : on ne complique pas avec endpoint web dédié pour H1.
+function renderLegalFooter({ identity }) {
+  const unsubscribeSubject = 'Désinscription';
+  const mailto = `mailto:${identity.email}?subject=${encodeURIComponent(unsubscribeSubject)}`;
+  return `<div style="margin-top:24px;padding-top:14px;border-top:1px solid #e6e1da;font-family:Aptos,'Aptos Display',Calibri,Arial,sans-serif;font-size:10pt;color:#7a7066;line-height:1.5">
+<p style="margin:0 0 6px">Vous recevez ce message car votre profil de dirigeant correspond au périmètre d'accompagnement de Pérenne (réseau de consultants indépendants en pilotage économique TPE/PME). Responsable de traitement : Pérenne / Groupe Pérenne — direction@perennereseau.fr.</p>
+<p style="margin:0">Pour ne plus recevoir de messages : <a href="${mailto}" style="color:#7a7066;text-decoration:underline">cliquez ici pour vous désinscrire</a>. Désinscription effective sous 72h.</p>
+</div>`;
+}
+
+// ─── Headers SMTP List-Unsubscribe (RFC 2369) ─────────────────────────────
+// Génère les 2 headers conformes :
+//   - List-Unsubscribe : <mailto:agent@perennereseau.fr?subject=Désinscription>
+//     Format RFC 2369 — pris en compte par tous les clients mail majeurs
+//     (Gmail "Unsubscribe" automatique, Outlook bouton désabonner).
+//
+// One-Click RFC 8058 NON ajouté en H1 — nécessite endpoint web qui ack le
+// désabonnement par POST sans interaction. À livrer H2 avec endpoint dédié.
+function buildUnsubscribeHeaders(identity) {
+  const mailto = `mailto:${identity.email}?subject=${encodeURIComponent('Désinscription')}`;
+  return [
+    { name: 'List-Unsubscribe', value: `<${mailto}>` },
+  ];
 }
 
 function escapeHtml(s) {
@@ -82,13 +120,13 @@ function escapeHtml(s) {
 }
 
 // Auto-linkify pour rendre les URLs cliquables dans le corps des messages
-// LLM. Cible prioritaire : oseys.fr et ses sous-pages — URL conservée
-// dans le href, mais texte affiché toujours "oseys.fr" court (cohérent
+// LLM. Cible prioritaire : perennereseau.fr et ses sous-pages — URL conservée
+// dans le href, mais texte affiché toujours "perennereseau.fr" court (cohérent
 // avec la signature, cf. décision Paul 1er mai 2026 PM).
 function linkify(s) {
   return String(s || '')
-    // oseys.fr/dirigeant ou autre sous-page → texte court "oseys.fr", URL complète dans href
-    .replace(/\b(oseys\.fr(?:\/[\w\-/]+)?)\b/g, '<a href="https://$1" style="color:#F39561;text-decoration:underline;font-weight:500">oseys.fr</a>')
+    // perennereseau.fr/dirigeant ou autre sous-page → texte court "perennereseau.fr", URL complète dans href
+    .replace(/\b(perennereseau\.fr(?:\/[\w\-/]+)?)\b/g, '<a href="https://$1" style="color:#F39561;text-decoration:underline;font-weight:500">perennereseau.fr</a>')
     // autres URLs https:// (fallback générique)
     .replace(/(?<!href=")(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#F39561;text-decoration:underline">$1</a>');
 }
@@ -195,7 +233,7 @@ function warnLog(context, message) {
  * Résolution de l'owner (ordre de préférence) :
  *   1. deal.user_id.email (si embedded dans la réponse Pipedrive)
  *   2. pipedrive.getUserEmail(deal.user_id.id)
- *   3. Fallback direction@oseys.fr (env ESCALATION_EMAIL) si non résolvable
+ *   3. Fallback direction@perennereseau.fr (env ESCALATION_EMAIL) si non résolvable
  *
  * Best effort : toute erreur de sendMail est swallow + warn log.
  * deps injectable pour tests (sendMail, pipedriveMod).
@@ -206,7 +244,7 @@ async function sendFuzzyMatchEscalation({ fuzzyDeal, lead, context, deps = {} })
 
   try {
     const davidEmail = process.env.DAVID_EMAIL;
-    const direction = process.env.ESCALATION_EMAIL || 'direction@oseys.fr';
+    const direction = process.env.ESCALATION_EMAIL || 'direction@perennereseau.fr';
     const domain = process.env.PIPEDRIVE_COMPANY_DOMAIN || 'oseys';
     const dealLink = `https://${domain}.pipedrive.com/deal/${fuzzyDeal.id}`;
 
@@ -284,13 +322,20 @@ function renderUnattributableEmailHtml({ lead, dealLink }) {
 // `prospectProfile` (optionnel) — résultat enrichissement prospect-research
 // (companyProfile + decisionMakerProfile) qui permet à generateSequence de
 // calculer l'angle d'entrée et la modulation DISC. Si absent, fallback
-// 'pas_de_signal' + ton standard (cohérent VP OSEYS socle, cas le plus fréquent).
+// 'pas_de_signal' + ton standard (cohérent VP Pérenne socle, cas le plus fréquent).
 async function bootstrapSequence({ agent, consultant, lead, dealId, personId, orgId, context, mem0: mem0Override, prospectProfile }) {
   const identity = loadIdentity(agent);
 
+  // Kill-switch FA rapide (plan v3.1 Pilier 1+3) : pause runtime <5s sans deploy.
+  // Lue depuis table Storage `PipelineControl` PK=control RK=kill-pipeline,
+  // cache TTL 5s. Si actif → skip immédiat AVANT toute génération séquence.
+  if (await isPipelineKilled()) {
+    return { skipped: true, reason: 'pipeline_killed' };
+  }
+
   // 0. Filtrage leads existants — INTRA-PIPE 28 SEULEMENT (correction 12 mai PM).
   // Doctrine précédente "cross-pipes" : skip si la person a un deal ouvert dans
-  // n'importe quel pipeline OSEYS. Bloquant en pratique : pollution historique
+  // n'importe quel pipeline Pérenne. Bloquant en pratique : pollution historique
   // searchPerson fuzzy a agrégé des deals legacy sur des persons mal-matchées
   // (ex: person 53801 = 134 deals dont 120 dans pipes 10/12/22/24 qui n'ont
   // rien à voir). Le step 0 cross-pipes faux-positivait à grande échelle et
@@ -354,23 +399,59 @@ async function bootstrapSequence({ agent, consultant, lead, dealId, personId, or
         // Best effort : si check fail, on tente l'envoi
       }
     }
+    // Cap envoi/boîte/jour (plan v3.1 Pilier 5 — délivrabilité warmup).
+    // Si la boîte d'envoi a atteint son cap quotidien, on requeue le J0
+    // au lendemain matin plutôt que d'envoyer en surcapacité (risque
+    // anti-spam FAI destinataire). Best effort : Storage indispo = on
+    // envoie (graceful degradation).
+    const capCheck = await canSendToday(identity.email);
+    if (!capCheck.ok) {
+      const nextDay = nextBusinessDayAt(new Date(Date.now() + 24 * 60 * 60 * 1000));
+      await scheduleRelance({
+        agent, day: 'J0',
+        targetDate: nextDay.toISOString(),
+        consultant: adjustedConsultant, lead, dealId, personId,
+        preGeneratedStep: { jour: 'J0', objet: j0.objet, corps: j0.corps },
+      });
+      results.scheduled.push('J0_capped');
+      return results;
+    }
     const html = renderEmailHtml({
       identity, consultant: adjustedConsultant, corps: j0.corps, dealId, personId, day: 'J0',
     });
-    await sendMail({
+    const sendResult = await sendMail({
       from: identity.email,
       to: lead.email,
       bcc: consultantBCC ? [consultantBCC] : [],
       subject: j0.objet,
       html,
+      headers: buildUnsubscribeHeaders(identity),
       // Pas de replyTo explicite : les réponses prospects arrivent
-      // nativement dans la boîte de l'expéditeur (martin@oseys.fr ou
-      // mila@oseys.fr).
+      // nativement dans la boîte de l'expéditeur (martin@perennereseau.fr ou
+      // mila@perennereseau.fr).
     });
+    // Increment compteur post-succès envoi (best effort, swallow toute erreur).
+    incrementSentToday(identity.email).catch(() => {});
+    // Sprint 2 mémoire prospect (18 mai 2026) — record outbound J0 dans
+    // DavidMemory pour permettre à David de relire l'historique quand le
+    // prospect répond (couvert par Sprint 1 hook inbound + injection prompt
+    // dans routeMessage). Best effort fire-and-forget.
+    require('./storage-tables/davidMemory').recordMessage({
+      interlocutorEmail: lead.email,
+      direction: 'outbound',
+      mailbox: identity.email,
+      subject: j0.objet,
+      body: j0.corps,
+      messageId: sendResult.internetMessageId || sendResult.graphMessageId,
+      conversationId: sendResult.conversationId,
+      sentAt: new Date().toISOString(),
+    }).catch(() => {});
     if (dealId || personId) {
       await pipedrive.logEmailSent({
         dealId, personId, sender: identity.prenom, day: 'J0',
         subject: j0.objet, bodyPreview: j0.corps.slice(0, 200),
+        internetMessageId: sendResult.internetMessageId,
+        conversationId: sendResult.conversationId,
       });
     }
     // Fire-and-forget feedback exhauster : le mail vient de sortir, on
@@ -414,6 +495,12 @@ async function sendScheduledStep(job) {
 
   const { jour, objet, corps } = preGeneratedStep;
 
+  // Kill-switch FA rapide (plan v3.1 Pilier 1+3) : check AVANT garde-fou
+  // opt-out + AVANT sendMail. Pause runtime <5s sans deploy.
+  if (await isPipelineKilled()) {
+    return { sent: null, skipped: true, reason: 'pipeline_killed', day: jour };
+  }
+
   // BL-52 (11 mai 2026) — Garde-fou opt-out re-checké AVANT chaque sendMail
   // différé (J+14, J+28). Sans ce check, un prospect ayant répondu négatif
   // après le J0 (et marqué opt_out_until=9999-12-31 par davidInbox) recevrait
@@ -435,15 +522,38 @@ async function sendScheduledStep(job) {
     identity, consultant, corps, dealId, personId, day: jour,
   });
 
+  // Cap envoi/boîte/jour (plan v3.1 Pilier 5 — délivrabilité warmup).
+  // Pour les relances J+14 / J+28 différées : si cap atteint, on
+  // re-queue à demain matin pour ne pas griller la réputation boîte.
+  const capCheck = await canSendToday(identity.email);
+  if (!capCheck.ok) {
+    return { sent: null, skipped: true, reason: 'daily_cap_reached', day: jour, count: capCheck.count, cap: capCheck.cap };
+  }
+
   const consultantBCC = getConsultantBCC(consultant?.email);
-  await sendMail({
+  const sendResult = await sendMail({
     from: identity.email,
     to: lead.email,
     bcc: consultantBCC ? [consultantBCC] : [],
     subject: objet,
     html,
+    headers: buildUnsubscribeHeaders(identity),
     // Pas de replyTo : cf. bootstrapSequence (positionnement éthique).
   });
+  incrementSentToday(identity.email).catch(() => {});
+
+  // Sprint 2 mémoire prospect (18 mai 2026) — record outbound relance
+  // J+14/J+28 dans DavidMemory. Best effort fire-and-forget.
+  require('./storage-tables/davidMemory').recordMessage({
+    interlocutorEmail: lead.email,
+    direction: 'outbound',
+    mailbox: identity.email,
+    subject: objet,
+    body: corps,
+    messageId: sendResult.internetMessageId || sendResult.graphMessageId,
+    conversationId: sendResult.conversationId,
+    sentAt: new Date().toISOString(),
+  }).catch(() => {});
 
   if (dealId || personId) {
     await pipedrive.logEmailSent({
@@ -452,6 +562,8 @@ async function sendScheduledStep(job) {
       day: jour,
       subject: objet,
       bodyPreview: corps.slice(0, 200),
+      internetMessageId: sendResult.internetMessageId,
+      conversationId: sendResult.conversationId,
     });
   }
 

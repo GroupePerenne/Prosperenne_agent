@@ -15,5 +15,7 @@ require('./functions/dailyDigest');
 require('./functions/patternsLearner');
 require('./functions/runLeadSelectorForConsultant');
 require('./functions/nightlyMonteCarloSmoke');
+require('./functions/nightlySmokeE2E');
 require('./functions/leadSelectorJobQueue');
 require('./functions/dailyLeadSelectorRefresh');
+require('./functions/diagExternalApis');

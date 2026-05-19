@@ -6,6 +6,9 @@ node_modules/
 .env.local
 .env.*.local
 local.settings.json
+local.settings.json.bak*
+local.settings.json.old
+local.settings.json.*
 
 # Secrets (double protection)
 *.secret

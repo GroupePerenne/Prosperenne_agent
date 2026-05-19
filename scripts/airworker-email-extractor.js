@@ -4,7 +4,7 @@
  * AirWorker Email Extractor — extraction d'emails depuis le HTML rendu d'un
  * site entreprise via Playwright (Chromium headless local).
  *
- * Sur sweet spot OSEYS BTP TPE 10-20 sal, SMTP probe et Dropcontact sont
+ * Sur sweet spot Pérenne BTP TPE 10-20 sal, SMTP probe et Dropcontact sont
  * largement inopérants (Hornetsecurity rejette tout, IONOS catch-all
  * indiscriminable, Dropcontact n'a pas la donnée). En revanche, les emails
  * sont **physiquement présents** dans le HTML des pages mentions-légales /

@@ -9,7 +9,7 @@
  * (6 mai PM, scripts/smoke-truth-leadbase.js sur leads sans sireneSourcedAt).
  *
  * Cible : confirmer que le pipeline aval (site-finder + lead-exhauster +
- * SMTP probe + Dropcontact) marche sur les vrais leads sweet spot OSEYS.
+ * SMTP probe + Dropcontact) marche sur les vrais leads sweet spot Pérenne.
  *
  * Usage :
  *   LEADBASE_STORAGE_CONNECTION_STRING=$(cat /tmp/leadbase-cs.tmp) \
@@ -110,7 +110,7 @@ async function pullSireneIngestedLeads(client, departement, sampleSize, opts = {
   console.log(`[scan] Pull entités sireneSourcedAt non-null sur partition ${departement}…`);
   const pool = [];
   // I-2 OK: smoke truth SIRENE ingested — schema_version='1.0' obligatoire
-  // pour ne pas remonter du legacy hors-cible OSEYS.
+  // pour ne pas remonter du legacy hors-cible Pérenne.
   const iter = client.listEntities({
     queryOptions: {
       filter: `PartitionKey eq '${departement}' and schema_version eq '1.0'`,

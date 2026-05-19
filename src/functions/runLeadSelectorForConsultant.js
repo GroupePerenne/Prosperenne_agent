@@ -8,7 +8,7 @@
  *
  * Body attendu :
  * {
- *   "consultantId": "morgane.dupont@oseys.fr",   // email lowercased, requis
+ *   "consultantId": "morgane.dupont@perennereseau.fr",   // email lowercased, requis
  *   "batchSize":    10,                          // optionnel, défaut env
  *   "dryRun":       true                         // optionnel : retourne le
  *                                                  batch SANS lancer la séquence

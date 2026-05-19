@@ -49,4 +49,9 @@ function _resetForTests() {
   _ensured.clear();
 }
 
-module.exports = { getTableClient, ensureTable, _resetForTests };
+function _setClientForTests(tableName, mockClient) {
+  _clients.set(tableName, mockClient);
+  _ensured.add(tableName);
+}
+
+module.exports = { getTableClient, ensureTable, _resetForTests, _setClientForTests };

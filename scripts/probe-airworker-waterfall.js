@@ -2,7 +2,7 @@
 
 /**
  * Probe AirWorker waterfall — test waterfall complète locale sur 10 leads
- * sweet spot OSEYS (Morgane + Johnny), avec :
+ * sweet spot Pérenne (Morgane + Johnny), avec :
  *   - resolveDomain via Playwright Google (IP résidentielle, pas Brave/api.gouv)
  *   - scrapeDomain mode 'exhaustive' (mentions légales, cgv, etc.)
  *   - Dropcontact gaté sur domaine résolu (économise crédits sur hopeless)
@@ -169,7 +169,7 @@ async function processLead(candidate, deps) {
   }
 
   // Étape 1.5 (V7) : extraction emails Playwright avec rendu JS sur les
-  // pages mentions-légales / contact / équipe. Sur sweet spot OSEYS, c'est
+  // pages mentions-légales / contact / équipe. Sur sweet spot Pérenne, c'est
   // le levier #1 (probe 8 mai PM mesure 8/8 sites avec email extractible
   // vs 1/10 résolu via SMTP+Dropcontact). Si on trouve un email à confidence
   // suffisante, on COURT-CIRCUITE la cascade interne + SMTP + Dropcontact.

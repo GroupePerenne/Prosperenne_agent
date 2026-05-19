@@ -20,6 +20,7 @@ const {
   checkLeadCooldown,
   pickMostRecent,
   resolveOrCreateDeal,
+  ensureOrg,
 } = require('../../../agents/david/orchestrator');
 
 function makeMem0Stub({ storeReturns = { id: 'm1' } } = {}) {
@@ -523,4 +524,117 @@ test('checkLeadCooldown — Pipedrive throw : warn + skip false (best effort, on
     if (prev !== undefined) process.env.PIPEDRIVE_FIELD_OPT_OUT_UNTIL = prev;
     else delete process.env.PIPEDRIVE_FIELD_OPT_OUT_UNTIL;
   }
+});
+
+// ──────────────── ensureOrg — dedup SIREN d'abord, fallback nom ────────────────
+
+function makePipedriveStub({
+  searchBySiren = [],
+  searchByName = [],
+  createReturns = { id: 999, name: 'CREATED' },
+} = {}) {
+  const calls = { search: [], create: [], update: [] };
+  return {
+    calls,
+    pipedriveMod: {
+      ORG_SIREN_FIELD_KEY: 'field_siren_key',
+      searchOrganization: async (arg) => {
+        calls.search.push(arg);
+        if (typeof arg === 'object' && arg.siren) return searchBySiren;
+        return searchByName;
+      },
+      createOrganization: async (arg) => {
+        calls.create.push(arg);
+        return createReturns;
+      },
+      updateOrganizationSiren: async (orgId, siren) => {
+        calls.update.push({ orgId, siren });
+        return null;
+      },
+    },
+  };
+}
+
+test('ensureOrg — lead avec SIREN, search par SIREN trouve : retourne org, pas de create', async () => {
+  const { pipedriveMod, calls } = makePipedriveStub({
+    searchBySiren: [{ id: 50830, name: 'CAPARROS ELECTRICITE', field_siren_key: '123456789' }],
+  });
+  const res = await ensureOrg({ siren: '123456789', entreprise: 'CAPARROS', ville: 'Paris' }, { pipedriveMod });
+  assert.equal(res.id, 50830);
+  assert.equal(calls.search.length, 1);
+  assert.deepEqual(calls.search[0], { siren: '123456789' });
+  assert.equal(calls.create.length, 0);
+  assert.equal(calls.update.length, 0); // déjà rempli côté org
+});
+
+test('ensureOrg — lead avec SIREN, search par SIREN trouve org sans SIREN renseigné : backfill update', async () => {
+  const { pipedriveMod, calls } = makePipedriveStub({
+    searchBySiren: [{ id: 50830, name: 'CAPARROS ELECTRICITE' }], // pas de field_siren_key
+  });
+  const res = await ensureOrg({ siren: '123456789', entreprise: 'CAPARROS', ville: 'Paris' }, { pipedriveMod });
+  assert.equal(res.id, 50830);
+  assert.equal(calls.update.length, 1);
+  assert.deepEqual(calls.update[0], { orgId: 50830, siren: '123456789' });
+  assert.equal(calls.create.length, 0);
+});
+
+test('ensureOrg — lead avec SIREN, search par SIREN vide → fallback nom, trouve : backfill SIREN', async () => {
+  const { pipedriveMod, calls } = makePipedriveStub({
+    searchBySiren: [],
+    searchByName: [{ id: 50831, name: 'CAPARROS ELECTRICITE' }],
+  });
+  const res = await ensureOrg({ siren: '123456789', entreprise: 'CAPARROS', ville: 'Paris' }, { pipedriveMod });
+  assert.equal(res.id, 50831);
+  assert.equal(calls.search.length, 2);
+  assert.deepEqual(calls.search[0], { siren: '123456789' });
+  assert.equal(calls.search[1], 'CAPARROS');
+  assert.equal(calls.update.length, 1);
+  assert.deepEqual(calls.update[0], { orgId: 50831, siren: '123456789' });
+});
+
+test('ensureOrg — lead avec SIREN, aucun match : createOrganization avec siren', async () => {
+  const { pipedriveMod, calls } = makePipedriveStub({
+    searchBySiren: [],
+    searchByName: [],
+  });
+  const res = await ensureOrg({ siren: '987654321', entreprise: 'NEW SARL', ville: 'Lyon' }, { pipedriveMod });
+  assert.equal(res.id, 999);
+  assert.equal(calls.create.length, 1);
+  assert.deepEqual(calls.create[0], {
+    name: 'NEW SARL',
+    address: 'Lyon',
+    siren: '987654321',
+  });
+});
+
+test('ensureOrg — lead SANS SIREN (legacy) : search par nom uniquement, create sans siren', async () => {
+  const { pipedriveMod, calls } = makePipedriveStub({
+    searchByName: [],
+  });
+  const res = await ensureOrg({ entreprise: 'LEGACY CO', ville: 'Bordeaux' }, { pipedriveMod });
+  assert.equal(res.id, 999);
+  assert.equal(calls.search.length, 1);
+  assert.equal(calls.search[0], 'LEGACY CO'); // string, pas objet
+  assert.equal(calls.create.length, 1);
+  assert.equal(calls.create[0].siren, undefined);
+  assert.equal(calls.update.length, 0);
+});
+
+test('ensureOrg — backfill update fail silencieux (best effort, on retourne org quand même)', async () => {
+  const calls = { search: [], create: [], update: [] };
+  const pipedriveMod = {
+    ORG_SIREN_FIELD_KEY: 'field_siren_key',
+    searchOrganization: async (arg) => {
+      calls.search.push(arg);
+      return [{ id: 50830, name: 'X' }]; // pas de field_siren_key
+    },
+    createOrganization: async (arg) => { calls.create.push(arg); return { id: 999 }; },
+    updateOrganizationSiren: async (orgId, siren) => {
+      calls.update.push({ orgId, siren });
+      throw new Error('Pipedrive 500');
+    },
+  };
+  const res = await ensureOrg({ siren: '111', entreprise: 'X' }, { pipedriveMod });
+  assert.equal(res.id, 50830); // org retournée malgré update KO
+  assert.equal(calls.update.length, 1);
 });

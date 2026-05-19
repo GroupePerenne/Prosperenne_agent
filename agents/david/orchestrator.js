@@ -8,18 +8,20 @@
  *      validation d'un brief consultant, pour déclencher Martin et/ou Mila.
  *
  * David est le seul agent qui parle aux consultants. Martin et Mila ont
- * leur `replyTo` configuré sur david@oseys.fr : toute réponse d'un prospect
+ * leur `replyTo` configuré sur david@perennereseau.fr : toute réponse d'un prospect
  * atterrit donc dans la boîte de David, qui décide quoi en faire.
  *
  * Classification fine des réponses prospects (6 classes — cf. CLAUDE.md §1.7
  * et prompt.md) :
  *   positive / question / neutre / negative / out_of_office / bounce
- * Si confidence < 0.7 → escalation à direction@oseys.fr (avec consultant en CC).
+ * Si confidence < 0.7 → escalation à direction@perennereseau.fr (avec consultant en CC).
  */
 
 const fs = require('fs');
 const path = require('path');
-const { listUnreadMessages, markAsRead, sendMail, forwardMessage } = require('../../shared/graph-mail');
+const { listUnreadMessages, markAsRead, sendMail, forwardMessage, getConversationMessages } = require('../../shared/graph-mail');
+const { detectAutoReply } = require('../../shared/autoReplyDetector');
+const { decideAgent, extractActiveAgents } = require('../../shared/assignAgent');
 const { callClaude, parseJson } = require('../../shared/anthropic');
 const { davidSignatureHtml } = require('../../shared/templates');
 const { purgeByDealId } = require('../../shared/queue');
@@ -27,11 +29,12 @@ const martin = require('../martin/worker');
 const mila = require('../mila/worker');
 const pipedrive = require('../../shared/pipedrive');
 const { getMem0 } = require('../../shared/adapters/memory/mem0');
-const { recordAction: recordDavidAction } = require('../../shared/storage-tables/davidActions');
+const { recordAction: recordDavidAction, findEscalationByConversationId } = require('../../shared/storage-tables/davidActions');
 const { tryAcquireLock, releaseLock } = require('../../shared/storage-tables/locks');
 const { markProcessed } = require('../../shared/storage-tables/davidProcessedMessages');
 const { enqueuePendingReply } = require('../../shared/storage-tables/davidPendingReplies');
 const { computeScheduledAt, getJitterWindowForSenderType } = require('../../shared/jitter');
+const davidMemory = require('../../shared/storage-tables/davidMemory');
 
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 const CONFIDENCE_THRESHOLD = 0.7;
@@ -127,6 +130,26 @@ async function handleInboxPoll({ context, mailboxes } = {}) {
           continue;
         }
 
+        // 2 bis) Anti-boucle mail (plan v3.1 Pilier 3) : détection auto-reply
+        // pré-Claude via headers SMTP standards (Auto-Submitted, X-Auto-Response-
+        // Suppress, Precedence) + fallback subject patterns. Si auto-reply →
+        // skip classification + enqueue. Le mail est marqué isRead, processé,
+        // tracé, mais AUCUNE réponse n'est générée — coupe la boucle infinie
+        // OOO/vacation responder à la source. Économie tokens Claude + protection
+        // réputation Pereneo (pas de cascade mails côté prospect).
+        const autoReply = detectAutoReply(msg);
+        if (autoReply.isAutoReply) {
+          warnLog(context, `[handleInboxPoll] auto-reply detected (${autoReply.reason}) for ${msg.id} from ${msg.from?.emailAddress?.address || '?'} subject="${msg.subject}" — skip without reply`);
+          results.push({
+            mailbox,
+            id: msg.id,
+            subject: msg.subject,
+            classe: 'auto_reply_skipped',
+            reason: autoReply.reason,
+          });
+          continue;
+        }
+
         // 3) Route + enqueue de la réponse différée (jitter humain).
         const decision = await routeMessage(msg, { context });
         results.push({ mailbox, id: msg.id, subject: msg.subject, ...decision });
@@ -136,6 +159,51 @@ async function handleInboxPoll({ context, mailboxes } = {}) {
     }
   }
   return results;
+}
+
+// ─── Compactage fil conversationnel (plan v3.1 P2 Sujet 5) ────────────────
+//
+// Récupère la conversation Graph via conversationId puis compacte les
+// N-1 messages antérieurs (= autres que celui à classifier maintenant) en
+// mini-bloc texte. Format compact : "[YYYY-MM-DD HH:MM] DE : sender →
+// resume_bodyPreview". On exclut le message courant pour éviter la
+// redondance (le prompt inclut déjà son CORPS complet juste après).
+//
+// Limites :
+//   - max 5 messages antérieurs (les plus récents avant le courant)
+//   - bodyPreview tronqué à 200 caractères chacun
+//   - si conversationId absent ou 1 seul message → retourne '' (rien à
+//     injecter, classifier sans contexte comme avant)
+//
+// Best effort sur l'appel Graph : tout échec est swallow et retourne ''
+// pour ne JAMAIS bloquer la classification.
+async function buildThreadContext(msg) {
+  const conversationId = msg && msg.conversationId;
+  const mailbox = msg && msg.mailbox;
+  const currentMessageId = msg && msg.id;
+  if (!conversationId || !mailbox) return '';
+
+  let thread;
+  try {
+    thread = await getConversationMessages({ mailbox, conversationId, top: 20 });
+  } catch {
+    return '';
+  }
+  if (!Array.isArray(thread) || thread.length <= 1) return '';
+
+  // Exclure le message courant + garder seulement les 5 plus récents avant lui
+  const others = thread.filter((m) => m.id !== currentMessageId);
+  const last5 = others.slice(-5);
+  if (last5.length === 0) return '';
+
+  return last5
+    .map((m) => {
+      const date = (m.sentDateTime || m.receivedDateTime || '').slice(0, 16).replace('T', ' ');
+      const sender = m.from?.emailAddress?.address || 'inconnu';
+      const preview = (m.bodyPreview || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      return `[${date}] ${sender} → ${preview}`;
+    })
+    .join('\n');
 }
 
 // ─── Routage d'un message ──────────────────────────────────────────────────
@@ -149,14 +217,56 @@ async function routeMessage(msg, { context } = {}) {
   const fromAddress = msg.from?.emailAddress?.address || 'inconnu';
   const bodyText = (msg.body?.content || msg.bodyPreview || '').replace(/<[^>]+>/g, '').slice(0, 3000);
 
-  const prompt = `Message reçu dans la boîte david@oseys.fr :
+  // Sprint 1 mémoire David (18 mai 2026) — record inbound dans DavidMemory
+  // AVANT classification : si Claude fail, on conserve quand même la trace
+  // du message reçu pour la mémoire future. Best effort, fire-and-forget.
+  if (fromAddress && fromAddress !== 'inconnu') {
+    davidMemory.recordMessage({
+      interlocutorEmail: fromAddress,
+      direction: 'inbound',
+      mailbox: msg.mailbox,
+      subject: msg.subject,
+      body: msg.body?.content || msg.bodyPreview,
+      messageId: msg.id,
+      conversationId: msg.conversationId,
+      sentAt: msg.sentDateTime || msg.receivedDateTime,
+    }).catch(() => {});
+  }
+
+  // Plan v3.1 Pilier 2 — Sujet 5 (David lit le fil compacté avant de
+  // générer). On récupère la conversation Graph via conversationId pour
+  // donner du contexte à Claude. Best effort : si Graph fail ou pas de
+  // conversationId, on continue sans contexte (classification dégradée
+  // mais pas bloquée). Compactage : on garde les N-1 messages précédents
+  // sous forme {date, sender, bodyPreview} pour économiser les tokens
+  // (un fil long ne doit pas exploser le contexte Claude).
+  const threadCompacted = await buildThreadContext(msg).catch(() => '');
+
+  // Sprint 1 mémoire David (18 mai 2026) — mémoire perpétuelle backée
+  // Azure Storage, brute intégrale, inter-thread. Complémente le fil
+  // Graph (Sujet 5) qui ne couvre QUE le thread courant. Ici on récupère
+  // TOUS les échanges historiques avec ce correspondant, peu importe le
+  // thread. Permet à David de ne pas re-poser des questions déjà
+  // répondues dans un thread précédent (cas incident Johnny 18/05).
+  const memoryMessages = await davidMemory.listMemoryFor(fromAddress, { limit: 100 }).catch(() => []);
+  const memoryBlock = davidMemory.formatMemoryForPrompt(memoryMessages);
+
+  const prompt = `Message reçu dans la boîte david@perennereseau.fr :
 
 DE : ${fromAddress}
-OBJET : ${msg.subject}
-CORPS :
+OBJET : ${msg.subject}${memoryBlock ? `
+
+${memoryBlock}` : ''}${threadCompacted ? `
+
+CONTEXTE DU FIL COURANT (échanges du même thread, plus précis que la mémoire ci-dessus) :
+${threadCompacted}` : ''}
+
+CORPS DU MESSAGE COURANT :
 """
 ${bodyText}
 """
+
+IMPORTANT : avant de générer reply_draft, relis la MÉMOIRE et le CONTEXTE DU FIL. Ne re-pose JAMAIS une question dont la réponse est déjà donnée dans l'historique, et ne redemande pas une information déjà fournie. Si tu hésites, baisse la confidence plutôt que de produire un reply_draft qui ignore l'historique.
 
 Classe ce message. Réponds UNIQUEMENT en JSON strict, sans texte autour :
 {
@@ -193,15 +303,21 @@ Règles :
     return handleProspectReply(msg, decision, { context });
   }
 
+  // Sprint 3 mémoire COMEX (18 mai 2026) — détection d'une réponse COMEX à une
+  // escalation David. Si le sender est Paul/Constantin/Olivier/direction@ ET le
+  // conversationId match une escalation_sent existante → on capture
+  // l'apprentissage en Mem0 user_id=charli. Best effort fire-and-forget.
+  captureComexLearningIfApplicable(msg, decision, { context }).catch(() => {});
+
   // Consultant / internal : enqueue la réponse avec jitter humain (15-45 min
   // en heures ouvrées). Pas d'envoi instantané — voir shared/jitter.js doctrine.
   //
   // IDENTITÉ EXPÉDITEUR (fix 12 mai 2026 PM, recadrage Paul) : pour les classes
   // consultant et internal, le `from` doit TOUJOURS être David, JAMAIS la
   // boîte d'où vient le message d'origine. Incident vécu : un mail Pipedrive
-  // arrivé dans mila@oseys.fr (boîte multi-pollée par davidInbox), classifié
+  // arrivé dans mila@perennereseau.fr (boîte multi-pollée par davidInbox), classifié
   // internal, a généré un reply rédigé "Bonjour Paul, je viens de voir... David"
-  // mais envoyé DEPUIS mila@oseys.fr → schizophrénie d'identité.
+  // mais envoyé DEPUIS mila@perennereseau.fr → schizophrénie d'identité.
   //
   // Cette règle ne s'applique PAS aux replies prospect (handleProspectReply
   // ci-dessous) — celles-là doivent partir DEPUIS la boîte du commercial
@@ -251,6 +367,7 @@ async function enqueueReplyWithJitter({ mailbox, to, subject, html, senderType, 
     prospectClass,
     jitterKind: window.kind,
     originalMessageId: msg && msg.id,
+    originalConversationId: msg && msg.conversationId,
     originalSubject: msg && msg.subject,
     originalSender: msg && msg.from && msg.from.emailAddress && msg.from.emailAddress.address,
     dealId,
@@ -554,7 +671,7 @@ async function reportLeadExhausterFeedback({ ctx, status, context }) {
  * Trace une réponse prospect classifiée pour le digest quotidien du consultant.
  *
  * BL-52 (11 mai 2026) — Posture "service Prospérenne" (recadrage Paul) :
- *   Les consultants OSEYS (Morgane, Johnny, futurs autres) sont des CLIENTS
+ *   Les consultants Pérenne (Morgane, Johnny, futurs autres) sont des CLIENTS
  *   du service David/Martin/Mila, pas des opérateurs techniques. On ne les
  *   inquiète pas avec chaque coquille ou classification du pipeline.
  *
@@ -600,11 +717,58 @@ async function alertConsultant(consultantEmail, msg, decision, classe, _opts = {
   }).catch(() => null);
 }
 
+// Sprint 3 mémoire COMEX (18 mai 2026) — liste des emails autorisés à
+// trancher une escalation et dont la réponse doit être capturée comme
+// apprentissage transverse Charli.
+const COMEX_EMAILS = new Set([
+  'paul.rudler@oseys.fr',
+  'constantin.picoron@oseys.fr',
+  'olivier@oseys.fr',
+  'direction@oseys.fr',
+  'direction@perennereseau.fr',
+]);
+
+async function captureComexLearningIfApplicable(msg, decision, { context } = {}) {
+  if (!msg || !decision) return null;
+  const fromAddress = (msg.from?.emailAddress?.address || '').toLowerCase();
+  if (!COMEX_EMAILS.has(fromAddress)) return null;
+  if (decision.sender_type !== 'internal' && decision.sender_type !== 'consultant') return null;
+  if (!msg.conversationId) return null;
+
+  const escalation = await findEscalationByConversationId(msg.conversationId);
+  if (!escalation) return null; // Pas une réponse à escalation tracée
+
+  const mem0 = getMem0(context);
+  if (!mem0 || typeof mem0.storeCharliLearning !== 'function') return null;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const contexte = (escalation.metadata && escalation.metadata.contexte) || '(contexte non capturé)';
+  const propositions = (escalation.metadata && escalation.metadata.propositions) || [];
+  const recommendation = (escalation.metadata && escalation.metadata.recommendation) || '(pas de reco)';
+  const replyBody = (msg.body?.content || msg.bodyPreview || '').replace(/<[^>]+>/g, '').trim().slice(0, 2000);
+  const replySummary = decision.resume_humain || '(résumé non extrait)';
+
+  const content =
+    `[${today} source: david-escalation-comex-decision] ` +
+    `CONTEXTE ESCALATION DAVID : ${contexte} ` +
+    `(propositions: ${propositions.join(' | ')}; reco David: ${recommendation}). ` +
+    `DÉCISION COMEX par ${fromAddress} : ${replySummary}. ` +
+    `Verbatim réponse : """${replyBody}"""`;
+
+  return mem0.storeCharliLearning(content, {
+    source: 'david-escalation-comex-decision',
+    comex_member: fromAddress,
+    conversationId: msg.conversationId,
+    escalation_subject: escalation.metadata && escalation.metadata.subject,
+    decided_at: today,
+  }).catch(() => null);
+}
+
 async function escalateToDirection({ subject, contexte, extraitMessage, propositions, recommendation, consultantEmail }) {
-  const escalationTo = process.env.ESCALATION_EMAIL || 'direction@oseys.fr';
+  const escalationTo = process.env.ESCALATION_EMAIL || 'direction@perennereseau.fr';
   // BL-52 (11 mai 2026) — Posture "service Prospérenne" : on n'inquiète pas
   // le consultant avec une escalation interne (cas confidence <0.7 nécessitant
-  // avis humain). L'escalation part uniquement à direction@oseys.fr (Paul/
+  // avis humain). L'escalation part uniquement à direction@perennereseau.fr (Paul/
   // Constantin) qui décident s'il faut prévenir le consultant manuellement.
   // L'info reste tracée en davidActions pour le digest quotidien si pertinent.
   const body =
@@ -615,12 +779,17 @@ async function escalateToDirection({ subject, contexte, extraitMessage, proposit
     `\n\nRecommandation David : ${recommendation}\n\n` +
     `Consultant concerné : ${consultantEmail || 'non identifié'} (pas notifié — escalation interne).\n` +
     `Attente : validation humaine avant toute action.`;
-  await sendMail({
+  const sendResult = await sendMail({
     from: process.env.DAVID_EMAIL,
     to: escalationTo,
     subject: `[ESCALATION] ${subject}`,
     html: wrapHtml(body),
   });
+
+  // Sprint 3 mémoire COMEX (18 mai 2026) — capture conversationId d'envoi
+  // pour pouvoir matcher la réponse COMEX (Paul/Constantin/Olivier) ultérieure
+  // dans routeMessage et écrire l'apprentissage en Mem0 user_id=charli.
+  const escalationConversationId = sendResult && sendResult.conversationId;
 
   // Best-effort tracking PWA-M Cycle 1 — couvre BL-41 (escalations jamais
   // trackées en table dédiée jusqu'au 4 mai 2026).
@@ -634,10 +803,14 @@ async function escalateToDirection({ subject, contexte, extraitMessage, proposit
         contexte,
         propositions,
         recommendation,
+        conversationId: escalationConversationId,
+        extraitMessage: extraitMessage ? extraitMessage.slice(0, 600) : null,
       },
       at: new Date().toISOString(),
     }).catch(() => null);
   }
+
+  return { sent: true, conversationId: escalationConversationId };
 }
 
 function wrapHtml(text) {
@@ -666,7 +839,9 @@ function escapeHtml(s) {
  * @param {Array} leads — [{ prenom, nom, entreprise, email, secteur, ville, contexte }, ...]
  */
 async function launchSequenceForConsultant({ consultant, brief, leads, context }) {
-  const assign = (i) => {
+  // Candidate initial selon brief consultant (martin/mila/both alternance).
+  // La décision finale passe ensuite par decideAgent (doctrine cross-sell).
+  const pickCandidate = (i) => {
     if (brief.prospecteur === 'martin') return 'martin';
     if (brief.prospecteur === 'mila') return 'mila';
     return i % 2 === 0 ? 'martin' : 'mila';
@@ -675,8 +850,7 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
   const results = [];
   for (let i = 0; i < leads.length; i++) {
     const lead = leads[i];
-    const agentKey = assign(i);
-    const agent = agentKey === 'martin' ? martin : mila;
+    const candidateAgent = pickCandidate(i);
 
     try {
       const org = await ensureOrg(lead);
@@ -688,13 +862,36 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
       if (cooldown.skip) {
         results.push({
           lead: lead.email,
-          agent: agentKey,
+          agent: candidateAgent,
           skipped: true,
           reason: cooldown.reason,
           until: cooldown.until,
         });
         continue;
       }
+
+      // Plan v3.1 Pilier 6 — doctrine cross-sell prospecteur unique :
+      //   - Martin actif (Pérenne legacy ou Prospérenne) → on assigne Mila
+      //   - Mila actif → on assigne Martin
+      //   - Les 2 actifs → SKIP (prospect saturé)
+      //   - Aucun actif → candidateAgent
+      // Lecture cross-pipes pour voir TOUS les deals ouverts du prospect
+      // (legacy Pérenne inclus), pas que Prospérenne.
+      const openDealsAllPipes = await pipedrive.findExistingDealsAcrossAllPipes({ personId: person.id, orgId: org.id }).catch(() => []);
+      const activeAgents = extractActiveAgents(openDealsAllPipes);
+      const decision = decideAgent({ candidateAgent, activeAgents });
+      if (decision.skip) {
+        results.push({
+          lead: lead.email,
+          agent: candidateAgent,
+          skipped: true,
+          reason: decision.reason,
+          activeAgents,
+        });
+        continue;
+      }
+      const agentKey = decision.agent;
+      const agent = agentKey === 'martin' ? martin : mila;
 
       // Item 1 — Dédup intra-pipe : si un deal ouvert existe déjà pour cette
       // personne dans le pipeline Prospérenne, on le réutilise plutôt que
@@ -704,7 +901,7 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
         consultant, lead, agentKey, person, org, context,
       });
       if (reused) {
-        results.push({ lead: lead.email, agent: agentKey, dealId: deal.id, reused: true });
+        results.push({ lead: lead.email, agent: agentKey, dealId: deal.id, reused: true, crossSellDecision: decision.reason });
         continue;
       }
 
@@ -716,9 +913,9 @@ async function launchSequenceForConsultant({ consultant, brief, leads, context }
         orgId: org.id,
         context,
       });
-      results.push({ lead: lead.email, agent: agentKey, dealId: deal.id, ...result });
+      results.push({ lead: lead.email, agent: agentKey, dealId: deal.id, ...result, crossSellDecision: decision.reason });
     } catch (err) {
-      results.push({ lead: lead.email, agent: agentKey, error: err.message });
+      results.push({ lead: lead.email, agent: candidateAgent, error: err.message });
     }
   }
   return results;
@@ -804,12 +1001,34 @@ async function resolveOrCreateDeal({ consultant, lead, agentKey, person, org, co
   }
 }
 
-async function ensureOrg(lead) {
-  const found = await pipedrive.searchOrganization(lead.entreprise);
-  if (found.length) return found[0];
-  return pipedrive.createOrganization({
+async function ensureOrg(lead, { pipedriveMod = pipedrive } = {}) {
+  // Search par SIREN d'abord (immuable, fiable). Évite faux matches noms
+  // approchants côté Pipedrive et garantit que le custom field SIREN sera
+  // posé à la création si nécessaire (cf. dedup amont LeadSelector).
+  const sirenKey = pipedriveMod.ORG_SIREN_FIELD_KEY;
+  if (lead.siren) {
+    const foundBySiren = await pipedriveMod.searchOrganization({ siren: lead.siren });
+    if (foundBySiren.length) {
+      const org = foundBySiren[0];
+      if (org && org.id && sirenKey && !org[sirenKey]) {
+        try { await pipedriveMod.updateOrganizationSiren(org.id, lead.siren); } catch (_) {}
+      }
+      return org;
+    }
+  }
+  const found = await pipedriveMod.searchOrganization(lead.entreprise);
+  if (found.length) {
+    const org = found[0];
+    // Backfill SIREN sur match nom si dispo côté lead et absent côté org.
+    if (lead.siren && org && org.id && sirenKey && !org[sirenKey]) {
+      try { await pipedriveMod.updateOrganizationSiren(org.id, lead.siren); } catch (_) {}
+    }
+    return org;
+  }
+  return pipedriveMod.createOrganization({
     name: lead.entreprise,
     address: lead.ville,
+    siren: lead.siren,
   });
 }
 
@@ -974,4 +1193,5 @@ module.exports = {
   resolveOrCreateDeal,
   reportLeadExhausterFeedback,
   splitPersonName,
+  ensureOrg,
 };

@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const vp = require('../../shared/oseys-vp');
+const vp = require('../../shared/perenne-vp');
 
 // ─── Cohérence structurelle ────────────────────────────────────────────────
 

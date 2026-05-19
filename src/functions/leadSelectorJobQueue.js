@@ -56,7 +56,12 @@ app.storageQueue('leadSelectorJobQueue', {
     // doublons deals Pipedrive + ré-envoi J0 prospects. Le briefId du brief
     // consultant est la clé naturelle (1 brief = 1 run unique). On garde le
     // jobId comme fallback si pas de briefId (anciens triggers manuels).
-    const briefId = (job.briefId || consultantId).toString();
+    // Fix 18 mai 2026 — fallback briefId défensif. Si le payload n'a pas de
+    // briefId (cas anciens triggers), on tombe sur jobId qui est unique par
+    // construction (vs consultantId qui crée une RowKey stable et fige le run
+    // à vie — incident 14-18/05 où dailyLeadSelectorRefresh skipped_duplicate
+    // 4 jours d'affilée). Fallback consultantId conservé en dernier recours.
+    const briefId = (job.briefId || job.jobId || consultantId).toString();
     const runAcquire = await tryAcquireRun({ consultantId, briefId, jobId });
     if (!runAcquire.acquired) {
       log(`[lead-selector-job] idempotence skip jobId=${jobId} consultantId=${consultantId} briefId=${briefId} reason=${runAcquire.reason}`);

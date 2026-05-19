@@ -24,6 +24,14 @@ const BASE_URL = () => {
   return `https://${domain}.pipedrive.com/api/v1`;
 };
 
+// Custom field key SIREN sur les organisations Pipedrive. Identifiant immuable
+// du compte oseys.pipedrive.com (cf. /organizationFields). Env var override
+// possible pour autres tenants. Stable tant que le custom field n'est pas
+// recréé côté admin Pipedrive.
+const ORG_SIREN_FIELD_KEY =
+  process.env.PIPEDRIVE_FIELD_ORG_SIREN
+  || '713fb4d205fa7951279ea782946a70914f078478';
+
 const token = () => {
   const t = process.env.PIPEDRIVE_TOKEN;
   if (!t) throw new Error('PIPEDRIVE_TOKEN non défini');
@@ -55,7 +63,29 @@ async function call(path, { method = 'GET', body = null, query = {} } = {}) {
 
 // ─── Organisations ──────────────────────────────────────────────────────────
 
-async function searchOrganization(term) {
+// Polymorphe :
+//   searchOrganization('foo')                          → search par nom (legacy)
+//   searchOrganization({ term: 'foo' })                → idem, format objet
+//   searchOrganization({ siren: '123456789' })         → search par SIREN custom field
+//                                                        (term = siren, fields=custom_fields,
+//                                                        exact_match=true)
+// Le SIREN à 9 chiffres est pratiquement unique → match propre. Fallback nom
+// si caller préfère, ou via searchOrganization(name) classique.
+async function searchOrganization(arg) {
+  const params = typeof arg === 'string' ? { term: arg } : (arg || {});
+  if (params.siren) {
+    const data = await call('/organizations/search', {
+      query: {
+        term: String(params.siren),
+        fields: 'custom_fields',
+        exact_match: true,
+        limit: 10,
+      },
+    });
+    return data?.items?.map((i) => i.item) || [];
+  }
+  const term = params.term;
+  if (!term) return [];
   const data = await call('/organizations/search', {
     query: { term, exact_match: false, limit: 10 },
   });
@@ -66,10 +96,20 @@ async function getOrganization(id) {
   return call(`/organizations/${id}`);
 }
 
-async function createOrganization({ name, address, ownerId }) {
+async function createOrganization({ name, address, ownerId, siren }) {
+  const body = { name, address, owner_id: ownerId };
+  if (siren) body[ORG_SIREN_FIELD_KEY] = String(siren);
   return call('/organizations', {
     method: 'POST',
-    body: { name, address, owner_id: ownerId },
+    body,
+  });
+}
+
+async function updateOrganizationSiren(orgId, siren) {
+  if (!orgId || !siren) return null;
+  return call(`/organizations/${orgId}`, {
+    method: 'PUT',
+    body: { [ORG_SIREN_FIELD_KEY]: String(siren) },
   });
 }
 
@@ -119,7 +159,7 @@ async function updatePersonField(personId, fieldKey, value) {
  *
  * Incident 12 mai 2026 PM : la version précédente utilisait limit=100 puis
  * filter client-side pipeline_id. Si la personne a >100 deals dans d'autres
- * pipelines OSEYS, les deals pipeline 28 (IDs élevés) sortent du top-100,
+ * pipelines Pérenne, les deals pipeline 28 (IDs élevés) sortent du top-100,
  * filter retourne [], resolveOrCreateDeal crée un nouveau deal alors qu'il
  * existait → orphelins stage NEW. Fix : pagination complete via boucle start.
  */
@@ -159,10 +199,25 @@ async function findOpenDealsForPersonInOurPipe(personId, { includeClosed = false
  *
  * @returns {Promise<Set<string>>} noms d'orgs lowercased + trimmed.
  */
-async function getOrgNamesWithOpenDealInOurPipe() {
+// Retourne les identifiants des organisations ayant un deal ouvert dans
+// notre pipeline. SIREN (immuable, source de vérité) en priorité, nom
+// normalisé en fallback (legacy orgs sans SIREN renseigné).
+//
+// Cause racine du dedup amont non opérant 12 mai 2026 PM : `ensureOrg`
+// créait les orgs sans poser le custom field SIREN, donc seul le nom
+// était disponible. Or les noms Pipedrive (saisis manuellement) et
+// LeadBase (raison sociale SIRENE) divergent souvent (casse, espaces,
+// accents, suffixes statut juridique).
+//
+// Coût HTTP : 1 appel /deals (paginé) + 1 appel /organizations/{id} par
+// org concernée (parallélisé via pMapLimit concurrence 5). Pour 14 deals
+// open ~3 secondes. Acceptable pour 1 call/cycle leadSelector.
+async function getOrgIdentifiersWithOpenDealInOurPipe() {
   const ourPipe = Number(process.env.PIPEDRIVE_PIPELINE_ID);
-  if (!Number.isFinite(ourPipe)) return new Set();
+  if (!Number.isFinite(ourPipe)) return { sirens: new Set(), names: new Set() };
+  const sirens = new Set();
   const names = new Set();
+  const orgIds = new Set();
   let start = 0;
   const PAGE = 500;
   // L'API Pipedrive /deals ne filtre pas toujours par pipeline_id en query
@@ -177,10 +232,32 @@ async function getOrgNamesWithOpenDealInOurPipe() {
       if (d.pipeline_id !== ourPipe) continue;
       const n = d.org_id && d.org_id.name;
       if (n) names.add(String(n).toLowerCase().trim());
+      const oid = d.org_id && d.org_id.value;
+      if (oid) orgIds.add(oid);
     }
     if (data.length < PAGE) break;
     start += PAGE;
   }
+  // Fetch SIREN custom field pour chaque org en parallèle limité.
+  const { pMapLimit } = require('./utils/p-map-limit');
+  const orgIdsArr = [...orgIds];
+  await pMapLimit(orgIdsArr, 5, async (id) => {
+    try {
+      const org = await getOrganization(id);
+      const raw = org && org[ORG_SIREN_FIELD_KEY];
+      if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
+        sirens.add(String(raw).trim());
+      }
+    } catch (_) {
+      // Best effort : si fetch org échoue, on continue avec le nom seul.
+    }
+  });
+  return { sirens, names };
+}
+
+// Backward compat : retourne juste le Set de noms (legacy callers).
+async function getOrgNamesWithOpenDealInOurPipe() {
+  const { names } = await getOrgIdentifiersWithOpenDealInOurPipe();
   return names;
 }
 
@@ -316,7 +393,16 @@ async function markLeadPermanentOptOut(dealId) {
  * Crée une activité de type "email" avec subject = objet du mail
  * et note = corps résumé + identité de l'expéditeur (martin/mila).
  */
-async function logEmailSent({ dealId, personId, sender, day, subject, bodyPreview }) {
+async function logEmailSent({ dealId, personId, sender, day, subject, bodyPreview, internetMessageId, conversationId }) {
+  // Plan v3.1 Pilier 2 — thread mail : si l'adapter Graph a retourné
+  // internetMessageId + conversationId, on les inscrit dans la note
+  // pour audit + threading downstream (davidInbox peut récupérer le
+  // conversationId via grep note Pipedrive si besoin, mais l'usage
+  // principal est de reconstituer le fil côté Graph via conversationId
+  // du mail entrant).
+  const threadingNote = (internetMessageId || conversationId)
+    ? `\n\n---\ninternetMessageId: ${internetMessageId || 'n/a'}\nconversationId: ${conversationId || 'n/a'}`
+    : '';
   return call('/activities', {
     method: 'POST',
     body: {
@@ -325,7 +411,7 @@ async function logEmailSent({ dealId, personId, sender, day, subject, bodyPrevie
       done: 1,
       deal_id: dealId,
       person_id: personId,
-      note: `Envoyé par ${sender} (${sender}@oseys.fr)\nÉtape : ${day}\n\n${bodyPreview}`,
+      note: `Envoyé par ${sender} (${sender}@perennereseau.fr)\nÉtape : ${day}\n\n${bodyPreview}${threadingNote}`,
     },
   });
 }
@@ -350,6 +436,9 @@ module.exports = {
   searchOrganization,
   getOrganization,
   createOrganization,
+  updateOrganizationSiren,
+  ORG_SIREN_FIELD_KEY,
+  getOrgIdentifiersWithOpenDealInOurPipe,
   searchPerson,
   createPerson,
   updatePersonField,

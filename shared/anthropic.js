@@ -26,6 +26,70 @@ const MODEL_SONNET = 'claude-sonnet-4-6';
 const MODEL_HAIKU = 'claude-haiku-4-5';
 const MODEL_DEFAULT = MODEL_SONNET;
 
+// ─── Instrumentation budget Anthropic — plan v3.1 P3 + Task #13 ─────────
+// Trace chaque appel réel dans Azure Table `Budgets` (PK='anthropic',
+// RK=YYYYMM). Best-effort : aucune erreur de trace ne fait remonter sur
+// callClaude (préserve continuité business si Storage indispo).
+// Routine CC `anthropic-quota-watch.sh` lit cette table 4×/jour et alerte
+// si projection mensuelle >80% du cap.
+
+const BUDGETS_TABLE = process.env.BUDGETS_TABLE || 'Budgets';
+
+function _budgetMonthKey(date = new Date()) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}${m}`;
+}
+
+let _budgetClient = null;
+function _getBudgetClient() {
+  if (_budgetClient !== null) return _budgetClient;
+  const conn = process.env.AzureWebJobsStorage;
+  if (!conn) { _budgetClient = false; return null; }
+  try {
+    const { TableClient } = require('@azure/data-tables');
+    _budgetClient = TableClient.fromConnectionString(conn, BUDGETS_TABLE);
+    return _budgetClient;
+  } catch (_) {
+    _budgetClient = false;
+    return null;
+  }
+}
+
+function _resetBudgetClientForTests() { _budgetClient = null; }
+function _setBudgetClientForTests(c) { _budgetClient = c; }
+
+async function _traceAnthropicCall({ model, inputTokens, outputTokens }) {
+  const client = _getBudgetClient();
+  if (!client) return;
+  const monthKey = _budgetMonthKey();
+  try {
+    let entity = null;
+    try {
+      entity = await client.getEntity('anthropic', monthKey);
+    } catch (err) {
+      if (err && err.statusCode !== 404) throw err;
+    }
+    const prev = entity || { partitionKey: 'anthropic', rowKey: monthKey, calls: 0, input_tokens: 0, output_tokens: 0 };
+    const next = {
+      partitionKey: 'anthropic',
+      rowKey: monthKey,
+      calls: (Number(prev.calls) || 0) + 1,
+      input_tokens: (Number(prev.input_tokens) || 0) + (Number(inputTokens) || 0),
+      output_tokens: (Number(prev.output_tokens) || 0) + (Number(outputTokens) || 0),
+      last_model: String(model || ''),
+      lastUpdatedAt: new Date().toISOString(),
+    };
+    if (entity) {
+      await client.updateEntity(next, 'Merge');
+    } else {
+      await client.createEntity(next);
+    }
+  } catch (_) {
+    // Best-effort : ne jamais faire crasher callClaude.
+  }
+}
+
 // ─── Mode mock (tests) ──────────────────────────────────────────────────────
 
 let _mockResponder = defaultMockResponder;
@@ -129,6 +193,14 @@ async function callClaude({
     .map((b) => b.text)
     .join('');
 
+  // Trace budget — best-effort, fire-and-forget pour ne pas bloquer.
+  const usage = data && data.usage ? data.usage : {};
+  _traceAnthropicCall({
+    model,
+    inputTokens: usage.input_tokens || 0,
+    outputTokens: usage.output_tokens || 0,
+  }).catch(() => {});
+
   return { text, raw: data };
 }
 
@@ -142,6 +214,12 @@ function parseJson(text) {
 
 module.exports = {
   callClaude,
+  // Tests + lecture externe :
+  _traceAnthropicCall,
+  _budgetMonthKey,
+  _resetBudgetClientForTests,
+  _setBudgetClientForTests,
+  BUDGETS_TABLE,
   parseJson,
   MODEL_SONNET,
   MODEL_HAIKU,
